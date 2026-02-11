@@ -118,43 +118,53 @@ export class AIController {
                 new Action(() => ctx._actionSeekCover()),
             ]),
 
-            // 3. Suppression fire (assigned by squad)
+            // 3. Spatial threat too high — seek cover (personality-driven)
+            new Sequence([
+                new Condition(() => {
+                    if (!ctx.threatMap) return false;
+                    const pos = ctx.soldier.getPosition();
+                    return ctx.threatMap.getThreat(pos.x, pos.z) > ctx.personality.spatialCaution;
+                }),
+                new Action(() => ctx._actionSeekCover()),
+            ]),
+
+            // 4. Suppression fire (assigned by squad)
             new Sequence([
                 new Condition(() => ctx.suppressionTarget !== null && ctx.suppressionTimer > 0),
                 new Action(() => ctx._actionSuppress()),
             ]),
 
-            // 4. Close-range enemy (< 20m) — must engage, survival priority
+            // 5. Close-range enemy (< 20m) — must engage, survival priority
             new Sequence([
                 new Condition(() => ctx.targetEnemy !== null && ctx._enemyDist() < 20),
                 new Action(() => ctx._actionEngage()),
             ]),
 
-            // 5. Uncaptured flag exists — go capture (flanking is part of approach)
+            // 6. Uncaptured flag exists — go capture (flanking is part of approach)
             new Sequence([
                 new Condition(() => ctx.targetFlag !== null && ctx.targetFlag.owner !== ctx.team),
                 new Action(() => ctx._actionCaptureFlag()),
             ]),
 
-            // 6. Investigate intel contact (nearby suspected enemy, no direct visual)
+            // 7. Investigate intel contact (nearby suspected enemy, no direct visual)
             new Sequence([
                 new Condition(() => ctx.targetEnemy === null && ctx._hasNearbyIntelContact()),
                 new Action(() => ctx._actionInvestigate()),
             ]),
 
-            // 7. Has visible enemy (long range) — engage
+            // 8. Has visible enemy (long range) — engage
             new Sequence([
                 new Condition(() => ctx.targetEnemy !== null),
                 new Action(() => ctx._actionEngage()),
             ]),
 
-            // 8. Has owned flag target — defend / patrol near it
+            // 9. Has owned flag target — defend / patrol near it
             new Sequence([
                 new Condition(() => ctx.targetFlag !== null),
                 new Action(() => ctx._actionCaptureFlag()),
             ]),
 
-            // 9. Default — find something to do
+            // 10. Default — find something to do
             new Action(() => ctx._actionPatrol()),
         ]);
     }
@@ -340,12 +350,12 @@ export class AIController {
             : 0;
 
         this.riskLevel =
-            0.20 * exposure +
+            0.15 * exposure +
             0.20 * incomingThreat +
             0.15 * healthRisk +
-            0.15 * spatialThreat +
+            0.25 * spatialThreat +
             0.10 * outnumbered +
-            0.15 * reloadRisk +
+            0.10 * reloadRisk +
             0.05 * this.missionPressure;
     }
 
@@ -534,17 +544,14 @@ export class AIController {
         const dist = myPos.distanceTo(enemyPos);
 
         // Flanker personality: request suppression + move to flank
-        // Also: Rusher flanks during deep-flank missions (uses opposite side)
         const isFlanker = this.personality.name === 'Flanker';
-        const isDeepFlankRusher = this.personality.name === 'Rusher' && this.squad?.isDeepFlank;
 
-        if ((isFlanker || isDeepFlankRusher) && this.squad && this.teamIntel) {
+        if (isFlanker && this.squad && this.teamIntel) {
             const contact = this.teamIntel.getContactFor(this.targetEnemy);
             if (contact) {
                 this.squad.requestSuppression(contact);
-                const side = isDeepFlankRusher ? -this.flankSide : this.flankSide;
                 const flankPos = findFlankPosition(
-                    myPos, enemyPos, this.coverSystem, side, this.navGrid
+                    myPos, enemyPos, this.coverSystem, this.flankSide, this.navGrid
                 );
                 this.moveTarget = flankPos;
                 this._validateMoveTarget();
@@ -603,6 +610,14 @@ export class AIController {
         if (this.squad && dist > this.targetFlag.captureRadius * 0.7) {
             const formationPos = this.squad.getDesiredPosition(this, this.navGrid);
             if (formationPos) {
+                // Already at formation — add jitter so COM patrols nearby
+                const distToFormation = myPos.distanceTo(formationPos);
+                if (distToFormation < 3) {
+                    const jAngle = Math.random() * Math.PI * 2;
+                    const jDist = 3 + Math.random() * 2; // 3-5m
+                    formationPos.x += Math.cos(jAngle) * jDist;
+                    formationPos.z += Math.sin(jAngle) * jDist;
+                }
                 this.moveTarget = formationPos;
                 this._validateMoveTarget();
                 this.missionPressure = 0.5;
@@ -697,7 +712,8 @@ export class AIController {
             if (this._pathCooldown > 0) return;
         }
 
-        const path = this.navGrid.findPath(myPos.x, myPos.z, this.moveTarget.x, this.moveTarget.z);
+        const threatData = this.threatMap ? this.threatMap.threat : null;
+        const path = this.navGrid.findPath(myPos.x, myPos.z, this.moveTarget.x, this.moveTarget.z, threatData);
         if (path === null) {
             // Genuinely no path — stay put, wait for BT to pick a new target
             this.currentPath = [];
@@ -791,12 +807,16 @@ export class AIController {
         const dist = _v1.length();
 
         if (dist < 1) {
-            // If following path, advance; otherwise trigger BT re-tick
+            // If following path, advance to next waypoint
             if (this.currentPath.length > 0 && this.pathIndex < this.currentPath.length) {
                 this.pathIndex++;
             } else {
+                // Arrived at final destination — clear moveTarget so BT assigns fresh
+                this.moveTarget = null;
+                this.lastPathTarget = null;
                 this.btTimer = this.btInterval;
             }
+            this.lastPos.copy(myPos);
             return;
         }
 

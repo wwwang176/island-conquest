@@ -67,8 +67,8 @@ export class ThreatMap {
             // Enemy eye height = terrain height at their cell + EYE_HEIGHT
             const enemyEyeY = heightGrid[eGrid.row * cols + eGrid.col] + EYE_HEIGHT;
 
-            // Scan radius 42 cells (~42 m at 1m/cell)
-            const radius = 42;
+            // Scan radius 80 cells (~80 m at 1m/cell) — matches COM vision range
+            const radius = 80;
             const radius2 = radius * radius;
             const minCol = Math.max(0, eGrid.col - radius);
             const maxCol = Math.min(cols - 1, eGrid.col + radius);
@@ -86,7 +86,7 @@ export class ThreatMap {
                     if (!this._hasLOS(eGrid.col, eGrid.row, enemyEyeY, c, r)) continue;
 
                     const dist = Math.sqrt(dist2) * this.cellSize; // world distance
-                    threat[r * cols + c] += 1 / (1 + dist * dist * 0.01);
+                    threat[r * cols + c] += 1 / (1 + dist * dist * 0.004);
                 }
             }
         }
@@ -107,7 +107,7 @@ export class ThreatMap {
 
         const center = this._worldToGrid(nearPos.x, nearPos.z);
         const cellRadius = Math.ceil(radius / this.cellSize); // 20 cells for 20m
-        const minCellDist2 = 4; // at least 2 cells away (~4m) squared
+        const minCellDist2 = 64; // at least 8 cells away (~8m) squared
         const { cols, rows, threat } = this;
         const cellRadius2 = cellRadius * cellRadius;
 

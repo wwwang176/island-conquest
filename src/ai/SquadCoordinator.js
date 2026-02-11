@@ -16,7 +16,6 @@ export class SquadCoordinator {
         this.strategy = strategy; // 'push' = far enemy flags, 'secure' = nearest flags
 
         this.objective = null; // target flag
-        this.isDeepFlank = false; // deep-behind-enemy-lines mode
         this.evalTimer = 0;
         // Secure squads re-evaluate faster to respond to threats
         this.evalInterval = strategy === 'secure'
@@ -47,20 +46,21 @@ export class SquadCoordinator {
      * @param {object} [navGrid] - NavGrid for bounds validation
      */
     getDesiredPosition(controller, navGrid) {
-        const captain = this.getCaptain();
-        if (!captain || !this.objective) return null;
+        if (!this.objective) return null;
 
-        const captainPos = captain.soldier.getPosition();
         const objPos = this.objective.position;
 
-        // Direction from captain toward objective
-        _v.subVectors(objPos, captainPos);
+        // Direction: from team base toward objective (stable reference)
+        const baseFlag = this.team === 'teamA'
+            ? this.flags[0] : this.flags[this.flags.length - 1];
+        _v.subVectors(objPos, baseFlag.position);
         _v.y = 0;
         const dist = _v.length();
         if (dist < 0.1) _v.set(0, 0, -1);
         else _v.normalize();
 
-        // Perpendicular direction (right)
+        // "Forward" = attack direction (base → objective)
+        // Perpendicular (right)
         const perpX = _v.z;
         const perpZ = -_v.x;
 
@@ -68,42 +68,38 @@ export class SquadCoordinator {
         let offsetForward = 0;
         let offsetSide = 0;
 
-        const deepFlank = this.isDeepFlank;
-
-        // Shrink formation when close to objective — converge on the flag
-        const proximityScale = dist < 15 ? (dist / 15) : 1;
-
         switch (role) {
             case 'Rusher':
-                offsetForward = deepFlank ? 20 : 8;
+                offsetForward = 8;
                 offsetSide = 0;
                 break;
             case 'Flanker':
                 offsetForward = 0;
-                offsetSide = (deepFlank ? 24 : 12) * (controller.flankSide || 1) * proximityScale;
+                offsetSide = 12 * (controller.flankSide || 1);
                 break;
             case 'Defender':
-                offsetForward = -5;
+                offsetForward = -10;
                 offsetSide = 0;
                 break;
             case 'Sniper':
-                offsetForward = -15 * proximityScale;
-                offsetSide = 6 * (controller.flankSide || 1) * proximityScale;
+                offsetForward = -15;
+                offsetSide = 8 * (controller.flankSide || 1);
                 break;
             case 'Support':
                 offsetForward = 2;
                 offsetSide = 0;
                 break;
             case 'Captain':
-                offsetForward = 3;
+                offsetForward = 5;
                 offsetSide = 0;
                 break;
         }
 
+        // Anchor to flag, not captain
         const pos = new THREE.Vector3(
-            captainPos.x + _v.x * offsetForward + perpX * offsetSide,
-            captainPos.y,
-            captainPos.z + _v.z * offsetForward + perpZ * offsetSide
+            objPos.x + _v.x * offsetForward + perpX * offsetSide,
+            0,
+            objPos.z + _v.z * offsetForward + perpZ * offsetSide
         );
 
         // Validate against NavGrid — snap to walkable if out of bounds
@@ -146,7 +142,6 @@ export class SquadCoordinator {
         const captain = this.getCaptain();
         if (!captain) return;
 
-        this.isDeepFlank = false;
         const captainPos = captain.soldier.getPosition();
 
         if (this.strategy === 'push') {
