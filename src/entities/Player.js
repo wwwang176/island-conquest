@@ -2,10 +2,13 @@ import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { Weapon } from './Weapon.js';
 
+const _raycaster = new THREE.Raycaster();
+const _downDir = new THREE.Vector3(0, -1, 0);
+
 /**
  * First-person player controller.
  * Handles FPS camera, WASD movement, jumping, shooting, health, and death.
- * Movement direction and aim direction are independent.
+ * Movement uses kinematic terrain-snapping (same as COM) for smooth slope climbing.
  */
 export class Player {
     constructor(scene, camera, physicsWorld, inputManager, eventBus) {
@@ -42,12 +45,20 @@ export class Player {
         this.lastDamageDirection = null;
         this.damageIndicatorTimer = 0;
 
-        // Physics body
+        // Terrain helpers (set by Game after creation)
+        /** @type {Function|null} */
+        this.getHeightAt = null;
+        /** @type {THREE.Object3D[]|null} */
+        this.collidables = null;
+
+        // Kinematic jump state
+        this.isJumping = false;
+        this.jumpVelY = 0;
+
+        // Physics body (kinematic — we control position directly)
         this.body = new CANNON.Body({
-            mass: 80,
-            material: physicsWorld.defaultMaterial,
-            linearDamping: 0.9,
-            angularDamping: 1.0,
+            mass: 0,
+            type: CANNON.Body.KINEMATIC,
             fixedRotation: true,
         });
         const r = 0.4;
@@ -59,16 +70,6 @@ export class Player {
         );
         this.body.position.set(0, 5, 0);
         physicsWorld.addBody(this.body);
-
-        // Ground contact
-        this.isOnGround = false;
-        this.body.addEventListener('collide', (e) => {
-            const contact = e.contact;
-            const normal = contact.ni;
-            const isBodyA = contact.bi.id === this.body.id;
-            const ny = isBodyA ? -normal.y : normal.y;
-            if (ny > 0.5) this.isOnGround = true;
-        });
 
         // Debug mesh (hidden in FPS)
         this.mesh = this._createDebugMesh();
@@ -123,6 +124,25 @@ export class Player {
     }
 
     _handleMovement(dt) {
+        const body = this.body;
+        const pos = body.position;
+        const getH = this.getHeightAt;
+        if (!getH) return;
+
+        const groundY = getH(pos.x, pos.z);
+
+        // Handle jumping (manual parabola, same as COM)
+        if (this.isJumping) {
+            this.jumpVelY -= 9.8 * dt;
+            pos.y += this.jumpVelY * dt;
+            if (pos.y <= groundY + 0.05) {
+                pos.y = groundY + 0.05;
+                this.isJumping = false;
+                this.jumpVelY = 0;
+            }
+        }
+
+        // Build move direction from input
         const forward = new THREE.Vector3(0, 0, -1);
         const right = new THREE.Vector3(1, 0, 0);
         const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
@@ -136,15 +156,62 @@ export class Player {
         if (this.input.isKeyDown('KeyD')) moveDir.add(right);
 
         if (moveDir.lengthSq() > 0) {
-            moveDir.normalize().multiplyScalar(this.moveSpeed);
+            moveDir.normalize();
+        } else {
+            // No input — just snap to ground if not jumping
+            if (!this.isJumping) {
+                pos.y = groundY + 0.05;
+            }
+            return;
         }
 
-        this.body.velocity.x = moveDir.x;
-        this.body.velocity.z = moveDir.z;
+        // Kinematic position update
+        const dx = moveDir.x * this.moveSpeed * dt;
+        const dz = moveDir.z * this.moveSpeed * dt;
+        const newX = pos.x + dx;
+        const newZ = pos.z + dz;
 
-        if (this.input.isKeyDown('Space') && this.isOnGround) {
-            this.body.velocity.y = this.jumpSpeed;
-            this.isOnGround = false;
+        // Effective ground = max(terrain, obstacle top)
+        const newTerrainY = getH(newX, newZ);
+        let newGroundY = newTerrainY;
+        if (this.collidables) {
+            const origin = new THREE.Vector3(newX, pos.y + 2.0, newZ);
+            _raycaster.set(origin, _downDir);
+            _raycaster.far = 4.0;
+            const hits = _raycaster.intersectObjects(this.collidables, true);
+            for (const hit of hits) {
+                if (hit.point.y <= newTerrainY + 0.3) continue;
+                if (hit.point.y > newGroundY) newGroundY = hit.point.y;
+            }
+        }
+
+        const currentFootY = pos.y;
+        const slopeRise = newGroundY - currentFootY;
+        const slopeRun = Math.sqrt(dx * dx + dz * dz);
+        const slopeAngle = slopeRun > 0.001 ? Math.atan2(slopeRise, slopeRun) : 0;
+        const maxClimbAngle = Math.PI * 0.42; // ~75°
+        const isObstacle = newGroundY > newTerrainY + 0.3;
+
+        if (isObstacle && newGroundY > currentFootY + 0.3) {
+            // Blocked by obstacle — don't move
+        } else if (slopeAngle < maxClimbAngle) {
+            pos.x = newX;
+            pos.z = newZ;
+            if (!this.isJumping) pos.y = newGroundY + 0.05;
+        } else if (!isObstacle) {
+            // Steep terrain — auto jump
+            if (!this.isJumping) {
+                this.isJumping = true;
+                this.jumpVelY = 2.5;
+                pos.x += moveDir.x * this.moveSpeed * 0.3 * dt;
+                pos.z += moveDir.z * this.moveSpeed * 0.3 * dt;
+            }
+        }
+
+        // Manual jump
+        if (this.input.isKeyDown('Space') && !this.isJumping) {
+            this.isJumping = true;
+            this.jumpVelY = this.jumpSpeed;
         }
     }
 
@@ -212,6 +279,8 @@ export class Player {
         this.weapon.isReloading = false;
         this.body.position.set(position.x, position.y + 1, position.z);
         this.body.velocity.set(0, 0, 0);
+        this.isJumping = false;
+        this.jumpVelY = 0;
         this.eventBus.emit('playerRespawned');
     }
 

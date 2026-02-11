@@ -203,7 +203,7 @@ export class SpectatorMode {
         const scroll = this.input.consumeScrollDelta();
         if (scroll !== 0) {
             this.overheadZoom += scroll * 0.1;
-            this.overheadZoom = Math.max(40, Math.min(200, this.overheadZoom));
+            this.overheadZoom = Math.max(15, Math.min(200, this.overheadZoom));
         }
 
         // Tilt 60° from horizontal (30° from straight down)

@@ -217,6 +217,8 @@ export class Game {
         // Create player if first time
         if (!this.player) {
             this.player = new Player(this.scene, this.camera, this.physics, this.input, this.eventBus);
+            this.player.getHeightAt = (x, z) => this.island.getHeightAt(x, z);
+            this.player.collidables = this.island.collidables;
             this.player.weapon.tracerSystem = this.tracerSystem;
             this.player.weapon.impactVFX = this.impactVFX;
         }
