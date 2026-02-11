@@ -109,7 +109,9 @@ export class AIManager {
         this._navGrid = grid;
         // Build height grid with obstacle tops for accurate LOS
         this.threatMapA.buildHeightGrid(this.getHeightAt, collidables);
+        // Share the same height data but init a separate worker for team B
         this.threatMapB.heightGrid = this.threatMapA.heightGrid;
+        this.threatMapB._initWorker();
     }
 
     // Keep setter for backward compatibility

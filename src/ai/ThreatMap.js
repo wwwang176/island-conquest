@@ -1,12 +1,9 @@
 import * as THREE from 'three';
 
-const EYE_HEIGHT = 1.5; // soldier eye height above ground
-
 /**
  * Spatial threat evaluation grid.
  * Same resolution as NavGrid (300×120, 1m cells) for accurate LOS shadow casting.
- * Each cell stores a threat value based on enemy LOS and distance.
- * Cells behind obstacles OR terrain ridges (LOS blocked) are safe (shadow zones).
+ * Heavy computation (Bresenham LOS for every cell) runs in a Web Worker.
  */
 export class ThreatMap {
     constructor(width = 300, depth = 120, cols = 300, rows = 120) {
@@ -23,12 +20,16 @@ export class ThreatMap {
         /** @type {import('./NavGrid.js').NavGrid|null} */
         this.navGrid = null;
 
-        // Pre-computed terrain height per cell (built once at startup)
+        // Pre-computed terrain + obstacle height per cell (built once at startup)
         this.heightGrid = new Float32Array(cols * rows);
 
-        // Update throttle — start at interval so first update is immediate
-        this._timer = 0.5;
-        this._interval = 0.5; // seconds
+        // Update throttle
+        this._timer = 0.3;
+        this._interval = 0.3; // seconds
+
+        // Worker state
+        this._worker = null;
+        this._workerBusy = false;
 
         // Visualization
         this._visMesh = null;
@@ -40,8 +41,7 @@ export class ThreatMap {
      * Pre-compute heights for every cell. Stores max(terrain, obstacle top)
      * so LOS checks account for cover objects like rocks and walls.
      * Uses bounding boxes instead of raycasting for speed.
-     * @param {Function} getHeightAt - terrain height sampler
-     * @param {THREE.Object3D[]} [collidables] - obstacle meshes
+     * After building, initializes the worker with the height data.
      */
     buildHeightGrid(getHeightAt, collidables) {
         const { cols, rows, cellSize, originX, originZ, heightGrid } = this;
@@ -76,7 +76,6 @@ export class ThreatMap {
                 box.setFromObject(mesh);
                 const topY = box.max.y;
 
-                // Map bounding box XZ to grid cells
                 const minCol = Math.max(0, Math.floor((box.min.x - originX) / cellSize));
                 const maxCol = Math.min(cols - 1, Math.floor((box.max.x - originX) / cellSize));
                 const minRow = Math.max(0, Math.floor((box.min.z - originZ) / cellSize));
@@ -92,6 +91,38 @@ export class ThreatMap {
                 }
             }
         }
+
+        // 3) Initialize worker with height data
+        this._initWorker();
+    }
+
+    _initWorker() {
+        this._worker = new Worker(
+            new URL('../workers/threat-worker.js', import.meta.url),
+            { type: 'module' }
+        );
+
+        this._worker.postMessage({
+            type: 'init',
+            cols: this.cols,
+            rows: this.rows,
+            cellSize: this.cellSize,
+            originX: this.originX,
+            originZ: this.originZ,
+            heightGrid: this.heightGrid,
+        });
+
+        this._worker.onmessage = (e) => {
+            if (e.data.type === 'result') {
+                this.threat.set(e.data.threat);
+                this._workerBusy = false;
+
+                // Refresh visualization texture
+                if (this._visMesh && this._visMesh.visible) {
+                    this._updateVisTexture();
+                }
+            }
+        };
     }
 
     // ───── Core ─────
@@ -99,46 +130,20 @@ export class ThreatMap {
     update(dt, enemies) {
         this._timer += dt;
         if (this._timer < this._interval) return;
+        if (this._workerBusy) return; // skip if worker still computing
+        if (!this._worker) return;
         this._timer = 0;
 
-        const { cols, rows, threat, heightGrid } = this;
-        threat.fill(0);
-
+        // Extract enemy positions (plain data for worker)
+        const enemyData = [];
         for (const enemy of enemies) {
             if (!enemy.alive) continue;
-            const ePos = enemy.getPosition();
-            const eGrid = this._worldToGrid(ePos.x, ePos.z);
-            // Enemy eye height = terrain height at their cell + EYE_HEIGHT
-            const enemyEyeY = heightGrid[eGrid.row * cols + eGrid.col] + EYE_HEIGHT;
-
-            // Scan radius 160 cells (~160 m at 1m/cell) — exceeds COM vision range for early warning
-            const radius = 160;
-            const radius2 = radius * radius;
-            const minCol = Math.max(0, eGrid.col - radius);
-            const maxCol = Math.min(cols - 1, eGrid.col + radius);
-            const minRow = Math.max(0, eGrid.row - radius);
-            const maxRow = Math.min(rows - 1, eGrid.row + radius);
-
-            for (let r = minRow; r <= maxRow; r++) {
-                for (let c = minCol; c <= maxCol; c++) {
-                    const dc = c - eGrid.col;
-                    const dr = r - eGrid.row;
-                    const dist2 = dc * dc + dr * dr;
-                    if (dist2 > radius2) continue;
-
-                    // Combined LOS: obstacle blocking + terrain height blocking
-                    if (!this._hasLOS(eGrid.col, eGrid.row, enemyEyeY, c, r)) continue;
-
-                    const dist = Math.sqrt(dist2) * this.cellSize; // world distance
-                    threat[r * cols + c] += 1 / (1 + dist * dist * 0.001);
-                }
-            }
+            const pos = enemy.getPosition();
+            enemyData.push({ x: pos.x, z: pos.z });
         }
 
-        // Refresh visualization texture
-        if (this._visMesh && this._visMesh.visible) {
-            this._updateVisTexture();
-        }
+        this._workerBusy = true;
+        this._worker.postMessage({ type: 'update', enemies: enemyData });
     }
 
     /**
@@ -295,48 +300,5 @@ export class ThreatMap {
             col: Math.max(0, Math.min(col, this.cols - 1)),
             row: Math.max(0, Math.min(row, this.rows - 1)),
         };
-    }
-
-    /**
-     * Combined LOS check: obstacle blocking (NavGrid) + terrain height blocking.
-     * Traces from enemy eye position to target cell eye position.
-     * Returns true if the target cell is visible (has threat).
-     */
-    _hasLOS(c0, r0, enemyEyeY, c1, r1) {
-        const { cols, heightGrid, navGrid } = this;
-
-        // Target eye height
-        const targetEyeY = heightGrid[r1 * cols + c1] + EYE_HEIGHT;
-
-        // Bresenham walk
-        let nc = c0, nr = r0;
-        const dc = Math.abs(c1 - c0), dr = Math.abs(r1 - r0);
-        const sc = c0 < c1 ? 1 : -1, sr = r0 < r1 ? 1 : -1;
-        let err = dc - dr;
-
-        // Total steps for interpolation
-        const totalSteps = Math.max(dc, dr);
-        let step = 0;
-
-        while (true) {
-            // Skip start cell (enemy position)
-            if (!(nc === c0 && nr === r0)) {
-                // Height check: interpolate expected LOS line height
-                // and compare with terrain + obstacle height at this cell
-                if (totalSteps > 0) {
-                    const t = step / totalSteps;
-                    const expectedY = enemyEyeY + (targetEyeY - enemyEyeY) * t;
-                    const cellY = heightGrid[nr * cols + nc];
-                    if (cellY > expectedY) return false;
-                }
-            }
-
-            if (nc === c1 && nr === r1) return true;
-
-            step++;
-            const e2 = 2 * err;
-            if (e2 > -dr) { err -= dr; nc += sc; }
-            if (e2 < dc) { err += dc; nr += sr; }
-        }
     }
 }
