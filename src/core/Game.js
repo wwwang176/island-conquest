@@ -149,7 +149,7 @@ export class Game {
 
     async _initNavGrid() {
         const { navGrid, heightGrid } = await this.island.buildNavGridAsync();
-        this.aiManager.setNavGrid(navGrid, heightGrid);
+        this.aiManager.setNavGrid(navGrid, heightGrid, this.island.collidables);
 
         // Threat map visualization (must be after heightGrid is set so mesh follows terrain)
         this.aiManager.threatMapA.createVisualization(this.scene);

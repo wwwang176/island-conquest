@@ -99,7 +99,7 @@ export class AIManager {
      * Set navigation grid. If prebuilt heightGrid is provided (from Worker),
      * uses it directly instead of recomputing on main thread.
      */
-    setNavGrid(grid, heightGrid) {
+    setNavGrid(grid, heightGrid, collidables) {
         for (const ctrl of [...this.teamA.controllers, ...this.teamB.controllers]) {
             ctrl.navGrid = grid;
         }
@@ -107,19 +107,14 @@ export class AIManager {
         this.threatMapA.navGrid = grid;
         this.threatMapB.navGrid = grid;
         this._navGrid = grid;
-        // Use prebuilt height grid or compute on main thread
-        if (heightGrid) {
-            this.threatMapA.heightGrid = heightGrid;
-            this.threatMapB.heightGrid = heightGrid;
-        } else {
-            this.threatMapA.buildHeightGrid(this.getHeightAt);
-            this.threatMapB.buildHeightGrid(this.getHeightAt);
-        }
+        // Build height grid with obstacle tops for accurate LOS
+        this.threatMapA.buildHeightGrid(this.getHeightAt, collidables);
+        this.threatMapB.heightGrid = this.threatMapA.heightGrid;
     }
 
     // Keep setter for backward compatibility
     set navGrid(grid) {
-        this.setNavGrid(grid, null);
+        this.setNavGrid(grid, null, null);
     }
 
     /**

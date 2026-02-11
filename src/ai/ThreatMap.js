@@ -37,15 +37,59 @@ export class ThreatMap {
     }
 
     /**
-     * Pre-compute terrain heights for every cell. Call once after terrain is ready.
+     * Pre-compute heights for every cell. Stores max(terrain, obstacle top)
+     * so LOS checks account for cover objects like rocks and walls.
+     * Uses bounding boxes instead of raycasting for speed.
+     * @param {Function} getHeightAt - terrain height sampler
+     * @param {THREE.Object3D[]} [collidables] - obstacle meshes
      */
-    buildHeightGrid(getHeightAt) {
+    buildHeightGrid(getHeightAt, collidables) {
         const { cols, rows, cellSize, originX, originZ, heightGrid } = this;
+
+        // 1) Fill with terrain heights
         for (let r = 0; r < rows; r++) {
             for (let c = 0; c < cols; c++) {
                 const wx = originX + c * cellSize + cellSize / 2;
                 const wz = originZ + r * cellSize + cellSize / 2;
                 heightGrid[r * cols + c] = getHeightAt(wx, wz);
+            }
+        }
+
+        // 2) Stamp obstacle bounding boxes onto the grid
+        //    Skip terrain and water — they span the entire map and would
+        //    overwrite all cells with their peak height.
+        if (collidables && collidables.length > 0) {
+            const box = new THREE.Box3();
+            const skipTypes = new Set(['terrain', 'water']);
+            const collectMeshes = (obj) => {
+                if (obj.isMesh && obj.geometry) meshes.push(obj);
+                if (obj.children) for (const child of obj.children) collectMeshes(child);
+            };
+            const meshes = [];
+            for (const obj of collidables) {
+                const st = obj.userData && obj.userData.surfaceType;
+                if (st && skipTypes.has(st)) continue;
+                collectMeshes(obj);
+            }
+
+            for (const mesh of meshes) {
+                box.setFromObject(mesh);
+                const topY = box.max.y;
+
+                // Map bounding box XZ to grid cells
+                const minCol = Math.max(0, Math.floor((box.min.x - originX) / cellSize));
+                const maxCol = Math.min(cols - 1, Math.floor((box.max.x - originX) / cellSize));
+                const minRow = Math.max(0, Math.floor((box.min.z - originZ) / cellSize));
+                const maxRow = Math.min(rows - 1, Math.floor((box.max.z - originZ) / cellSize));
+
+                for (let r = minRow; r <= maxRow; r++) {
+                    for (let c = minCol; c <= maxCol; c++) {
+                        const idx = r * cols + c;
+                        if (topY > heightGrid[idx]) {
+                            heightGrid[idx] = topY;
+                        }
+                    }
+                }
             }
         }
     }
@@ -67,8 +111,8 @@ export class ThreatMap {
             // Enemy eye height = terrain height at their cell + EYE_HEIGHT
             const enemyEyeY = heightGrid[eGrid.row * cols + eGrid.col] + EYE_HEIGHT;
 
-            // Scan radius 80 cells (~80 m at 1m/cell) — matches COM vision range
-            const radius = 80;
+            // Scan radius 160 cells (~160 m at 1m/cell) — exceeds COM vision range for early warning
+            const radius = 160;
             const radius2 = radius * radius;
             const minCol = Math.max(0, eGrid.col - radius);
             const maxCol = Math.min(cols - 1, eGrid.col + radius);
@@ -86,7 +130,7 @@ export class ThreatMap {
                     if (!this._hasLOS(eGrid.col, eGrid.row, enemyEyeY, c, r)) continue;
 
                     const dist = Math.sqrt(dist2) * this.cellSize; // world distance
-                    threat[r * cols + c] += 1 / (1 + dist * dist * 0.004);
+                    threat[r * cols + c] += 1 / (1 + dist * dist * 0.001);
                 }
             }
         }
@@ -277,17 +321,13 @@ export class ThreatMap {
         while (true) {
             // Skip start cell (enemy position)
             if (!(nc === c0 && nr === r0)) {
-                // 1) Obstacle check: NavGrid blocked cell blocks LOS
-                if (navGrid && !navGrid.isWalkable(nc, nr)) return false;
-
-                // 2) Terrain height check: interpolate expected LOS line height
-                //    and compare with actual terrain + obstacle height at this cell
+                // Height check: interpolate expected LOS line height
+                // and compare with terrain + obstacle height at this cell
                 if (totalSteps > 0) {
                     const t = step / totalSteps;
                     const expectedY = enemyEyeY + (targetEyeY - enemyEyeY) * t;
-                    const terrainY = heightGrid[nr * cols + nc];
-                    // Terrain blocks if it rises above the LOS line
-                    if (terrainY > expectedY) return false;
+                    const cellY = heightGrid[nr * cols + nc];
+                    if (cellY > expectedY) return false;
                 }
             }
 
