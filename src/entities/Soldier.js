@@ -50,32 +50,142 @@ export class Soldier {
     _createMesh() {
         const group = new THREE.Group();
 
-        // Body (capsule)
-        const bodyGeo = new THREE.CapsuleGeometry(0.35, 0.8, 4, 8);
-        const bodyMat = new THREE.MeshLambertMaterial({ color: this.teamColor });
-        const body = new THREE.Mesh(bodyGeo, bodyMat);
-        body.position.y = 1.0;
-        body.castShadow = true;
-        group.add(body);
+        const tc = new THREE.Color(this.teamColor);
+        const limbColor = tc.clone().multiplyScalar(0.7);
+        const hipColor = tc.clone().multiplyScalar(0.5);
 
-        // Head
-        const headGeo = new THREE.SphereGeometry(0.2, 6, 6);
-        const headMat = new THREE.MeshLambertMaterial({ color: 0xddbb99 });
-        const head = new THREE.Mesh(headGeo, headMat);
-        head.position.y = 1.65;
+        // ── Lower body ──
+        const lowerBody = new THREE.Group();
+
+        // Hips
+        const hips = new THREE.Mesh(
+            new THREE.BoxGeometry(0.5, 0.15, 0.3),
+            new THREE.MeshLambertMaterial({ color: hipColor })
+        );
+        hips.position.y = 0.75;
+        hips.castShadow = true;
+        lowerBody.add(hips);
+
+        // Left leg
+        const leftLeg = new THREE.Group();
+        leftLeg.position.set(-0.13, 0.7, 0);
+        const leftLegMesh = new THREE.Mesh(
+            new THREE.BoxGeometry(0.18, 0.55, 0.18),
+            new THREE.MeshLambertMaterial({ color: limbColor })
+        );
+        leftLegMesh.position.y = -0.275;
+        leftLegMesh.castShadow = true;
+        leftLeg.add(leftLegMesh);
+        lowerBody.add(leftLeg);
+
+        // Right leg
+        const rightLeg = new THREE.Group();
+        rightLeg.position.set(0.13, 0.7, 0);
+        const rightLegMesh = new THREE.Mesh(
+            new THREE.BoxGeometry(0.18, 0.55, 0.18),
+            new THREE.MeshLambertMaterial({ color: limbColor })
+        );
+        rightLegMesh.position.y = -0.275;
+        rightLegMesh.castShadow = true;
+        rightLeg.add(rightLegMesh);
+        lowerBody.add(rightLeg);
+
+        group.add(lowerBody);
+
+        // ── Upper body ──
+        const upperBody = new THREE.Group();
+
+        // Torso (bottom at 0.825 = hips top)
+        const torso = new THREE.Mesh(
+            new THREE.BoxGeometry(0.5, 0.6, 0.3),
+            new THREE.MeshLambertMaterial({ color: this.teamColor })
+        );
+        torso.position.y = 1.125;
+        torso.castShadow = true;
+        upperBody.add(torso);
+
+        // Head (smaller, sits on torso top 1.425)
+        const head = new THREE.Mesh(
+            new THREE.BoxGeometry(0.3, 0.3, 0.3),
+            new THREE.MeshLambertMaterial({ color: 0xddbb99 })
+        );
+        head.position.y = 1.575;
         head.castShadow = true;
-        group.add(head);
+        upperBody.add(head);
         this.headMesh = head;
 
-        // Simple gun
-        const gunGeo = new THREE.BoxGeometry(0.08, 0.08, 0.5);
-        const gunMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
-        const gun = new THREE.Mesh(gunGeo, gunMat);
-        gun.position.set(0.3, 1.1, -0.3);
-        group.add(gun);
+        // Right arm (trigger hand, short forward reach)
+        const rightArm = new THREE.Group();
+        rightArm.position.set(0.2, 1.35, 0);
+        rightArm.rotation.x = 1.1;
+        const rightArmMesh = new THREE.Mesh(
+            new THREE.BoxGeometry(0.15, 0.4, 0.15),
+            new THREE.MeshLambertMaterial({ color: limbColor })
+        );
+        rightArmMesh.position.y = -0.2;
+        rightArmMesh.castShadow = true;
+        rightArm.add(rightArmMesh);
+        upperBody.add(rightArm);
+
+        // Left arm (support hand, reaching forward-right to grip barrel)
+        const leftArm = new THREE.Group();
+        leftArm.position.set(-0.2, 1.35, 0);
+        leftArm.rotation.set(1.2, 0, 0.5);
+        const leftArmMesh = new THREE.Mesh(
+            new THREE.BoxGeometry(0.15, 0.55, 0.15),
+            new THREE.MeshLambertMaterial({ color: limbColor })
+        );
+        leftArmMesh.position.y = -0.275;
+        leftArmMesh.castShadow = true;
+        leftArm.add(leftArmMesh);
+        upperBody.add(leftArm);
+
+        // Gun (slightly right of center, at arm-tip level)
+        const gun = new THREE.Mesh(
+            new THREE.BoxGeometry(0.08, 0.08, 0.5),
+            new THREE.MeshLambertMaterial({ color: 0x333333 })
+        );
+        gun.position.set(0.05, 1.3, -0.45);
+        upperBody.add(gun);
         this.gunMesh = gun;
 
+        group.add(upperBody);
+
+        // Store references for animation
+        this.upperBody = upperBody;
+        this.lowerBody = lowerBody;
+        this.leftLeg = leftLeg;
+        this.rightLeg = rightLeg;
+        this.leftArm = leftArm;
+        this.rightArm = rightArm;
+        this._walkPhase = 0;
+
         return group;
+    }
+
+    /**
+     * Animate walk cycle — swing arms and legs with sin wave.
+     * @param {number} dt — delta time
+     * @param {number} speed — current movement speed (0 = idle)
+     */
+    animateWalk(dt, speed) {
+        const swingFreq = 8;       // radians per second
+        const legSwingMax = 0.6;   // max leg rotation (radians)
+
+        if (speed > 0.3) {
+            this._walkPhase += dt * swingFreq;
+            const swing = Math.sin(this._walkPhase);
+
+            this.leftLeg.rotation.x = swing * legSwingMax;
+            this.rightLeg.rotation.x = -swing * legSwingMax;
+        } else {
+            // Lerp back to idle
+            const decay = 1 - Math.exp(-10 * dt);
+            this.leftLeg.rotation.x *= (1 - decay);
+            this.rightLeg.rotation.x *= (1 - decay);
+            this._walkPhase = 0;
+        }
+        // Arms stay in fixed gun-holding pose (rotation set in _createMesh)
     }
 
     _createPhysicsBody() {
@@ -187,6 +297,15 @@ export class Soldier {
         this.timeSinceLastDamage = Infinity;
         this.mesh.visible = true;
         this.mesh.rotation.set(0, 0, 0);
+
+        // Reset body part rotations
+        if (this.upperBody) this.upperBody.rotation.set(0, 0, 0);
+        if (this.lowerBody) this.lowerBody.rotation.set(0, 0, 0);
+        if (this.leftLeg) this.leftLeg.rotation.set(0, 0, 0);
+        if (this.rightLeg) this.rightLeg.rotation.set(0, 0, 0);
+        if (this.rightArm) this.rightArm.rotation.set(1.1, 0, 0);
+        if (this.leftArm) this.leftArm.rotation.set(1.2, 0, 0.5);
+        this._walkPhase = 0;
 
         // Restore capsule collision shapes
         while (this.body.shapes.length > 0) {

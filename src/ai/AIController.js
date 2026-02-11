@@ -7,6 +7,15 @@ const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _raycaster = new THREE.Raycaster();
 
+/** Lerp between two angles handling wraparound. */
+function _lerpAngle(a, b, t) {
+    let diff = b - a;
+    // Wrap to [-PI, PI]
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    return a + diff * t;
+}
+
 /**
  * AI Controller for a single COM soldier.
  * Manages behavior tree, movement, aiming, shooting, and tactical decisions.
@@ -227,7 +236,7 @@ export class AIController {
         this._lastRiskLevel = this.riskLevel;
 
         this._updateMovement(dt);
-        this._updateSoldierVisual();
+        this._updateSoldierVisual(dt);
         this._updateDebugArc();
         this._updateAiming(dt);
         this._updateShooting(dt);
@@ -1227,21 +1236,39 @@ export class AIController {
 
     // ───── Visual Sync ─────
 
-    _updateSoldierVisual() {
+    _updateSoldierVisual(dt) {
         if (!this.soldier.alive) return;
-        // Mesh default forward is -Z, so negate to align with facingDir
-        const angle = Math.atan2(-this.facingDir.x, -this.facingDir.z);
-        this.soldier.mesh.rotation.y = angle;
 
-        if (this.soldier.gunMesh && this.targetEnemy && this.hasReacted) {
-            const myPos = this.soldier.getPosition();
-            const targetPos = this.targetEnemy.getPosition();
-            const gunAngle = Math.atan2(
-                targetPos.x - myPos.x,
-                targetPos.z - myPos.z
-            ) - angle;
-            this.soldier.gunMesh.rotation.y = gunAngle;
+        const soldier = this.soldier;
+        const myPos = soldier.getPosition();
+
+        // Upper body faces aiming direction (facingDir)
+        const aimAngle = Math.atan2(-this.facingDir.x, -this.facingDir.z);
+        if (soldier.upperBody) {
+            soldier.upperBody.rotation.y = aimAngle;
         }
+
+        // Lower body faces movement direction
+        if (soldier.lowerBody) {
+            // Compute movement direction from lastPos → currentPos
+            const dx = myPos.x - this.lastPos.x;
+            const dz = myPos.z - this.lastPos.z;
+            const moveSpeed = Math.sqrt(dx * dx + dz * dz) / Math.max(dt, 0.001);
+
+            if (moveSpeed > 0.3) {
+                const moveAngle = Math.atan2(-dx, -dz);
+                soldier.lowerBody.rotation.y = _lerpAngle(soldier.lowerBody.rotation.y, moveAngle, 1 - Math.exp(-10 * dt));
+            } else {
+                // Idle: gradually align lower body to upper body
+                soldier.lowerBody.rotation.y = _lerpAngle(soldier.lowerBody.rotation.y, aimAngle, 1 - Math.exp(-5 * dt));
+            }
+
+            // Drive walk animation
+            soldier.animateWalk(dt, moveSpeed);
+        }
+
+        // No need to rotate the root mesh — upper/lower body handle it
+        soldier.mesh.rotation.y = 0;
     }
 
     /** Set references for player damage. */
