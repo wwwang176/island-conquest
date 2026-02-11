@@ -196,8 +196,9 @@ export class NavGrid {
     /**
      * A* pathfinding. Returns array of {x, z} world waypoints, or null.
      * @param {Float32Array} [threatGrid] - optional threat cost per cell (same resolution)
+     * @param {Float32Array} [fogGrid] - optional fog cost per cell (same resolution)
      */
-    findPath(startX, startZ, goalX, goalZ, threatGrid = null) {
+    findPath(startX, startZ, goalX, goalZ, threatGrid = null, fogGrid = null) {
         const start = this.worldToGrid(startX, startZ);
         const goal = this.worldToGrid(goalX, goalZ);
 
@@ -261,9 +262,10 @@ export class NavGrid {
                     if (!this.isWalkable(cc + dc, cr) || !this.isWalkable(cc, cr + dr)) continue;
                 }
 
-                // Add threat avoidance cost: high-threat cells are expensive to traverse
+                // Add threat + fog avoidance cost
                 const threatPenalty = threatGrid ? threatGrid[nIdx] * 5 : 0;
-                const ng = cg + cost + threatPenalty;
+                const fogPenalty = fogGrid ? fogGrid[nIdx] * 2 : 0;
+                const ng = cg + cost + threatPenalty + fogPenalty;
                 if (ng < gCost[nIdx]) {
                     gCost[nIdx] = ng;
                     fCost[nIdx] = ng + this._heuristic(nc, nr, gc, gr);

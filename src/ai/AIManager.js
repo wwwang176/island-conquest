@@ -5,6 +5,7 @@ import { SquadTemplates } from './Personality.js';
 import { TeamIntel } from './TeamIntel.js';
 import { SquadCoordinator } from './SquadCoordinator.js';
 import { ThreatMap } from './ThreatMap.js';
+import { FogMap } from './FogMap.js';
 
 /**
  * Manages all AI soldiers for both teams.
@@ -26,6 +27,10 @@ export class AIManager {
         // Threat maps — one per team (enemies of that team)
         this.threatMapA = new ThreatMap();
         this.threatMapB = new ThreatMap();
+
+        // Fog maps — one per team (exploration fog of war)
+        this.fogMapA = new FogMap();
+        this.fogMapB = new FogMap();
 
         this.teamA = { soldiers: [], controllers: [], squads: [] };
         this.teamB = { soldiers: [], controllers: [], squads: [] };
@@ -66,6 +71,7 @@ export class AIManager {
 
                 // Assign threat map: teamA controllers use threatMapA (enemies = teamB)
                 controller.threatMap = team === 'teamA' ? this.threatMapA : this.threatMapB;
+                controller.fogMap = team === 'teamA' ? this.fogMapA : this.fogMapB;
 
                 squadControllers.push(controller);
                 teamData.soldiers.push(soldier);
@@ -102,18 +108,30 @@ export class AIManager {
         for (const ctrl of [...this.teamA.controllers, ...this.teamB.controllers]) {
             ctrl.navGrid = grid;
         }
-        // Share navGrid with threat maps for LOS checks
+        // Share navGrid with threat maps and fog maps for LOS checks
         this.threatMapA.navGrid = grid;
         this.threatMapB.navGrid = grid;
+        this.fogMapA.navGrid = grid;
+        this.fogMapB.navGrid = grid;
         this._navGrid = grid;
         // Use prebuilt height grid or compute on main thread
         if (heightGrid) {
             this.threatMapA.heightGrid = heightGrid;
             this.threatMapB.heightGrid = heightGrid;
+            this.fogMapA.heightGrid = heightGrid;
+            this.fogMapB.heightGrid = heightGrid;
         } else {
             this.threatMapA.buildHeightGrid(this.getHeightAt);
             this.threatMapB.buildHeightGrid(this.getHeightAt);
+            this.fogMapA.heightGrid = this.threatMapA.heightGrid;
+            this.fogMapB.heightGrid = this.threatMapB.heightGrid;
         }
+
+        // Initialize spawn areas as explored
+        const spawnA = this.flags[0].position;
+        const spawnB = this.flags[this.flags.length - 1].position;
+        this.fogMapA.initSpawnArea(spawnA, 30);
+        this.fogMapB.initSpawnArea(spawnB, 30);
     }
 
     // Keep setter for backward compatibility
@@ -196,6 +214,10 @@ export class AIManager {
         // Update threat maps: teamA's threats come from teamB soldiers and vice versa
         this.threatMapA.update(dt, allB);
         this.threatMapB.update(dt, allA);
+
+        // Update fog maps: each team reveals cells from their own controllers
+        this.fogMapA.update(dt, this.teamA.controllers);
+        this.fogMapB.update(dt, this.teamB.controllers);
 
         // Update squad coordinators
         for (const squad of this.teamA.squads) squad.update(dt);

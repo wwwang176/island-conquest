@@ -60,7 +60,7 @@ export class AIController {
         this.reloadTime = 2.5; // seconds
 
         // Movement
-        this.moveSpeed = 5.5;
+        this.moveSpeed = 4.125; // 5.5 * 0.75
         this.moveDir = new THREE.Vector3();
         this.facingDir = new THREE.Vector3(0, 0, -1);
         this.avoidDir = new THREE.Vector3();
@@ -71,6 +71,8 @@ export class AIController {
 
         // ThreatMap (set by AIManager)
         this.threatMap = null;
+        // FogMap (set by AIManager)
+        this.fogMap = null;
 
         // Pathfinding
         this.navGrid = null;         // set by AIManager
@@ -118,12 +120,14 @@ export class AIController {
                 new Action(() => ctx._actionSeekCover()),
             ]),
 
-            // 3. Spatial threat too high — seek cover (personality-driven)
+            // 3. Spatial threat / unexplored fog too high — seek cover (personality-driven)
             new Sequence([
                 new Condition(() => {
                     if (!ctx.threatMap) return false;
                     const pos = ctx.soldier.getPosition();
-                    return ctx.threatMap.getThreat(pos.x, pos.z) > ctx.personality.spatialCaution;
+                    const threat = ctx.threatMap.getThreat(pos.x, pos.z);
+                    const fog = ctx.fogMap ? ctx.fogMap.getFog(pos.x, pos.z) * 0.5 : 0;
+                    return (threat + fog) > ctx.personality.spatialCaution;
                 }),
                 new Action(() => ctx._actionSeekCover()),
             ]),
@@ -713,7 +717,8 @@ export class AIController {
         }
 
         const threatData = this.threatMap ? this.threatMap.threat : null;
-        const path = this.navGrid.findPath(myPos.x, myPos.z, this.moveTarget.x, this.moveTarget.z, threatData);
+        const fogData = this.fogMap ? this.fogMap.fog : null;
+        const path = this.navGrid.findPath(myPos.x, myPos.z, this.moveTarget.x, this.moveTarget.z, threatData, fogData);
         if (path === null) {
             // Genuinely no path — stay put, wait for BT to pick a new target
             this.currentPath = [];
@@ -1086,7 +1091,7 @@ export class AIController {
                 if (!enemy.alive) continue;
                 if (this._isChildOf(hitChar.object, enemy.mesh)) {
                     const headshot = hitChar.object === enemy.headMesh;
-                    const result = enemy.takeDamage(25, myPos, headshot);
+                    const result = enemy.takeDamage(12, myPos, headshot);
                     if (result.killed && this.eventBus) {
                         const vTeam = enemy.team || (this.team === 'teamA' ? 'teamB' : 'teamA');
                         this.eventBus.emit('kill', {
@@ -1101,7 +1106,7 @@ export class AIController {
                 }
             }
             if (this._playerRef && this._isChildOf(hitChar.object, this._playerMesh)) {
-                const result = this._playerRef.takeDamage(25, myPos, false);
+                const result = this._playerRef.takeDamage(12, myPos, false);
                 if (result.killed && this.eventBus) {
                     this.eventBus.emit('kill', {
                         killerName: myName,
