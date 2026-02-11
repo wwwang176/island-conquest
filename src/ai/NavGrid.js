@@ -36,23 +36,68 @@ export class NavGrid {
         const raycaster = new THREE.Raycaster();
         const downDir = new THREE.Vector3(0, -1, 0);
 
+        // Pre-compute terrain heights
+        const SHORE_THRESHOLD = 0.3;
+        const MAX_SHORE_DIST = 2;
+        const cellHeights = new Float32Array(cols * rows);
+        for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
+                const wx = originX + col * cellSize + cellSize / 2;
+                const wz = originZ + row * cellSize + cellSize / 2;
+                cellHeights[row * cols + col] = getHeightAt(wx, wz);
+            }
+        }
+
+        // BFS distance-to-shore: land cells = 0, water cells = dist to nearest land
+        const distToShore = new Int16Array(cols * rows);
+        const bfsQueue = [];
+        for (let i = 0; i < cols * rows; i++) {
+            if (cellHeights[i] >= SHORE_THRESHOLD) {
+                distToShore[i] = 0;
+                bfsQueue.push(i);
+            } else {
+                distToShore[i] = 32767;
+            }
+        }
+        let head = 0;
+        while (head < bfsQueue.length) {
+            const ci = bfsQueue[head++];
+            const col = ci % cols;
+            const row = (ci - col) / cols;
+            const nd = distToShore[ci] + 1;
+            const neighbors = [
+                row > 0 ? ci - cols : -1,
+                row < rows - 1 ? ci + cols : -1,
+                col > 0 ? ci - 1 : -1,
+                col < cols - 1 ? ci + 1 : -1,
+            ];
+            for (const ni of neighbors) {
+                if (ni >= 0 && nd < distToShore[ni]) {
+                    distToShore[ni] = nd;
+                    bfsQueue.push(ni);
+                }
+            }
+        }
+
+        // Main grid pass
         for (let row = 0; row < rows; row++) {
             for (let col = 0; col < cols; col++) {
                 const idx = row * cols + col;
                 const wx = originX + col * cellSize + cellSize / 2;
                 const wz = originZ + row * cellSize + cellSize / 2;
-                const h = getHeightAt(wx, wz);
+                const h = cellHeights[idx];
 
-                // Allow shallow water — only block deep water
-                if (h < -3) { grid[idx] = 1; continue; }
+                // Block deep water: low terrain AND far from any shore
+                if (h < SHORE_THRESHOLD && distToShore[idx] > MAX_SHORE_DIST) {
+                    grid[idx] = 1; continue;
+                }
 
                 // Block steep slopes: check max gradient to cardinal neighbors
-                let maxSlope = 0;
                 const hN = getHeightAt(wx, wz - cellSize);
                 const hS = getHeightAt(wx, wz + cellSize);
                 const hE = getHeightAt(wx + cellSize, wz);
                 const hW = getHeightAt(wx - cellSize, wz);
-                maxSlope = Math.max(
+                const maxSlope = Math.max(
                     Math.abs(h - hN), Math.abs(h - hS),
                     Math.abs(h - hE), Math.abs(h - hW)
                 );

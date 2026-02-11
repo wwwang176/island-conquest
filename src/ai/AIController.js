@@ -124,25 +124,37 @@ export class AIController {
                 new Action(() => ctx._actionSuppress()),
             ]),
 
-            // 4. Investigate intel contact (nearby suspected enemy, no direct visual)
+            // 4. Close-range enemy (< 20m) — must engage, survival priority
+            new Sequence([
+                new Condition(() => ctx.targetEnemy !== null && ctx._enemyDist() < 20),
+                new Action(() => ctx._actionEngage()),
+            ]),
+
+            // 5. Uncaptured flag exists — go capture (flanking is part of approach)
+            new Sequence([
+                new Condition(() => ctx.targetFlag !== null && ctx.targetFlag.owner !== ctx.team),
+                new Action(() => ctx._actionCaptureFlag()),
+            ]),
+
+            // 6. Investigate intel contact (nearby suspected enemy, no direct visual)
             new Sequence([
                 new Condition(() => ctx.targetEnemy === null && ctx._hasNearbyIntelContact()),
                 new Action(() => ctx._actionInvestigate()),
             ]),
 
-            // 5. Has visible enemy — engage
+            // 7. Has visible enemy (long range) — engage
             new Sequence([
                 new Condition(() => ctx.targetEnemy !== null),
                 new Action(() => ctx._actionEngage()),
             ]),
 
-            // 6. Has flag target — move to capture
+            // 8. Has owned flag target — defend / patrol near it
             new Sequence([
                 new Condition(() => ctx.targetFlag !== null),
                 new Action(() => ctx._actionCaptureFlag()),
             ]),
 
-            // 7. Default — find something to do
+            // 9. Default — find something to do
             new Action(() => ctx._actionPatrol()),
         ]);
     }
@@ -338,8 +350,6 @@ export class AIController {
     }
 
     _chooseFlagTarget() {
-        if (this.targetEnemy) return; // don't change flag target during combat
-
         // Defer to squad objective first
         if (this.squad) {
             const squadObj = this.squad.getSquadObjective();
@@ -376,7 +386,12 @@ export class AIController {
         this.targetFlag = bestFlag;
     }
 
-    // ───── Intel Helpers ─────
+    // ───── Helpers ─────
+
+    _enemyDist() {
+        if (!this.targetEnemy || !this.targetEnemy.alive) return Infinity;
+        return this.soldier.getPosition().distanceTo(this.targetEnemy.getPosition());
+    }
 
     _hasNearbyIntelContact() {
         if (!this.teamIntel) return false;
@@ -529,7 +544,7 @@ export class AIController {
                 this.squad.requestSuppression(contact);
                 const side = isDeepFlankRusher ? -this.flankSide : this.flankSide;
                 const flankPos = findFlankPosition(
-                    myPos, enemyPos, this.coverSystem, side
+                    myPos, enemyPos, this.coverSystem, side, this.navGrid
                 );
                 this.moveTarget = flankPos;
                 this._validateMoveTarget();
@@ -586,7 +601,7 @@ export class AIController {
 
         // Use squad formation position if available
         if (this.squad && dist > this.targetFlag.captureRadius * 0.7) {
-            const formationPos = this.squad.getDesiredPosition(this);
+            const formationPos = this.squad.getDesiredPosition(this, this.navGrid);
             if (formationPos) {
                 this.moveTarget = formationPos;
                 this._validateMoveTarget();
@@ -683,19 +698,26 @@ export class AIController {
         }
 
         const path = this.navGrid.findPath(myPos.x, myPos.z, this.moveTarget.x, this.moveTarget.z);
-        if (path && path.length > 0) {
-            this.currentPath = path;
-            this.pathIndex = 0;
-            this.lastPathTarget = this.moveTarget.clone();
-            this._pathCooldown = 1.0;
-            this._noPathFound = false;
-        } else {
-            // No path found — stay put, wait for BT to pick a new target
+        if (path === null) {
+            // Genuinely no path — stay put, wait for BT to pick a new target
             this.currentPath = [];
             this.pathIndex = 0;
             this.lastPathTarget = null;
             this._pathCooldown = 0.5;  // retry after 0.5s
             this._noPathFound = true;
+        } else if (path.length === 0) {
+            // Same cell — already at goal, not a failure
+            this.currentPath = [];
+            this.pathIndex = 0;
+            this.lastPathTarget = this.moveTarget.clone();
+            this._pathCooldown = 0.3;
+            this._noPathFound = false;
+        } else {
+            this.currentPath = path;
+            this.pathIndex = 0;
+            this.lastPathTarget = this.moveTarget.clone();
+            this._pathCooldown = 1.0;
+            this._noPathFound = false;
         }
     }
 
@@ -722,10 +744,21 @@ export class AIController {
         // Request A* path if available
         this._requestPath();
 
-        // If A* failed, don't move — trigger BT to pick a new target
+        // If A* failed, don't move — but allow recovery after timeout
         if (this._noPathFound) {
             this.btTimer = this.btInterval; // force BT re-tick
             this.seekingCover = false;      // allow BT to try different action
+            this.stuckTimer += dt;
+            if (this.stuckTimer > 1.0) {
+                // Recovery: clear failure, invalidate target so BT picks fresh
+                this._noPathFound = false;
+                this.stuckTimer = 0;
+                this.moveTarget = null;
+                this.currentPath = [];
+                this.pathIndex = 0;
+                this.lastPathTarget = null;
+                this._pathCooldown = 0;
+            }
             this.lastPos.copy(myPos);
             return;
         }
@@ -1059,7 +1092,32 @@ export class AIController {
                     });
                 }
             }
+        } else if (hitEnv && this.impactVFX) {
+            // No character hit — spawn impact particles on environment
+            const surfaceType = this._getSurfaceType(hitEnv.object);
+            const impactType = surfaceType === 'water' ? 'water'
+                : (surfaceType === 'rock' ? 'spark' : 'dirt');
+            const worldNormal = this._getWorldNormal(hitEnv);
+            this.impactVFX.spawn(impactType, hitEnv.point, worldNormal);
         }
+    }
+
+    _getWorldNormal(hit) {
+        if (!hit.face) return null;
+        const normal = hit.face.normal.clone();
+        normal.transformDirection(hit.object.matrixWorld);
+        return normal;
+    }
+
+    _getSurfaceType(obj) {
+        let current = obj;
+        while (current) {
+            if (current.userData && current.userData.surfaceType) {
+                return current.userData.surfaceType;
+            }
+            current = current.parent;
+        }
+        return 'terrain';
     }
 
     _isChildOf(obj, parent) {

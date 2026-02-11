@@ -100,6 +100,7 @@ export class Island {
         this.terrainMesh = new THREE.Mesh(geo, mat);
         this.terrainMesh.receiveShadow = true;
         this.terrainMesh.castShadow = true;
+        this.terrainMesh.userData.surfaceType = 'terrain';
         this.scene.add(this.terrainMesh);
         this.collidables.push(this.terrainMesh);
 
@@ -270,7 +271,9 @@ export class Island {
         const water = new THREE.Mesh(waterGeo, waterMat);
         water.rotation.x = -Math.PI / 2;
         water.position.y = -0.3;
+        water.userData.surfaceType = 'water';
         this.scene.add(water);
+        this.collidables.push(water);
     }
 
     _generateCovers() {
@@ -378,6 +381,7 @@ export class Island {
         const rotY = this.noise.noise2D(x * 3, z * 3) * Math.PI;
         rock.position.set(x, h + scale * 0.3, z);
         rock.rotation.y = rotY;
+        rock.userData.surfaceType = 'rock';
 
         this._obstacleDescs.push({
             type: 'rock', x, y: h + scale * 0.3, z, scale, rotY, deform
@@ -416,6 +420,7 @@ export class Island {
         const rotY = this.noise.noise2D(x, z) * Math.PI;
         crate.position.set(x, h + size / 2, z);
         crate.rotation.y = rotY;
+        crate.userData.surfaceType = 'wood';
 
         this._obstacleDescs.push({
             type: 'box', x, y: h + size / 2, z, w, h: ch, d, rotY
@@ -448,6 +453,7 @@ export class Island {
         const rotY = this.noise.noise2D(x * 2, z * 2) * Math.PI;
         sandbag.position.set(x, h + 0.4, z);
         sandbag.rotation.y = rotY;
+        sandbag.userData.surfaceType = 'dirt';
 
         this._obstacleDescs.push({
             type: 'box', x, y: h + 0.4, z, w: 2.5, h: 0.8, d: 0.6, rotY
@@ -482,6 +488,7 @@ export class Island {
         const rotY = this.noise.noise2D(x * 4, z * 4) * Math.PI;
         wall.position.set(x, h + wallH / 2, z);
         wall.rotation.y = rotY;
+        wall.userData.surfaceType = 'rock';
 
         this._obstacleDescs.push({
             type: 'box', x, y: h + wallH / 2, z, w: wallW, h: wallH, d: 0.4, rotY

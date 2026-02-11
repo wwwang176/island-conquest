@@ -12,9 +12,10 @@ const _v = new THREE.Vector3();
  * @param {THREE.Vector3} enemyPos
  * @param {CoverSystem|null} coverSystem
  * @param {number} side - 1 for right flank, -1 for left flank
+ * @param {object} [navGrid] - NavGrid for walkability validation
  * @returns {THREE.Vector3}
  */
-export function findFlankPosition(myPos, enemyPos, coverSystem, side = 1) {
+export function findFlankPosition(myPos, enemyPos, coverSystem, side = 1, navGrid = null) {
     // Vector from enemy to me
     _v.subVectors(myPos, enemyPos);
     _v.y = 0;
@@ -38,6 +39,22 @@ export function findFlankPosition(myPos, enemyPos, coverSystem, side = 1) {
         const covers = coverSystem.findCover(flankPos, threatDir, 10, 1);
         if (covers.length > 0) {
             flankPos.copy(covers[0].cover.position);
+        }
+    }
+
+    // Validate against NavGrid — snap to walkable if off-island or in water
+    if (navGrid) {
+        const g = navGrid.worldToGrid(flankPos.x, flankPos.z);
+        if (!navGrid.isWalkable(g.col, g.row)) {
+            const nearest = navGrid._findNearestWalkable(g.col, g.row);
+            if (nearest) {
+                const w = navGrid.gridToWorld(nearest.col, nearest.row);
+                flankPos.x = w.x;
+                flankPos.z = w.z;
+            } else {
+                // No walkable cell — fall back to own position
+                flankPos.copy(myPos);
+            }
         }
     }
 

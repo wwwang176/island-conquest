@@ -7,17 +7,21 @@ const _v = new THREE.Vector3();
  * One per squad (8 total across 2 teams).
  */
 export class SquadCoordinator {
-    constructor(name, controllers, teamIntel, flags, team) {
+    constructor(name, controllers, teamIntel, flags, team, strategy = 'secure') {
         this.name = name;
         this.controllers = controllers; // array of AIController
         this.teamIntel = teamIntel;
         this.flags = flags;
         this.team = team;
+        this.strategy = strategy; // 'push' = far enemy flags, 'secure' = nearest flags
 
         this.objective = null; // target flag
         this.isDeepFlank = false; // deep-behind-enemy-lines mode
         this.evalTimer = 0;
-        this.evalInterval = 8 + Math.random() * 4; // 8-12s
+        // Secure squads re-evaluate faster to respond to threats
+        this.evalInterval = strategy === 'secure'
+            ? 3 + Math.random() * 2    // 3-5s
+            : 8 + Math.random() * 4;   // 8-12s
     }
 
     /**
@@ -39,8 +43,10 @@ export class SquadCoordinator {
 
     /**
      * Get formation position for a specific controller relative to the squad objective.
+     * @param {AIController} controller
+     * @param {object} [navGrid] - NavGrid for bounds validation
      */
-    getDesiredPosition(controller) {
+    getDesiredPosition(controller, navGrid) {
         const captain = this.getCaptain();
         if (!captain || !this.objective) return null;
 
@@ -64,6 +70,9 @@ export class SquadCoordinator {
 
         const deepFlank = this.isDeepFlank;
 
+        // Shrink formation when close to objective — converge on the flag
+        const proximityScale = dist < 15 ? (dist / 15) : 1;
+
         switch (role) {
             case 'Rusher':
                 offsetForward = deepFlank ? 20 : 8;
@@ -71,15 +80,15 @@ export class SquadCoordinator {
                 break;
             case 'Flanker':
                 offsetForward = 0;
-                offsetSide = (deepFlank ? 24 : 12) * (controller.flankSide || 1);
+                offsetSide = (deepFlank ? 24 : 12) * (controller.flankSide || 1) * proximityScale;
                 break;
             case 'Defender':
                 offsetForward = -5;
                 offsetSide = 0;
                 break;
             case 'Sniper':
-                offsetForward = -15;
-                offsetSide = 6 * (controller.flankSide || 1);
+                offsetForward = -15 * proximityScale;
+                offsetSide = 6 * (controller.flankSide || 1) * proximityScale;
                 break;
             case 'Support':
                 offsetForward = 2;
@@ -91,11 +100,28 @@ export class SquadCoordinator {
                 break;
         }
 
-        return new THREE.Vector3(
+        const pos = new THREE.Vector3(
             captainPos.x + _v.x * offsetForward + perpX * offsetSide,
             captainPos.y,
             captainPos.z + _v.z * offsetForward + perpZ * offsetSide
         );
+
+        // Validate against NavGrid — snap to walkable if out of bounds
+        if (navGrid) {
+            const g = navGrid.worldToGrid(pos.x, pos.z);
+            if (!navGrid.isWalkable(g.col, g.row)) {
+                const nearest = navGrid._findNearestWalkable(g.col, g.row);
+                if (nearest) {
+                    const w = navGrid.gridToWorld(nearest.col, nearest.row);
+                    pos.x = w.x;
+                    pos.z = w.z;
+                } else {
+                    return null; // no valid position
+                }
+            }
+        }
+
+        return pos;
     }
 
     /**
@@ -120,80 +146,81 @@ export class SquadCoordinator {
         const captain = this.getCaptain();
         if (!captain) return;
 
-        // ── Deep flank check: when team is far ahead, flankers/rushers infiltrate ──
         this.isDeepFlank = false;
-        const hasFlankerOrRusher = this.controllers.some(c => {
-            const n = c.personality.name;
-            return n === 'Flanker' || n === 'Rusher';
-        });
+        const captainPos = captain.soldier.getPosition();
 
-        if (hasFlankerOrRusher) {
-            let ownedByUs = 0, ownedByEnemy = 0;
-            for (const f of this.flags) {
-                if (f.owner === this.team) ownedByUs++;
-                else if (f.owner !== null) ownedByEnemy++;
-            }
-            const teamAdvantage = ownedByUs - ownedByEnemy;
-
-            if (teamAdvantage >= 1 && Math.random() < 0.45) {
-                // Pick the deepest enemy flag (farthest from our base)
-                const baseFlag = this.team === 'teamA'
-                    ? this.flags[0] : this.flags[this.flags.length - 1];
-                let deepest = null;
-                let deepestDist = -1;
-                for (const f of this.flags) {
-                    if (f.owner === this.team) continue; // skip our own flags
-                    const d = f.position.distanceTo(baseFlag.position);
-                    if (d > deepestDist) {
-                        deepestDist = d;
-                        deepest = f;
-                    }
-                }
-                if (deepest) {
-                    this.objective = deepest;
-                    this.isDeepFlank = true;
-                    return;
-                }
+        if (this.strategy === 'push') {
+            // ── Push: always rush the nearest non-owned flag ──
+            this.objective = this._pickNearestNonOwned(captainPos);
+        } else {
+            // ── Secure: defend threatened flags, otherwise attack ──
+            const threatened = this._findThreatenedFlag();
+            if (threatened) {
+                this.objective = threatened;
+            } else {
+                // No threats — attack nearest non-owned flag
+                this.objective = this._pickNearestNonOwned(captainPos);
             }
         }
+    }
 
-        // ── Normal objective evaluation ──
-        const captainPos = captain.soldier.getPosition();
-        let bestScore = -Infinity;
+    /**
+     * Pick the nearest neutral or enemy flag to the given position.
+     */
+    _pickNearestNonOwned(fromPos) {
         let bestFlag = null;
-
+        let bestDist = Infinity;
         for (const flag of this.flags) {
-            let score = 0;
-
-            // Unowned/enemy flags are more valuable to attack-oriented squads
-            if (flag.owner !== this.team) {
-                score += captain.personality.attack * 10;
-            } else {
-                score += captain.personality.defend * 6;
-            }
-
-            // Distance penalty
-            const dist = captainPos.distanceTo(flag.position);
-            score -= dist * 0.04;
-
-            // Intel: penalize flags near many known threats
-            const threats = this.teamIntel.getKnownEnemies({
-                minConfidence: 0.5,
-                maxDist: 40,
-                fromPos: flag.position,
-            });
-            score -= threats.length * 2;
-
-            // Small randomization to prevent all squads picking same flag
-            score += (Math.random() - 0.5) * 4;
-
-            if (score > bestScore) {
-                bestScore = score;
+            if (flag.owner === this.team) continue;
+            const d = fromPos.distanceTo(flag.position);
+            if (d < bestDist) {
+                bestDist = d;
                 bestFlag = flag;
             }
         }
+        // All flags owned — fall back to nearest owned (patrol)
+        if (!bestFlag) {
+            for (const flag of this.flags) {
+                const d = fromPos.distanceTo(flag.position);
+                if (d < bestDist) {
+                    bestDist = d;
+                    bestFlag = flag;
+                }
+            }
+        }
+        return bestFlag;
+    }
 
-        this.objective = bestFlag;
+    /**
+     * Find an owned flag that is threatened by nearby enemies.
+     * Returns the most threatened flag, or null if all are safe.
+     */
+    _findThreatenedFlag() {
+        let worstFlag = null;
+        let worstThreat = 0;
+
+        for (const flag of this.flags) {
+            if (flag.owner !== this.team) continue;
+
+            // Count known enemies within 35m of this flag
+            const enemies = this.teamIntel.getKnownEnemies({
+                minConfidence: 0.4,
+                maxDist: 35,
+                fromPos: flag.position,
+            });
+            if (enemies.length === 0) continue;
+
+            // Flag is being captured by enemy → extra urgency
+            const contested = flag.capturingTeam && flag.capturingTeam !== this.team;
+            const threat = enemies.length + (contested ? 3 : 0);
+
+            if (threat > worstThreat) {
+                worstThreat = threat;
+                worstFlag = flag;
+            }
+        }
+
+        return worstFlag;
     }
 
     /**
@@ -204,7 +231,9 @@ export class SquadCoordinator {
         this.evalTimer += dt;
         if (this.evalTimer >= this.evalInterval) {
             this.evalTimer = 0;
-            this.evalInterval = 8 + Math.random() * 4;
+            this.evalInterval = this.strategy === 'secure'
+                ? 3 + Math.random() * 2
+                : 8 + Math.random() * 4;
             this._evaluateObjective();
         }
 

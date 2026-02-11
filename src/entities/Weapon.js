@@ -151,6 +151,15 @@ export class Weapon {
             const hit = intersections[0];
             this._showImpact(hit.point);
 
+            // Impact particles
+            if (this.impactVFX) {
+                const surfaceType = this._getSurfaceType(hit.object);
+                const impactType = surfaceType === 'water' ? 'water'
+                    : (surfaceType === 'rock' ? 'spark' : 'dirt');
+                const worldNormal = this._getWorldNormal(hit);
+                this.impactVFX.spawn(impactType, hit.point, worldNormal);
+            }
+
             // Player tracer
             if (this.tracerSystem) {
                 this.tracerSystem.fire(origin, spreadDir, hit.distance);
@@ -183,6 +192,24 @@ export class Weapon {
         if (this.isReloading || this.currentAmmo === this.magazineSize) return;
         this.isReloading = true;
         this.reloadTimer = this.reloadTime;
+    }
+
+    _getWorldNormal(hit) {
+        if (!hit.face) return null;
+        const normal = hit.face.normal.clone();
+        normal.transformDirection(hit.object.matrixWorld);
+        return normal;
+    }
+
+    _getSurfaceType(obj) {
+        let current = obj;
+        while (current) {
+            if (current.userData && current.userData.surfaceType) {
+                return current.userData.surfaceType;
+            }
+            current = current.parent;
+        }
+        return 'terrain';
     }
 
     _showImpact(point) {

@@ -75,7 +75,8 @@ export class AIManager {
 
             // Create squad coordinator
             const coordinator = new SquadCoordinator(
-                squad.name, squadControllers, teamIntel, this.flags, team
+                squad.name, squadControllers, teamIntel, this.flags, team,
+                squad.strategy || 'secure'
             );
 
             // Assign squad reference and flank sides to controllers
@@ -127,6 +128,16 @@ export class AIManager {
         this._tracerSystem = sys;
         for (const ctrl of [...this.teamA.controllers, ...this.teamB.controllers]) {
             ctrl.tracerSystem = sys;
+        }
+    }
+
+    /**
+     * Set the impact VFX system so AI shots produce hit particles.
+     */
+    set impactVFX(sys) {
+        this._impactVFX = sys;
+        for (const ctrl of [...this.teamA.controllers, ...this.teamB.controllers]) {
+            ctrl.impactVFX = sys;
         }
     }
 
@@ -249,6 +260,25 @@ export class AIManager {
         this._handleRespawns(allB, 'teamB');
     }
 
+    /**
+     * Snap a spawn point to the nearest walkable NavGrid cell.
+     * Returns the corrected Vector3, or the original if no NavGrid.
+     */
+    _validateSpawnPoint(point) {
+        if (!this._navGrid) return point;
+        const g = this._navGrid.worldToGrid(point.x, point.z);
+        // Must be walkable AND above water surface (y = -0.3)
+        if (this._navGrid.isWalkable(g.col, g.row) && point.y >= -0.3) return point;
+        const nearest = this._navGrid._findNearestWalkable(g.col, g.row);
+        if (nearest) {
+            const w = this._navGrid.gridToWorld(nearest.col, nearest.row);
+            point.x = w.x;
+            point.z = w.z;
+            point.y = this.getHeightAt(point.x, point.z);
+        }
+        return point;
+    }
+
     _handleRespawns(soldiers, team) {
         const spawnFlag = team === 'teamA' ? this.flags[0] : this.flags[this.flags.length - 1];
         const threatMap = team === 'teamA' ? this.threatMapA : this.threatMapB;
@@ -333,6 +363,9 @@ export class AIManager {
                 );
                 spawnPoint.y = this.getHeightAt(spawnPoint.x, spawnPoint.z);
             }
+
+            // Ensure spawn point is on a walkable cell
+            this._validateSpawnPoint(spawnPoint);
 
             soldier.respawn(new THREE.Vector3(spawnPoint.x, Math.max(spawnPoint.y, 1), spawnPoint.z));
         }

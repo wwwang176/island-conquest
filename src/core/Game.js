@@ -11,6 +11,7 @@ import { ScoreManager } from '../systems/ScoreManager.js';
 import { SpawnSystem } from '../systems/SpawnSystem.js';
 import { AIManager } from '../ai/AIManager.js';
 import { TracerSystem } from '../vfx/TracerSystem.js';
+import { ImpactVFX } from '../vfx/ImpactVFX.js';
 import { Minimap } from '../ui/Minimap.js';
 import { KillFeed } from '../ui/KillFeed.js';
 import { SpectatorMode } from './SpectatorMode.js';
@@ -68,6 +69,9 @@ export class Game {
         // Tracer VFX
         this.tracerSystem = new TracerSystem(this.scene);
 
+        // Impact particle VFX
+        this.impactVFX = new ImpactVFX(this.scene);
+
         // AI Manager (24 COMs total: 12 per team)
         this.aiManager = new AIManager(
             this.scene, this.physics, this.flags, this.coverSystem,
@@ -75,23 +79,9 @@ export class Game {
             this.eventBus
         );
         this.aiManager.tracerSystem = this.tracerSystem;
-        this.aiManager.navGrid = this.island.buildNavGrid();
+        this.aiManager.impactVFX = this.impactVFX;
 
-        // Threat map visualization (toggle with T key: off → A → B → off)
-        this.aiManager.threatMapA.createVisualization(this.scene);
-        this.aiManager.threatMapB.createVisualization(this.scene);
-        this._threatVisState = 1; // 0=off, 1=teamA, 2=teamB — start with teamA visible
-        this.aiManager.threatMapA.setVisible(true);
-
-        // NavGrid blocked-cell visualization (toggle with B key)
-        this.island.navGrid.createBlockedVisualization(
-            this.scene, (x, z) => this.island.getHeightAt(x, z)
-        );
-        this.island.navGrid.setBlockedVisible(false); // off by default
-
-        // Spectator mode
-        this.spectator = new SpectatorMode(this.camera, this.input, this.aiManager);
-        this.spectator.activate();
+        this._threatVisState = 0; // 0=off, 1=teamA, 2=teamB
 
         // HUD elements
         this._createAllHUD();
@@ -106,11 +96,12 @@ export class Game {
         this.eventBus.on('kill', (data) => this._onKill(data));
         this.eventBus.on('aiFired', (data) => this._onAIFired(data));
 
-        // Blocker / pointer lock
+        // Blocker / pointer lock — show loading state
         this.blocker = document.getElementById('blocker');
-        this._updateBlockerText();
+        this.blocker.querySelector('p').textContent = 'Loading...';
+        this.blocker.style.cursor = 'default';
         this.blocker.addEventListener('click', () => {
-            if (!this.paused) this.input.requestPointerLock();
+            if (this._ready && !this.paused) this.input.requestPointerLock();
         });
         document.addEventListener('pointerlockchange', () => {
             if (document.pointerLockElement) {
@@ -126,8 +117,9 @@ export class Game {
         // Resize
         window.addEventListener('resize', () => this._onResize());
 
-        // Start
-        this._animate();
+        // Build NavGrid in Worker, then start the game
+        this._ready = false;
+        this._initNavGrid();
     }
 
     _setupLighting() {
@@ -155,10 +147,35 @@ export class Game {
         }
     }
 
+    async _initNavGrid() {
+        const { navGrid, heightGrid } = await this.island.buildNavGridAsync();
+        this.aiManager.setNavGrid(navGrid, heightGrid);
+
+        // Threat map visualization (must be after heightGrid is set so mesh follows terrain)
+        this.aiManager.threatMapA.createVisualization(this.scene);
+        this.aiManager.threatMapB.createVisualization(this.scene);
+
+        // NavGrid blocked-cell visualization (toggle with B key)
+        navGrid.createBlockedVisualization(
+            this.scene, (x, z) => this.island.getHeightAt(x, z)
+        );
+        navGrid.setBlockedVisible(false);
+
+        // Spectator mode
+        this.spectator = new SpectatorMode(this.camera, this.input, this.aiManager);
+        this.spectator.activate();
+
+        // Ready — update blocker and start game loop
+        this._ready = true;
+        this.blocker.style.cursor = 'pointer';
+        this._updateBlockerText();
+        this._animate();
+    }
+
     // ───── Mode Switching ─────
 
     _onGlobalKey(e) {
-        if (this.paused) return;
+        if (this.paused || !this._ready) return;
 
         // Threat map visualization toggle (works in any mode)
         if (e.code === 'KeyT') {
@@ -168,7 +185,7 @@ export class Game {
         }
 
         // NavGrid blocked-cell visualization toggle
-        if (e.code === 'KeyB') {
+        if (e.code === 'KeyB' && this.island.navGrid) {
             const vis = this.island.navGrid._blockedVis;
             if (vis) vis.visible = !vis.visible;
         }
@@ -201,6 +218,7 @@ export class Game {
         if (!this.player) {
             this.player = new Player(this.scene, this.camera, this.physics, this.input, this.eventBus);
             this.player.weapon.tracerSystem = this.tracerSystem;
+            this.player.weapon.impactVFX = this.impactVFX;
         }
 
         this.player.team = team;
@@ -283,6 +301,7 @@ export class Game {
         this._createDamageIndicator();
         this._createDeathScreen();
         this._createGameOverScreen();
+        this._createKeyHints();
     }
 
     _createCrosshair() {
@@ -370,6 +389,24 @@ export class Game {
             </div>`;
         document.body.appendChild(el);
         this.gameOverScreen = el;
+    }
+
+    _createKeyHints() {
+        const el = document.createElement('div');
+        el.id = 'key-hints';
+        el.style.cssText = `position:fixed;bottom:12px;left:12px;
+            font-family:Consolas,monospace;font-size:12px;color:rgba(255,255,255,0.5);
+            line-height:1.6;pointer-events:none;z-index:100;`;
+        el.innerHTML = [
+            '<b style="color:rgba(255,255,255,0.7)">Keys</b>',
+            '<span style="color:#fff">T</span> Threat map',
+            '<span style="color:#fff">B</span> NavGrid',
+            '<span style="color:#fff">Tab</span> Next COM',
+            '<span style="color:#fff">V</span> Camera mode',
+            '<span style="color:#fff">1/2</span> Join team',
+            '<span style="color:#fff">Esc</span> Leave team',
+        ].join('<br>');
+        document.body.appendChild(el);
     }
 
     _updateHUD() {
@@ -546,6 +583,9 @@ export class Game {
 
         // Update tracers
         this.tracerSystem.update(dt);
+
+        // Update impact particles
+        this.impactVFX.update(dt);
 
         // Update AI
         this.aiManager.update(dt, this.island.collidables);
