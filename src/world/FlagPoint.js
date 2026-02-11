@@ -5,11 +5,12 @@ import * as THREE from 'three';
  * Handles visual representation and capture state.
  */
 export class FlagPoint {
-    constructor(scene, position, name, index) {
+    constructor(scene, position, name, index, getHeightAt) {
         this.scene = scene;
         this.name = name;
         this.index = index;
         this.position = position.clone();
+        this.getHeightAt = getHeightAt || null;
 
         // Capture state
         this.owner = 'neutral';     // 'neutral', 'teamA', 'teamB'
@@ -52,8 +53,8 @@ export class FlagPoint {
         this.flag.castShadow = true;
         this.group.add(this.flag);
 
-        // Capture zone ring (circle on ground)
-        const ringGeo = new THREE.RingGeometry(this.captureRadius - 0.3, this.captureRadius, 32);
+        // Capture zone ring (terrain-conforming)
+        const ringGeo = this._buildTerrainRingGeo(this.captureRadius - 0.3, this.captureRadius, 64);
         this.ringMat = new THREE.MeshBasicMaterial({
             color: this.colors.neutral,
             transparent: true,
@@ -61,12 +62,10 @@ export class FlagPoint {
             side: THREE.DoubleSide,
         });
         const ring = new THREE.Mesh(ringGeo, this.ringMat);
-        ring.rotation.x = -Math.PI / 2;
-        ring.position.y = 0.05;
         this.group.add(ring);
 
-        // Capture zone fill (shows capture progress)
-        const fillGeo = new THREE.CircleGeometry(this.captureRadius - 0.3, 32);
+        // Capture zone fill (terrain-conforming)
+        const fillGeo = this._buildTerrainDiscGeo(this.captureRadius - 0.3, 64, 6);
         this.fillMat = new THREE.MeshBasicMaterial({
             color: this.colors.neutral,
             transparent: true,
@@ -74,8 +73,6 @@ export class FlagPoint {
             side: THREE.DoubleSide,
         });
         this.fill = new THREE.Mesh(fillGeo, this.fillMat);
-        this.fill.rotation.x = -Math.PI / 2;
-        this.fill.position.y = 0.03;
         this.group.add(this.fill);
 
         // Flag label (floating text sprite)
@@ -98,6 +95,96 @@ export class FlagPoint {
         this.progressBarFill.position.z = 0.01;
         this.progressBarFill.scale.x = 0;
         this.group.add(this.progressBarFill);
+    }
+
+    /** Build a ring geometry that conforms to terrain height. */
+    _buildTerrainRingGeo(innerR, outerR, segments) {
+        const pos = this.position;
+        const geo = new THREE.BufferGeometry();
+        const vertices = [];
+        const indices = [];
+
+        for (let i = 0; i <= segments; i++) {
+            const angle = (i / segments) * Math.PI * 2;
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+
+            // Inner vertex
+            const ix = cos * innerR;
+            const iz = sin * innerR;
+            const iy = this.getHeightAt
+                ? this.getHeightAt(pos.x + ix, pos.z + iz) - pos.y + 0.1
+                : 0.05;
+            vertices.push(ix, iy, iz);
+
+            // Outer vertex
+            const ox = cos * outerR;
+            const oz = sin * outerR;
+            const oy = this.getHeightAt
+                ? this.getHeightAt(pos.x + ox, pos.z + oz) - pos.y + 0.1
+                : 0.05;
+            vertices.push(ox, oy, oz);
+
+            if (i < segments) {
+                const base = i * 2;
+                indices.push(base, base + 1, base + 2);
+                indices.push(base + 1, base + 3, base + 2);
+            }
+        }
+
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        geo.setIndex(indices);
+        geo.computeVertexNormals();
+        return geo;
+    }
+
+    /** Build a filled disc geometry that conforms to terrain height. */
+    _buildTerrainDiscGeo(radius, angularSegments, radialSegments) {
+        const pos = this.position;
+        const geo = new THREE.BufferGeometry();
+        const vertices = [];
+        const indices = [];
+
+        // Center vertex
+        const cy = this.getHeightAt
+            ? this.getHeightAt(pos.x, pos.z) - pos.y + 0.08
+            : 0.03;
+        vertices.push(0, cy, 0);
+
+        for (let r = 1; r <= radialSegments; r++) {
+            const radius_r = (r / radialSegments) * radius;
+            for (let i = 0; i <= angularSegments; i++) {
+                const angle = (i / angularSegments) * Math.PI * 2;
+                const vx = Math.cos(angle) * radius_r;
+                const vz = Math.sin(angle) * radius_r;
+                const vy = this.getHeightAt
+                    ? this.getHeightAt(pos.x + vx, pos.z + vz) - pos.y + 0.08
+                    : 0.03;
+                vertices.push(vx, vy, vz);
+            }
+        }
+
+        const ringVerts = angularSegments + 1;
+
+        // First ring connects to center
+        for (let i = 0; i < angularSegments; i++) {
+            indices.push(0, 1 + i, 1 + i + 1);
+        }
+
+        // Subsequent rings
+        for (let r = 1; r < radialSegments; r++) {
+            const curr = 1 + r * ringVerts;
+            const prev = 1 + (r - 1) * ringVerts;
+            for (let i = 0; i < angularSegments; i++) {
+                indices.push(prev + i, curr + i, curr + i + 1);
+                indices.push(prev + i, curr + i + 1, prev + i + 1);
+            }
+        }
+
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        geo.setIndex(indices);
+        geo.computeVertexNormals();
+        return geo;
     }
 
     _createLabel(text) {

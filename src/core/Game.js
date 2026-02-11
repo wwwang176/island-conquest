@@ -143,7 +143,7 @@ export class Game {
         const flagPositions = this.island.getFlagPositions();
         const names = ['A', 'B', 'C', 'D', 'E'];
         for (let i = 0; i < flagPositions.length; i++) {
-            this.flags.push(new FlagPoint(this.scene, flagPositions[i], names[i], i));
+            this.flags.push(new FlagPoint(this.scene, flagPositions[i], names[i], i, (x, z) => this.island.getHeightAt(x, z)));
         }
     }
 

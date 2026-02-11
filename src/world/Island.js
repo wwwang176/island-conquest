@@ -19,7 +19,7 @@ export class Island {
         this.depth = 120;
         this.segW = 150;    // terrain mesh resolution
         this.segD = 60;
-        this.maxHeight = 18;
+        this.maxHeight = 9;
 
         // Store height data for physics and spawning
         this.heightData = [];

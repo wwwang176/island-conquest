@@ -16,7 +16,7 @@ const PARTICLE_TYPES = {
         gravity: 9.8,
     },
     water: {
-        colors: [new THREE.Color(0xaaddff), new THREE.Color(0xffffff)],
+        colors: [new THREE.Color(0xffffff), new THREE.Color(0xeeeeff)],
         count: 10,
         sizeMin: 0.6, sizeMax: 1.25,
         life: 0.5,
