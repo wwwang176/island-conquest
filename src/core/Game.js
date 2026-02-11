@@ -155,10 +155,6 @@ export class Game {
         this.aiManager.threatMapA.createVisualization(this.scene);
         this.aiManager.threatMapB.createVisualization(this.scene);
 
-        // Fog map visualization
-        this.aiManager.fogMapA.createVisualization(this.scene);
-        this.aiManager.fogMapB.createVisualization(this.scene);
-
         // NavGrid blocked-cell visualization (toggle with B key)
         navGrid.createBlockedVisualization(
             this.scene, (x, z) => this.island.getHeightAt(x, z)
@@ -186,13 +182,6 @@ export class Game {
             this._threatVisState = (this._threatVisState + 1) % 3;
             this.aiManager.threatMapA.setVisible(this._threatVisState === 1);
             this.aiManager.threatMapB.setVisible(this._threatVisState === 2);
-        }
-
-        // Fog map visualization toggle (F key: off → teamA → teamB → off)
-        if (e.code === 'KeyF') {
-            this._fogVisState = ((this._fogVisState || 0) + 1) % 3;
-            this.aiManager.fogMapA.setVisible(this._fogVisState === 1);
-            this.aiManager.fogMapB.setVisible(this._fogVisState === 2);
         }
 
         // NavGrid blocked-cell visualization toggle
@@ -411,7 +400,6 @@ export class Game {
         el.innerHTML = [
             '<b style="color:rgba(255,255,255,0.7)">Keys</b>',
             '<span style="color:#fff">T</span> Threat map',
-            '<span style="color:#fff">F</span> Fog map',
             '<span style="color:#fff">B</span> NavGrid',
             '<span style="color:#fff">Tab</span> Next COM',
             '<span style="color:#fff">V</span> Camera mode',

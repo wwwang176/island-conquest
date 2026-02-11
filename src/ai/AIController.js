@@ -80,9 +80,6 @@ export class AIController {
 
         // ThreatMap (set by AIManager)
         this.threatMap = null;
-        // FogMap (set by AIManager)
-        this.fogMap = null;
-
         // Pathfinding
         this.navGrid = null;         // set by AIManager
         this.currentPath = [];       // [{x, z}, ...]
@@ -135,8 +132,7 @@ export class AIController {
                     if (!ctx.threatMap) return false;
                     const pos = ctx.soldier.getPosition();
                     const threat = ctx.threatMap.getThreat(pos.x, pos.z);
-                    const fog = ctx.fogMap ? ctx.fogMap.getFog(pos.x, pos.z) * 0.5 : 0;
-                    return (threat + fog) > ctx.personality.spatialCaution;
+                    return threat > ctx.personality.spatialCaution;
                 }),
                 new Action(() => ctx._actionSeekCover()),
             ]),
@@ -726,8 +722,7 @@ export class AIController {
         }
 
         const threatData = this.threatMap ? this.threatMap.threat : null;
-        const fogData = this.fogMap ? this.fogMap.fog : null;
-        const path = this.navGrid.findPath(myPos.x, myPos.z, this.moveTarget.x, this.moveTarget.z, threatData, fogData);
+        const path = this.navGrid.findPath(myPos.x, myPos.z, this.moveTarget.x, this.moveTarget.z, threatData);
         if (path === null) {
             // Genuinely no path — stay put, wait for BT to pick a new target
             this.currentPath = [];
