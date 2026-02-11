@@ -25,11 +25,11 @@ export function findFlankPosition(myPos, enemyPos, coverSystem, side = 1) {
     const perpX = _v.z * side;
     const perpZ = -_v.x * side;
 
-    // Flank position: 12m to the side of enemy, at similar distance
+    // Flank position: 18m to the side of enemy, at similar distance
     const flankPos = new THREE.Vector3(
-        enemyPos.x + perpX * 12 + _v.x * (dist * 0.5),
+        enemyPos.x + perpX * 18 + _v.x * (dist * 0.5),
         myPos.y,
-        enemyPos.z + perpZ * 12 + _v.z * (dist * 0.5)
+        enemyPos.z + perpZ * 18 + _v.z * (dist * 0.5)
     );
 
     // Try to snap to nearby cover if available

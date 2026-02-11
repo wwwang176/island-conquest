@@ -93,7 +93,11 @@ export class AIManager {
     /**
      * Set the navigation grid so AI can pathfind around obstacles.
      */
-    set navGrid(grid) {
+    /**
+     * Set navigation grid. If prebuilt heightGrid is provided (from Worker),
+     * uses it directly instead of recomputing on main thread.
+     */
+    setNavGrid(grid, heightGrid) {
         for (const ctrl of [...this.teamA.controllers, ...this.teamB.controllers]) {
             ctrl.navGrid = grid;
         }
@@ -101,9 +105,19 @@ export class AIManager {
         this.threatMapA.navGrid = grid;
         this.threatMapB.navGrid = grid;
         this._navGrid = grid;
-        // Build height grids for terrain LOS
-        this.threatMapA.buildHeightGrid(this.getHeightAt);
-        this.threatMapB.buildHeightGrid(this.getHeightAt);
+        // Use prebuilt height grid or compute on main thread
+        if (heightGrid) {
+            this.threatMapA.heightGrid = heightGrid;
+            this.threatMapB.heightGrid = heightGrid;
+        } else {
+            this.threatMapA.buildHeightGrid(this.getHeightAt);
+            this.threatMapB.buildHeightGrid(this.getHeightAt);
+        }
+    }
+
+    // Keep setter for backward compatibility
+    set navGrid(grid) {
+        this.setNavGrid(grid, null);
     }
 
     /**
@@ -237,33 +251,90 @@ export class AIManager {
 
     _handleRespawns(soldiers, team) {
         const spawnFlag = team === 'teamA' ? this.flags[0] : this.flags[this.flags.length - 1];
+        const threatMap = team === 'teamA' ? this.threatMapA : this.threatMapB;
+        const teamData = team === 'teamA' ? this.teamA : this.teamB;
 
         for (const soldier of soldiers) {
-            if (soldier.canRespawn()) {
-                // Find a spawn point near the most forward team-owned flag
-                let spawnPos = spawnFlag.position.clone();
+            if (!soldier.canRespawn()) continue;
 
-                // Pick owned flag farthest from base (most forward)
-                const basePos = spawnFlag.position;
-                let bestDist = 0;
-                for (const flag of this.flags) {
-                    if (flag.owner === team) {
-                        const d = flag.position.distanceTo(basePos);
-                        if (d > bestDist) {
-                            bestDist = d;
-                            spawnPos = flag.position.clone();
-                        }
+            // Find the most forward owned flag (for fallback)
+            let forwardFlagPos = spawnFlag.position.clone();
+            const basePos = spawnFlag.position;
+            let bestDist = 0;
+            for (const flag of this.flags) {
+                if (flag.owner === team) {
+                    const d = flag.position.distanceTo(basePos);
+                    if (d > bestDist) {
+                        bestDist = d;
+                        forwardFlagPos = flag.position.clone();
                     }
                 }
-
-                const angle = Math.random() * Math.PI * 2;
-                const dist = 8 + Math.random() * 7;
-                const x = spawnPos.x + Math.cos(angle) * dist;
-                const z = spawnPos.z + Math.sin(angle) * dist;
-                const y = this.getHeightAt(x, z);
-
-                soldier.respawn(new THREE.Vector3(x, Math.max(y, 1), z));
             }
+
+            let spawnPoint = null;
+
+            // ── Priority 1: Safe teammate spawn ──
+            const now = performance.now();
+            const allySoldiers = teamData.soldiers;
+            let bestAlly = null;
+            let bestAllyFrontDist = -1;
+
+            for (const ally of allySoldiers) {
+                if (!ally.alive || ally === soldier) continue;
+                const allyPos = ally.getPosition();
+                // Must be in low-threat area
+                const threat = threatMap.getThreat(allyPos.x, allyPos.z);
+                if (threat >= 0.3) continue;
+                // Must not have been damaged in last 10 seconds
+                if (now - ally.lastDamagedTime < 10000) continue;
+                // Prefer allies closer to front line (farther from base)
+                const frontDist = allyPos.distanceTo(basePos);
+                if (frontDist > bestAllyFrontDist) {
+                    bestAllyFrontDist = frontDist;
+                    bestAlly = ally;
+                }
+            }
+
+            if (bestAlly) {
+                const allyPos = bestAlly.getPosition();
+                const angle = Math.random() * Math.PI * 2;
+                const dist = 5 + Math.random() * 3; // 5-8m
+                spawnPoint = new THREE.Vector3(
+                    allyPos.x + Math.cos(angle) * dist,
+                    0,
+                    allyPos.z + Math.sin(angle) * dist
+                );
+                spawnPoint.y = this.getHeightAt(spawnPoint.x, spawnPoint.z);
+            }
+
+            // ── Priority 2: ThreatMap safe zone near flag ──
+            if (!spawnPoint) {
+                const safePos = threatMap.findSafePosition(forwardFlagPos, 30);
+                if (safePos) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = 3 + Math.random() * 2; // 3-5m
+                    spawnPoint = new THREE.Vector3(
+                        safePos.x + Math.cos(angle) * dist,
+                        0,
+                        safePos.z + Math.sin(angle) * dist
+                    );
+                    spawnPoint.y = this.getHeightAt(spawnPoint.x, spawnPoint.z);
+                }
+            }
+
+            // ── Priority 3: Fallback — farther from flag center (15-25m) ──
+            if (!spawnPoint) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = 15 + Math.random() * 10; // 15-25m
+                spawnPoint = new THREE.Vector3(
+                    forwardFlagPos.x + Math.cos(angle) * dist,
+                    0,
+                    forwardFlagPos.z + Math.sin(angle) * dist
+                );
+                spawnPoint.y = this.getHeightAt(spawnPoint.x, spawnPoint.z);
+            }
+
+            soldier.respawn(new THREE.Vector3(spawnPoint.x, Math.max(spawnPoint.y, 1), spawnPoint.z));
         }
     }
 }

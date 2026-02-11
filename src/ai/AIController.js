@@ -519,12 +519,17 @@ export class AIController {
         const dist = myPos.distanceTo(enemyPos);
 
         // Flanker personality: request suppression + move to flank
-        if (this.personality.name === 'Flanker' && this.squad && this.teamIntel) {
+        // Also: Rusher flanks during deep-flank missions (uses opposite side)
+        const isFlanker = this.personality.name === 'Flanker';
+        const isDeepFlankRusher = this.personality.name === 'Rusher' && this.squad?.isDeepFlank;
+
+        if ((isFlanker || isDeepFlankRusher) && this.squad && this.teamIntel) {
             const contact = this.teamIntel.getContactFor(this.targetEnemy);
             if (contact) {
                 this.squad.requestSuppression(contact);
+                const side = isDeepFlankRusher ? -this.flankSide : this.flankSide;
                 const flankPos = findFlankPosition(
-                    myPos, enemyPos, this.coverSystem, this.flankSide
+                    myPos, enemyPos, this.coverSystem, side
                 );
                 this.moveTarget = flankPos;
                 this._validateMoveTarget();
@@ -537,7 +542,21 @@ export class AIController {
         // Strafe while shooting (move perpendicular to enemy)
         const toEnemy = _v1.subVectors(enemyPos, myPos).normalize();
         const strafeDir = new THREE.Vector3(toEnemy.z, 0, -toEnemy.x);
-        const strafeSide = Math.sin(Date.now() * 0.002 + this.soldier.id * 7) > 0 ? 1 : -1;
+        let strafeSide = Math.sin(Date.now() * 0.002 + this.soldier.id * 7) > 0 ? 1 : -1;
+
+        // Ally-aware strafe: if an ally is already on the chosen side, flip
+        if (this.allies) {
+            let alliesOnSide = 0;
+            for (const a of this.allies) {
+                if (!a.alive || a === this.soldier) continue;
+                const aPos = a.getPosition();
+                if (myPos.distanceTo(aPos) > 15) continue;
+                const toAlly = new THREE.Vector3(aPos.x - myPos.x, 0, aPos.z - myPos.z);
+                const dot = strafeDir.x * toAlly.x + strafeDir.z * toAlly.z;
+                if (dot * strafeSide > 0) alliesOnSide++;
+            }
+            if (alliesOnSide >= 2) strafeSide *= -1;
+        }
 
         if (dist > 35) {
             // Far away: move toward enemy position directly — let A* handle routing
@@ -578,13 +597,13 @@ export class AIController {
         }
 
         if (dist < this.targetFlag.captureRadius * 0.7) {
-            // Inside capture zone — hold position with slight movement
+            // Inside capture zone — spread around flag by soldier index
+            const baseAngle = (this.soldier.id / 12) * Math.PI * 2;
+            const jitter = (Math.random() - 0.5) * 0.6;
+            const angle = baseAngle + jitter;
+            const radius = 6 + Math.random() * 4; // 6-10m from flag
             this.moveTarget = flagPos.clone().add(
-                new THREE.Vector3(
-                    (Math.random() - 0.5) * 4,
-                    0,
-                    (Math.random() - 0.5) * 4
-                )
+                new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius)
             );
             this.missionPressure = 0.0;
         } else {
@@ -749,6 +768,42 @@ export class AIController {
         }
 
         _v1.normalize();
+
+        // ── Ally separation force ──
+        // Strength scales with context: high risk → strong, combat → moderate, idle → mild
+        let sepWeight;
+        if (this.riskLevel > 0.5)         sepWeight = 0.30;
+        else if (this.targetEnemy !== null) sepWeight = 0.20;
+        else                               sepWeight = 0.08;
+
+        const minSepDist = 3;   // below this distance, repulsion spikes
+        const maxSepRange = 12; // ignore allies farther than this
+        let sepX = 0, sepZ = 0;
+
+        if (this.allies) {
+            for (const a of this.allies) {
+                if (!a.alive || a === this.soldier) continue;
+                const aPos = a.getPosition();
+                const adx = myPos.x - aPos.x;
+                const adz = myPos.z - aPos.z;
+                const aDist = Math.sqrt(adx * adx + adz * adz);
+                if (aDist > maxSepRange || aDist < 0.01) continue;
+                // Weight: 1/dist² — very strong when close
+                const strength = 1 / (Math.max(aDist, minSepDist) * Math.max(aDist, minSepDist));
+                sepX += (adx / aDist) * strength;
+                sepZ += (adz / aDist) * strength;
+            }
+        }
+        const sepLen = Math.sqrt(sepX * sepX + sepZ * sepZ);
+        if (sepLen > 0.001) {
+            sepX /= sepLen;
+            sepZ /= sepLen;
+            _v1.x = _v1.x * (1 - sepWeight) + sepX * sepWeight;
+            _v1.z = _v1.z * (1 - sepWeight) + sepZ * sepWeight;
+            // Re-normalize
+            const rLen = Math.sqrt(_v1.x * _v1.x + _v1.z * _v1.z);
+            if (rLen > 0.001) { _v1.x /= rLen; _v1.z /= rLen; }
+        }
 
         // Wall sliding disabled — A* handles obstacle avoidance
         let movementBlocked = false;

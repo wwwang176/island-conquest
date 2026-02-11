@@ -40,6 +40,9 @@ export class Soldier {
         this.lastDamageDirection = null;
         this.damageIndicatorTimer = 0;
 
+        // Last time this soldier took damage (for safe-respawn checks)
+        this.lastDamagedTime = 0;
+
         // Ragdoll death effect
         this.ragdollActive = false;
     }
@@ -108,6 +111,7 @@ export class Soldier {
         const actualDamage = headshot ? amount * 2 : amount;
         this.hp = Math.max(0, this.hp - actualDamage);
         this.timeSinceLastDamage = 0;
+        this.lastDamagedTime = performance.now();
 
         // Track damage direction for HUD
         if (fromPosition) {

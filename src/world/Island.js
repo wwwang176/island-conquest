@@ -19,13 +19,16 @@ export class Island {
         this.depth = 120;
         this.segW = 150;    // terrain mesh resolution
         this.segD = 60;
-        this.maxHeight = 9;
+        this.maxHeight = 18;
 
         // Store height data for physics and spawning
         this.heightData = [];
 
         // All generated meshes for raycasting
         this.collidables = [];
+
+        // Obstacle descriptors for Worker-based NavGrid building
+        this._obstacleDescs = [];
 
         this._generateTerrain();
         this._generateWater();
@@ -193,17 +196,61 @@ export class Island {
     }
 
     /**
-     * Build navigation grid for AI pathfinding.
+     * Build navigation grid asynchronously using a Web Worker.
+     * Returns a Promise that resolves to the NavGrid.
      */
-    buildNavGrid() {
-        // Force world matrix computation for all collidables before raycasting.
-        // Without this, meshes added to the scene but not yet rendered have
-        // identity matrixWorld, causing raycasts to miss them entirely.
-        this.scene.updateMatrixWorld(true);
-
-        // NavGrid uses higher resolution (1m cells) than terrain mesh (2m segments)
+    buildNavGridAsync() {
         const navCols = this.segW * 2;  // 300
         const navRows = this.segD * 2;  // 120
+
+        return new Promise((resolve) => {
+            const worker = new Worker(
+                new URL('../workers/navgrid-worker.js', import.meta.url),
+                { type: 'module' }
+            );
+
+            // Copy heightData — original stays on main thread for getHeightAt()
+            const heightDataCopy = new Float32Array(this.heightData);
+
+            // Collect transferables: copied heightData + deform arrays
+            const transferables = [heightDataCopy.buffer];
+            for (const desc of this._obstacleDescs) {
+                if (desc.deform) transferables.push(desc.deform.buffer);
+            }
+
+            worker.postMessage({
+                obstacles: this._obstacleDescs,
+                heightData: heightDataCopy,
+                width: this.width,
+                depth: this.depth,
+                segW: this.segW,
+                segD: this.segD,
+                navCols,
+                navRows,
+            }, transferables);
+
+            worker.onmessage = (e) => {
+                const { grid, rawGrid, heightGrid } = e.data;
+
+                const navGrid = new NavGrid(this.width, this.depth, navCols, navRows);
+                navGrid.grid = grid;
+                navGrid._rawGrid = rawGrid;
+                this.navGrid = navGrid;
+
+                worker.terminate();
+                resolve({ navGrid, heightGrid });
+            };
+        });
+    }
+
+    /**
+     * Synchronous fallback — build navigation grid on main thread.
+     */
+    buildNavGrid() {
+        this.scene.updateMatrixWorld(true);
+
+        const navCols = this.segW * 2;
+        const navRows = this.segD * 2;
         const navGrid = new NavGrid(this.width, this.depth, navCols, navRows);
         navGrid.build(
             (x, z) => this.getHeightAt(x, z),
@@ -308,21 +355,33 @@ export class Island {
         const mat = new THREE.MeshLambertMaterial({ color: 0x777777, flatShading: true });
         const rock = new THREE.Mesh(geo, mat);
 
-        // Deform vertices for organic look
+        // Deform vertices for organic look — also capture multipliers for Worker
         const pos = geo.attributes.position;
+        const deform = new Float32Array(pos.count * 3);
         for (let i = 0; i < pos.count; i++) {
             const vx = pos.getX(i);
             const vy = pos.getY(i);
             const vz = pos.getZ(i);
             const noise = this.noise.noise2D(vx * 2 + x, vz * 2 + z) * 0.3;
-            pos.setX(i, vx * (1 + noise));
-            pos.setY(i, vy * (0.6 + Math.abs(noise)));
-            pos.setZ(i, vz * (1 + noise));
+            const mx = 1 + noise;
+            const my = 0.6 + Math.abs(noise);
+            const mz = 1 + noise;
+            pos.setX(i, vx * mx);
+            pos.setY(i, vy * my);
+            pos.setZ(i, vz * mz);
+            deform[i * 3] = mx;
+            deform[i * 3 + 1] = my;
+            deform[i * 3 + 2] = mz;
         }
         geo.computeVertexNormals();
 
+        const rotY = this.noise.noise2D(x * 3, z * 3) * Math.PI;
         rock.position.set(x, h + scale * 0.3, z);
-        rock.rotation.y = this.noise.noise2D(x * 3, z * 3) * Math.PI;
+        rock.rotation.y = rotY;
+
+        this._obstacleDescs.push({
+            type: 'rock', x, y: h + scale * 0.3, z, scale, rotY, deform
+        });
         rock.castShadow = true;
         rock.receiveShadow = true;
         this.scene.add(rock);
@@ -350,11 +409,17 @@ export class Island {
 
     _placeCrate(x, h, z) {
         const size = 0.8 + Math.abs(this.noise.noise2D(x * 2, z * 2)) * 0.6;
-        const geo = new THREE.BoxGeometry(size * 1.2, size, size);
+        const w = size * 1.2, ch = size, d = size;
+        const geo = new THREE.BoxGeometry(w, ch, d);
         const mat = new THREE.MeshLambertMaterial({ color: 0x8B6914, flatShading: true });
         const crate = new THREE.Mesh(geo, mat);
+        const rotY = this.noise.noise2D(x, z) * Math.PI;
         crate.position.set(x, h + size / 2, z);
-        crate.rotation.y = this.noise.noise2D(x, z) * Math.PI;
+        crate.rotation.y = rotY;
+
+        this._obstacleDescs.push({
+            type: 'box', x, y: h + size / 2, z, w, h: ch, d, rotY
+        });
         crate.castShadow = true;
         crate.receiveShadow = true;
         this.scene.add(crate);
@@ -383,6 +448,10 @@ export class Island {
         const rotY = this.noise.noise2D(x * 2, z * 2) * Math.PI;
         sandbag.position.set(x, h + 0.4, z);
         sandbag.rotation.y = rotY;
+
+        this._obstacleDescs.push({
+            type: 'box', x, y: h + 0.4, z, w: 2.5, h: 0.8, d: 0.6, rotY
+        });
         sandbag.castShadow = true;
         sandbag.receiveShadow = true;
         this.scene.add(sandbag);
@@ -413,6 +482,10 @@ export class Island {
         const rotY = this.noise.noise2D(x * 4, z * 4) * Math.PI;
         wall.position.set(x, h + wallH / 2, z);
         wall.rotation.y = rotY;
+
+        this._obstacleDescs.push({
+            type: 'box', x, y: h + wallH / 2, z, w: wallW, h: wallH, d: 0.4, rotY
+        });
         wall.castShadow = true;
         wall.receiveShadow = true;
         this.scene.add(wall);

@@ -15,6 +15,7 @@ export class SquadCoordinator {
         this.team = team;
 
         this.objective = null; // target flag
+        this.isDeepFlank = false; // deep-behind-enemy-lines mode
         this.evalTimer = 0;
         this.evalInterval = 8 + Math.random() * 4; // 8-12s
     }
@@ -61,14 +62,16 @@ export class SquadCoordinator {
         let offsetForward = 0;
         let offsetSide = 0;
 
+        const deepFlank = this.isDeepFlank;
+
         switch (role) {
             case 'Rusher':
-                offsetForward = 8;
+                offsetForward = deepFlank ? 20 : 8;
                 offsetSide = 0;
                 break;
             case 'Flanker':
                 offsetForward = 0;
-                offsetSide = 12 * (controller.flankSide || 1);
+                offsetSide = (deepFlank ? 24 : 12) * (controller.flankSide || 1);
                 break;
             case 'Defender':
                 offsetForward = -5;
@@ -117,6 +120,44 @@ export class SquadCoordinator {
         const captain = this.getCaptain();
         if (!captain) return;
 
+        // ── Deep flank check: when team is far ahead, flankers/rushers infiltrate ──
+        this.isDeepFlank = false;
+        const hasFlankerOrRusher = this.controllers.some(c => {
+            const n = c.personality.name;
+            return n === 'Flanker' || n === 'Rusher';
+        });
+
+        if (hasFlankerOrRusher) {
+            let ownedByUs = 0, ownedByEnemy = 0;
+            for (const f of this.flags) {
+                if (f.owner === this.team) ownedByUs++;
+                else if (f.owner !== null) ownedByEnemy++;
+            }
+            const teamAdvantage = ownedByUs - ownedByEnemy;
+
+            if (teamAdvantage >= 1 && Math.random() < 0.45) {
+                // Pick the deepest enemy flag (farthest from our base)
+                const baseFlag = this.team === 'teamA'
+                    ? this.flags[0] : this.flags[this.flags.length - 1];
+                let deepest = null;
+                let deepestDist = -1;
+                for (const f of this.flags) {
+                    if (f.owner === this.team) continue; // skip our own flags
+                    const d = f.position.distanceTo(baseFlag.position);
+                    if (d > deepestDist) {
+                        deepestDist = d;
+                        deepest = f;
+                    }
+                }
+                if (deepest) {
+                    this.objective = deepest;
+                    this.isDeepFlank = true;
+                    return;
+                }
+            }
+        }
+
+        // ── Normal objective evaluation ──
         const captainPos = captain.soldier.getPosition();
         let bestScore = -Infinity;
         let bestFlag = null;

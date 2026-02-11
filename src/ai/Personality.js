@@ -5,7 +5,7 @@
 
 export const PersonalityTypes = {
     RUSHER:   { name: 'Rusher',   attack: 0.9, defend: 0.1, riskThreshold: 0.75, aimSkill: 0.7, reactionTime: 150, suppressDuration: 2 },
-    DEFENDER: { name: 'Defender', attack: 0.2, defend: 0.9, riskThreshold: 0.45, aimSkill: 0.8, reactionTime: 200, suppressDuration: 4 },
+    DEFENDER: { name: 'Defender', attack: 0.3, defend: 0.9, riskThreshold: 0.45, aimSkill: 0.8, reactionTime: 200, suppressDuration: 4 },
     FLANKER:  { name: 'Flanker',  attack: 0.7, defend: 0.2, riskThreshold: 0.65, aimSkill: 0.75, reactionTime: 180, suppressDuration: 1 },
     SUPPORT:  { name: 'Support',  attack: 0.5, defend: 0.5, riskThreshold: 0.55, aimSkill: 0.7, reactionTime: 200, suppressDuration: 5 },
     SNIPER:   { name: 'Sniper',   attack: 0.4, defend: 0.6, riskThreshold: 0.50, aimSkill: 0.9, reactionTime: 250, suppressDuration: 3 },
