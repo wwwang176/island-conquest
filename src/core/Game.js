@@ -383,6 +383,21 @@ export class Game {
             <div style="color:white;font-family:Arial,sans-serif;text-align:center;">
                 <div style="font-size:36px;font-weight:bold;margin-bottom:10px;">YOU DIED</div>
                 <div id="respawn-timer" style="font-size:20px;color:#ccc;"></div>
+                <div id="weapon-select" style="display:none;margin-top:18px;">
+                    <div style="font-size:14px;color:#aaa;margin-bottom:8px;">Select weapon:</div>
+                    <div style="display:flex;gap:16px;justify-content:center;">
+                        <div id="weapon-ar" style="border:2px solid #4488ff;border-radius:8px;padding:10px 18px;
+                            background:rgba(68,136,255,0.15);cursor:default;min-width:120px;">
+                            <div style="font-size:16px;font-weight:bold;">[1] AR-15</div>
+                            <div style="font-size:12px;color:#aaa;margin-top:4px;">600 RPM &middot; 30 rds</div>
+                        </div>
+                        <div id="weapon-smg" style="border:2px solid #888;border-radius:8px;padding:10px 18px;
+                            background:transparent;cursor:default;min-width:120px;">
+                            <div style="font-size:16px;font-weight:bold;">[2] SMG</div>
+                            <div style="font-size:12px;color:#aaa;margin-top:4px;">900 RPM &middot; 35 rds</div>
+                        </div>
+                    </div>
+                </div>
                 <div id="respawn-prompt" style="font-size:16px;color:#aaa;margin-top:10px;display:none;">
                     Press <b>SPACE</b> to respawn &nbsp; | &nbsp; <b>ESC</b> to spectate
                 </div>
@@ -434,12 +449,14 @@ export class Game {
         // Ammo — only update DOM when values change
         const curAmmo = w.currentAmmo;
         const curReloading = w.isReloading;
-        if (curAmmo !== this._lastAmmo || curReloading !== this._lastReloading) {
+        const curWeaponId = w.weaponId;
+        if (curAmmo !== this._lastAmmo || curReloading !== this._lastReloading || curWeaponId !== this._lastWeaponId) {
             this._lastAmmo = curAmmo;
             this._lastReloading = curReloading;
+            this._lastWeaponId = curWeaponId;
             const reloadText = curReloading ? `<span style="color:#ffaa00">RELOADING...</span>` : '';
             this.ammoHUD.innerHTML = `
-                <div style="font-size:12px;color:#aaa;margin-bottom:4px">AR-15</div>
+                <div style="font-size:12px;color:#aaa;margin-bottom:4px">${w.def.name}</div>
                 <div style="font-size:28px;font-weight:bold">
                     ${curAmmo}<span style="font-size:16px;color:#888"> / ${w.magazineSize}</span>
                 </div>${reloadText}`;
@@ -516,10 +533,29 @@ export class Game {
             this.deathScreen.style.display = 'flex';
             const timer = document.getElementById('respawn-timer');
             const prompt = document.getElementById('respawn-prompt');
+            const weaponSelect = document.getElementById('weapon-select');
+            const weaponAR = document.getElementById('weapon-ar');
+            const weaponSMG = document.getElementById('weapon-smg');
 
             if (p.canRespawn()) {
                 timer.textContent = '';
                 prompt.style.display = 'block';
+                weaponSelect.style.display = 'block';
+
+                // Weapon selection via keys
+                if (this.input.isKeyDown('Digit1')) {
+                    p.selectedWeaponId = 'AR15';
+                }
+                if (this.input.isKeyDown('Digit2')) {
+                    p.selectedWeaponId = 'SMG';
+                }
+
+                // Highlight selected weapon
+                const isAR = p.selectedWeaponId === 'AR15';
+                weaponAR.style.borderColor = isAR ? '#4488ff' : '#888';
+                weaponAR.style.background = isAR ? 'rgba(68,136,255,0.15)' : 'transparent';
+                weaponSMG.style.borderColor = isAR ? '#888' : '#4488ff';
+                weaponSMG.style.background = isAR ? 'transparent' : 'rgba(68,136,255,0.15)';
 
                 if (this.input.isKeyDown('Space')) {
                     const spawnPoints = this.spawnSystem.getSpawnPoints(
@@ -532,6 +568,7 @@ export class Game {
             } else {
                 timer.textContent = `Respawn in ${Math.ceil(p.deathTimer)}s`;
                 prompt.style.display = 'none';
+                weaponSelect.style.display = 'none';
             }
         } else {
             this.deathScreen.style.display = 'none';

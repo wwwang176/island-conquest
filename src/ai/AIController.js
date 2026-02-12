@@ -90,9 +90,11 @@ export class AIController {
         this.hasReacted = false;
         this.aimCorrectionSpeed = 2 + this.personality.aimSkill * 3;
 
-        // Weapon definition (shared with Player)
-        const def = WeaponDefs['AR15'];
+        // Weapon definition (random per soldier)
+        this.weaponId = Math.random() > 0.5 ? 'AR15' : 'SMG';
+        const def = WeaponDefs[this.weaponId];
         this.weaponDef = def;
+        this.soldier.setWeaponModel(this.weaponId);
 
         // Firing state
         this.fireTimer = 0;
@@ -1099,13 +1101,15 @@ export class AIController {
                 this.currentAmmo = this.magazineSize;
                 this.isReloading = false;
             }
-            return; // can't shoot while reloading
+            this.fireTimer = 0;
+            return;
         }
 
         // Auto-reload when empty
         if (this.currentAmmo <= 0) {
             this.isReloading = true;
             this.reloadTimer = this.reloadTime;
+            this.fireTimer = 0;
             return;
         }
 
@@ -1113,12 +1117,18 @@ export class AIController {
         const isSuppressing = this.suppressionTarget && this.suppressionTimer > 0;
 
         if (!isSuppressing) {
-            if (!this.targetEnemy || !this.targetEnemy.alive || !this.hasReacted) return;
+            if (!this.targetEnemy || !this.targetEnemy.alive || !this.hasReacted) {
+                this.fireTimer = 0;
+                return;
+            }
         }
-        if (this.burstCooldown > 0) return;
+        if (this.burstCooldown > 0) {
+            this.fireTimer = 0;
+            return;
+        }
 
         if (this.fireTimer <= 0) {
-            this.fireTimer = this.fireInterval;
+            this.fireTimer += this.fireInterval;
             this._fireShot();
             this.currentAmmo--;
             this.burstCount++;
@@ -1151,7 +1161,7 @@ export class AIController {
 
         // Hitscan
         _raycaster.set(_origin, dir);
-        _raycaster.far = 200;
+        _raycaster.far = this.weaponDef.maxRange;
 
         // Check against all enemies
         _targetMeshes.length = 0;
@@ -1167,7 +1177,7 @@ export class AIController {
         let hitEnv = envHits.length > 0 ? envHits[0] : null;
 
         // Determine closest hit distance for tracer length
-        let tracerDist = 200;
+        let tracerDist = this.weaponDef.maxRange;
         if (hitChar && (!hitEnv || hitChar.distance < hitEnv.distance)) {
             tracerDist = hitChar.distance;
         } else if (hitEnv) {
@@ -1282,6 +1292,18 @@ export class AIController {
         this.suppressionTarget = null;
         this.suppressionTimer = 0;
         this._previouslyVisible.clear();
+        // Random weapon on respawn
+        this.weaponId = Math.random() > 0.5 ? 'AR15' : 'SMG';
+        const def = WeaponDefs[this.weaponId];
+        this.weaponDef = def;
+        this.soldier.setWeaponModel(this.weaponId);
+        this.fireInterval = 60 / def.fireRate;
+        this.magazineSize = def.magazineSize;
+        this.reloadTime = def.reloadTime;
+        this.baseSpread = def.baseSpread;
+        this.maxSpread = def.maxSpread;
+        this.spreadIncreasePerShot = def.spreadIncreasePerShot;
+        this.spreadRecoveryRate = def.spreadRecoveryRate;
         // Reset ammo and spread on respawn
         this.currentAmmo = this.magazineSize;
         this.isReloading = false;

@@ -44,6 +44,7 @@ export class Player {
         this.deathTimer = 0;
         this.respawnDelay = 5;
         this.team = null; // set when joining a team
+        this.selectedWeaponId = 'AR15';
 
         // Damage direction indicator
         this.lastDamageDirection = null;
@@ -81,8 +82,28 @@ export class Player {
         scene.add(this.mesh);
 
         // Weapon
-        this.weapon = new Weapon(scene, camera);
+        this.weapon = new Weapon(scene, camera, this.selectedWeaponId);
         this.shootTargets = [];
+    }
+
+    switchWeapon(weaponId) {
+        // Dispose old merged geometry + material
+        const oldGun = this.weapon.gunGroup.children[0];
+        if (oldGun) { oldGun.geometry.dispose(); oldGun.material.dispose(); }
+
+        // Remove old weapon visuals
+        this.camera.remove(this.weapon.gunGroup);
+        this.camera.remove(this.weapon.muzzleFlash);
+        for (const impact of this.weapon.impactPool) {
+            this.scene.remove(impact);
+        }
+
+        // Create new weapon
+        const tracerSystem = this.weapon.tracerSystem;
+        const impactVFX = this.weapon.impactVFX;
+        this.weapon = new Weapon(this.scene, this.camera, weaponId);
+        this.weapon.tracerSystem = tracerSystem;
+        this.weapon.impactVFX = impactVFX;
     }
 
     _createDebugMesh() {
@@ -284,6 +305,9 @@ export class Player {
         this.hp = this.maxHP;
         this.timeSinceLastDamage = Infinity;
         this.damageIndicatorTimer = 0;
+        if (this.weapon.weaponId !== this.selectedWeaponId) {
+            this.switchWeapon(this.selectedWeaponId);
+        }
         this.weapon.currentAmmo = this.weapon.magazineSize;
         this.weapon.isReloading = false;
         this.body.position.set(position.x, position.y + 1, position.z);

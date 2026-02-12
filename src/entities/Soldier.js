@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 /**
  * Base soldier entity with health, damage, death, and regen.
@@ -152,14 +153,10 @@ export class Soldier {
         leftArm.add(leftArmMesh);
         upperBody.add(leftArm);
 
-        // Gun (slightly right of center, at arm-tip level)
-        const gun = new THREE.Mesh(
-            new THREE.BoxGeometry(0.08, 0.08, 0.5),
-            new THREE.MeshLambertMaterial({ color: 0x333333 })
-        );
-        gun.position.set(0.05, 1.3, -0.45);
-        upperBody.add(gun);
-        this.gunMesh = gun;
+        // Gun — placeholder, replaced by setWeaponModel()
+        this.gunMesh = null;
+        this._gunParent = upperBody;
+        this._createGunMesh('AR15');
 
         group.add(upperBody);
 
@@ -173,6 +170,51 @@ export class Soldier {
         this._walkPhase = 0;
 
         return group;
+    }
+
+    _createGunMesh(weaponId) {
+        if (this.gunMesh) {
+            this._gunParent.remove(this.gunMesh);
+            if (this.gunMesh.geometry) this.gunMesh.geometry.dispose();
+            if (this.gunMesh.material) this.gunMesh.material.dispose();
+        }
+
+        const geos = [];
+
+        if (weaponId === 'SMG') {
+            // SMG: short body + stubby barrel
+            const bodyGeo = new THREE.BoxGeometry(0.08, 0.08, 0.30);
+            bodyGeo.translate(0, 0, 0.10);
+            geos.push(bodyGeo);
+
+            const barrelGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.15, 6);
+            barrelGeo.rotateX(Math.PI / 2);
+            barrelGeo.translate(0, 0.01, -0.15);
+            geos.push(barrelGeo);
+        } else {
+            // AR-15: long body + long barrel
+            const bodyGeo = new THREE.BoxGeometry(0.08, 0.08, 0.50);
+            geos.push(bodyGeo);
+
+            const barrelGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.35, 6);
+            barrelGeo.rotateX(Math.PI / 2);
+            barrelGeo.translate(0, 0.01, -0.42);
+            geos.push(barrelGeo);
+        }
+
+        const merged = mergeGeometries(geos);
+        for (const g of geos) g.dispose();
+
+        const gun = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ color: 0x333333 }));
+        gun.position.set(0.05, 1.3, -0.45);
+        gun.castShadow = false;
+
+        this._gunParent.add(gun);
+        this.gunMesh = gun;
+    }
+
+    setWeaponModel(weaponId) {
+        this._createGunMesh(weaponId);
     }
 
     /**

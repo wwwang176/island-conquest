@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WeaponDefs } from './WeaponDefs.js';
 
 /**
@@ -10,6 +11,7 @@ export class Weapon {
         this.scene = scene;
         this.camera = camera;
 
+        this.weaponId = weaponId;
         const def = WeaponDefs[weaponId];
         this.def = def;
 
@@ -60,31 +62,54 @@ export class Weapon {
     }
 
     _createGunMesh() {
+        // Both weapons anchor stock rear at z ≈ -0.15 (shoulder), difference extends forward
+        // All parts merged into a single geometry to minimize draw calls
+        const geos = [];
+
+        if (this.weaponId === 'SMG') {
+            const stockGeo = new THREE.BoxGeometry(0.04, 0.05, 0.12);
+            stockGeo.translate(0.25, -0.22, -0.09);
+            geos.push(stockGeo);
+
+            const bodyGeo = new THREE.BoxGeometry(0.06, 0.08, 0.30);
+            bodyGeo.translate(0.25, -0.2, -0.30);
+            geos.push(bodyGeo);
+
+            const barrelGeo = new THREE.CylinderGeometry(0.013, 0.013, 0.18, 6);
+            barrelGeo.rotateX(Math.PI / 2);
+            barrelGeo.translate(0.25, -0.17, -0.54);
+            geos.push(barrelGeo);
+
+            const magGeo = new THREE.BoxGeometry(0.045, 0.17, 0.05);
+            magGeo.rotateX(-0.15);
+            magGeo.translate(0.25, -0.32, -0.28);
+            geos.push(magGeo);
+        } else {
+            const stockGeo = new THREE.BoxGeometry(0.05, 0.06, 0.18);
+            stockGeo.translate(0.25, -0.22, -0.06);
+            geos.push(stockGeo);
+
+            const bodyGeo = new THREE.BoxGeometry(0.06, 0.08, 0.55);
+            bodyGeo.translate(0.25, -0.2, -0.425);
+            geos.push(bodyGeo);
+
+            const barrelGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.525, 6);
+            barrelGeo.rotateX(Math.PI / 2);
+            barrelGeo.translate(0.25, -0.17, -0.9625);
+            geos.push(barrelGeo);
+
+            const magGeo = new THREE.BoxGeometry(0.04, 0.15, 0.06);
+            magGeo.rotateX(-0.15);
+            magGeo.translate(0.25, -0.32, -0.40);
+            geos.push(magGeo);
+        }
+
+        const merged = mergeGeometries(geos);
+        for (const g of geos) g.dispose();
+
+        const gun = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ color: 0x333333 }));
         const group = new THREE.Group();
-
-        // Gun body
-        const bodyGeo = new THREE.BoxGeometry(0.06, 0.08, 0.5);
-        const bodyMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
-        const body = new THREE.Mesh(bodyGeo, bodyMat);
-        body.position.set(0.25, -0.2, -0.4);
-        group.add(body);
-
-        // Barrel
-        const barrelGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.3, 6);
-        const barrelMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
-        const barrel = new THREE.Mesh(barrelGeo, barrelMat);
-        barrel.rotation.x = Math.PI / 2;
-        barrel.position.set(0.25, -0.17, -0.7);
-        group.add(barrel);
-
-        // Magazine
-        const magGeo = new THREE.BoxGeometry(0.04, 0.15, 0.06);
-        const magMat = new THREE.MeshLambertMaterial({ color: 0x444444 });
-        const mag = new THREE.Mesh(magGeo, magMat);
-        mag.position.set(0.25, -0.32, -0.35);
-        mag.rotation.x = -0.15;
-        group.add(mag);
-
+        group.add(gun);
         return group;
     }
 
@@ -97,7 +122,7 @@ export class Weapon {
         });
         const flash = new THREE.Mesh(geo, mat);
         flash.visible = false;
-        flash.position.set(0.25, -0.17, -0.85);
+        flash.position.set(0.25, -0.17, this.weaponId === 'SMG' ? -0.63 : -1.225);
         this.camera.add(flash);
         return flash;
     }
@@ -128,7 +153,7 @@ export class Weapon {
         }
 
         this.currentAmmo--;
-        this.fireCooldown = this.fireInterval;
+        this.fireCooldown += this.fireInterval;
 
         // Apply spread
         const spreadDir = direction.clone();
