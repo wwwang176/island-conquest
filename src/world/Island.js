@@ -237,6 +237,7 @@ export class Island {
                 const navGrid = new NavGrid(this.width, this.depth, navCols, navRows);
                 navGrid.grid = grid;
                 navGrid._rawGrid = rawGrid;
+                navGrid._buildProxCost();
                 this.navGrid = navGrid;
 
                 worker.terminate();

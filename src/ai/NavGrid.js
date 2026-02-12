@@ -16,10 +16,12 @@ export class NavGrid {
 
         this.grid = new Uint8Array(cols * rows); // 0=walkable, 1=blocked
 
-        // Reusable A* buffers
+        // Reusable A* buffers (generation-based — no fill() needed per search)
         this.gCost = new Float32Array(cols * rows);
-        this.closed = new Uint8Array(cols * rows);
+        this.fCost = new Float32Array(cols * rows);
         this.parent = new Int32Array(cols * rows);
+        this._gen = 0;                                  // current generation (uses bits 0-30)
+        this._genBuf = new Uint32Array(cols * rows);     // per-cell: gen stamp, bit 31 = closed
 
         // 8 directions: [dcol, drow, cost]
         this.dirs = [
@@ -127,6 +129,9 @@ export class NavGrid {
         // This prevents A* from routing paths that brush against obstacle edges,
         // where the COM's collision radius would still hit the obstacle.
         this._inflate();
+
+        // Build proximity cost: walkable cells near obstacles cost more
+        this._buildProxCost();
     }
 
     /**
@@ -151,6 +156,60 @@ export class NavGrid {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * BFS from all blocked cells to compute distance-based cost for walkable cells.
+     * Cells near obstacles get higher A* cost so paths naturally avoid edges.
+     */
+    _buildProxCost() {
+        const { cols, rows, grid } = this;
+        const total = cols * rows;
+        const dist = new Uint8Array(total);
+        dist.fill(255);
+        const queue = [];
+
+        // Seed: all blocked cells have distance 0
+        for (let i = 0; i < total; i++) {
+            if (grid[i] === 1) {
+                dist[i] = 0;
+                queue.push(i);
+            }
+        }
+
+        // BFS up to distance 3
+        const MAX_DIST = 3;
+        let head = 0;
+        while (head < queue.length) {
+            const ci = queue[head++];
+            const cd = dist[ci];
+            if (cd >= MAX_DIST) continue;
+            const col = ci % cols;
+            const row = (ci - col) / cols;
+            for (let dr = -1; dr <= 1; dr++) {
+                for (let dc = -1; dc <= 1; dc++) {
+                    if (dr === 0 && dc === 0) continue;
+                    const nr = row + dr, nc = col + dc;
+                    if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+                    const ni = nr * cols + nc;
+                    if (dist[ni] <= cd + 1) continue;
+                    dist[ni] = cd + 1;
+                    queue.push(ni);
+                }
+            }
+        }
+
+        // Convert distance to cost multiplier:
+        // dist 1 → ×4, dist 2 → ×2, dist 3 → ×1.5, dist 4+ → ×1
+        this.proxCost = new Float32Array(total);
+        for (let i = 0; i < total; i++) {
+            const d = dist[i];
+            if (d === 0) this.proxCost[i] = 1; // blocked, won't be used
+            else if (d === 1) this.proxCost[i] = 8;
+            else if (d === 2) this.proxCost[i] = 4;
+            else if (d === 3) this.proxCost[i] = 2;
+            else this.proxCost[i] = 1;
         }
     }
 
@@ -195,10 +254,10 @@ export class NavGrid {
 
     /**
      * A* pathfinding. Returns array of {x, z} world waypoints, or null.
-     * @param {Function} [getThreat] - optional (col, row) => threat cost
-     * @param {Function} [getFog] - optional (col, row) => fog cost
+     * @param {Float32Array} [threatGrid] - flat threat values at ThreatMap resolution
+     * @param {number} [threatCols] - ThreatMap column count (NavGrid cols / 2)
      */
-    findPath(startX, startZ, goalX, goalZ, getThreat = null, getFog = null) {
+    findPath(startX, startZ, goalX, goalZ, threatGrid = null, threatCols = 0) {
         const start = this.worldToGrid(startX, startZ);
         const goal = this.worldToGrid(goalX, goalZ);
 
@@ -213,21 +272,24 @@ export class NavGrid {
         // Same cell
         if (sc === gc && sr === gr) return [];
 
-        const { cols, rows, gCost, closed, parent, dirs } = this;
+        const { cols, rows, gCost, parent, dirs, _genBuf } = this;
         const total = cols * rows;
 
-        // Reset buffers
-        gCost.fill(Infinity);
-        closed.fill(0);
+        // Generation-based reset — O(1) instead of O(144k) fill
+        // Use even gen for "open", gen+1 for "closed"; advance by 2 each call
+        this._gen += 2;
+        const genOpen = this._gen;
+        const genClosed = this._gen + 1;
 
         const startIdx = sr * cols + sc;
         const goalIdx = gr * cols + gc;
         gCost[startIdx] = 0;
+        _genBuf[startIdx] = genOpen;
         parent[startIdx] = -1;
 
         // Binary min-heap (stores indices, sorted by f-cost)
         const heap = [startIdx];
-        const fCost = new Float32Array(total);
+        const fCost = this.fCost;
         fCost[startIdx] = this._heuristic(sc, sr, gc, gr);
 
         let iterations = 0;
@@ -242,8 +304,8 @@ export class NavGrid {
                 return this._reconstructPath(parent, currentIdx, sc, sr);
             }
 
-            if (closed[currentIdx]) continue;
-            closed[currentIdx] = 1;
+            if (_genBuf[currentIdx] === genClosed) continue;
+            _genBuf[currentIdx] = genClosed;
 
             const cc = currentIdx % cols;
             const cr = (currentIdx - cc) / cols;
@@ -255,19 +317,22 @@ export class NavGrid {
                 if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
 
                 const nIdx = nr * cols + nc;
-                if (closed[nIdx] || !this.isWalkable(nc, nr)) continue;
+                if (_genBuf[nIdx] === genClosed || !this.isWalkable(nc, nr)) continue;
 
                 // Diagonal corner-cutting prevention
                 if (dc !== 0 && dr !== 0) {
                     if (!this.isWalkable(cc + dc, cr) || !this.isWalkable(cc, cr + dr)) continue;
                 }
 
-                // Add threat + fog avoidance cost
-                const threatPenalty = getThreat ? getThreat(nc, nr) * 5 : 0;
-                const fogPenalty = getFog ? getFog(nc, nr) * 2 : 0;
-                const ng = cg + cost + threatPenalty + fogPenalty;
-                if (ng < gCost[nIdx]) {
+                // Add proximity + threat avoidance cost
+                const proxMul = this.proxCost[nIdx];
+                const threatPenalty = threatGrid
+                    ? threatGrid[(nr >> 1) * threatCols + (nc >> 1)] * 5 : 0;
+                const ng = cg + cost * proxMul + threatPenalty;
+                const prevG = _genBuf[nIdx] === genOpen ? gCost[nIdx] : Infinity;
+                if (ng < prevG) {
                     gCost[nIdx] = ng;
+                    _genBuf[nIdx] = genOpen;
                     fCost[nIdx] = ng + this._heuristic(nc, nr, gc, gr);
                     parent[nIdx] = currentIdx;
                     this._heapPush(heap, nIdx, fCost);
@@ -342,7 +407,7 @@ export class NavGrid {
             const stepR = e2 < dc;
             // Diagonal step: also check both adjacent cells to prevent slipping through gaps
             if (stepC && stepR) {
-                if (!this.isWalkable(c0 + sc, r0) && !this.isWalkable(c0, r0 + sr)) return false;
+                if (!this.isWalkable(c0 + sc, r0) || !this.isWalkable(c0, r0 + sr)) return false;
             }
             if (stepC) { err -= dr; c0 += sc; }
             if (stepR) { err += dc; r0 += sr; }

@@ -436,7 +436,7 @@ export class Game {
             '<b style="color:rgba(255,255,255,0.7)">Keys</b>',
             '<span style="color:#fff">T</span> Threat map',
             '<span style="color:#fff">B</span> NavGrid',
-            '<span style="color:#fff">G</span> Move arcs',
+            '<span style="color:#fff">G</span> A* paths',
             '<span style="color:#fff">N</span> Tactic labels',
             '<span style="color:#fff">Tab</span> Next COM',
             '<span style="color:#fff">V</span> Camera mode',

@@ -144,9 +144,7 @@ export class AIController {
         this.navGrid = null;         // set by AIManager
         this.currentPath = [];       // [{x, z}, ...]
         this.pathIndex = 0;
-        this.lastPathTarget = new THREE.Vector3();
-        this._hasLastPathTarget = false;
-        this._pathCooldown = 0;      // seconds until next A* allowed
+        this._pathCooldown = Math.random() * 0.5; // stagger initial A* across COMs
         this._lastRiskLevel = 0;     // for detecting risk spikes (under attack)
         this._noPathFound = false;   // true when A* fails — blocks direct movement
 
@@ -314,7 +312,7 @@ export class AIController {
         if (this.riskLevel > this._lastRiskLevel + 0.15 && this._pathCooldown <= 0) {
             this.currentPath = [];
             this.pathIndex = 0;
-            this._hasLastPathTarget = false;
+            this._pathCooldown = 0;
         }
         this._lastRiskLevel = this.riskLevel;
 
@@ -831,59 +829,50 @@ export class AIController {
     _requestPath(forceAStar = false) {
         if (!this.navGrid || !this.moveTarget) return;
 
-        const myPos = this.soldier.getPosition();
-
         if (!forceAStar) {
-            // Path is "sticky" — don't recompute while still following a valid path
-            const hasActivePath = this.currentPath.length > 0 &&
-                this.pathIndex < this.currentPath.length;
-
-            if (hasActivePath) {
-                // Only allow recompute if target moved drastically (mission change)
-                const targetShift = this._hasLastPathTarget ?
-                    this.moveTarget.distanceTo(this.lastPathTarget) : Infinity;
-                if (targetShift < 15) return; // keep current path
-            } else {
-                // No active path — only skip if target is identical (< 1m)
-                // to avoid blocking valid new targets
-                if (this._hasLastPathTarget &&
-                    this.moveTarget.distanceTo(this.lastPathTarget) < 1) {
-                    return;
-                }
-            }
-
-            // Cooldown: don't recompute more than once per second
             if (this._pathCooldown > 0) return;
         }
 
+        const myPos = this.soldier.getPosition();
+
+        // Pass threat grid directly (avoid per-neighbour callback overhead)
         const tm = this.threatMap;
-        const getThreat = tm ? (col, row) => {
-            const wx = this.navGrid.originX + col * this.navGrid.cellSize;
-            const wz = this.navGrid.originZ + row * this.navGrid.cellSize;
-            return tm.getThreat(wx, wz);
-        } : null;
-        const path = this.navGrid.findPath(myPos.x, myPos.z, this.moveTarget.x, this.moveTarget.z, getThreat);
+        const threatGrid = tm ? tm.threat : null;
+        const threatCols = tm ? tm.cols : 0;
+        const path = this.navGrid.findPath(
+            myPos.x, myPos.z, this.moveTarget.x, this.moveTarget.z,
+            threatGrid, threatCols,
+        );
+
+        // Adaptive cooldown: 0.5s near obstacles/stuck, 1.5s open terrain
+        // Jitter ±0.2s to spread A* calls across frames
+        const jitter = (Math.random() - 0.5) * 0.4;
+        let cooldown = 1.5;
+        if (this.stuckTimer > 0) {
+            cooldown = 0.5;
+        } else if (path && path.length > 0) {
+            const ng = this.navGrid;
+            for (let i = 0, len = Math.min(path.length, 6); i < len; i++) {
+                const g = ng.worldToGrid(path[i].x, path[i].z);
+                const idx = g.row * ng.cols + g.col;
+                if (ng.proxCost[idx] > 1) { cooldown = 0.5; break; }
+            }
+        }
+
         if (path === null) {
-            // Genuinely no path — stay put, wait for BT to pick a new target
             this.currentPath = [];
             this.pathIndex = 0;
-            this._hasLastPathTarget = false;
-            this._pathCooldown = 0.5;  // retry after 0.5s
+            this._pathCooldown = 0.5 + jitter;
             this._noPathFound = true;
         } else if (path.length === 0) {
-            // Same cell — already at goal, not a failure
             this.currentPath = [];
             this.pathIndex = 0;
-            this.lastPathTarget.copy(this.moveTarget);
-            this._hasLastPathTarget = true;
-            this._pathCooldown = 0.3;
+            this._pathCooldown = cooldown + jitter;
             this._noPathFound = false;
         } else {
             this.currentPath = path;
             this.pathIndex = 0;
-            this.lastPathTarget.copy(this.moveTarget);
-            this._hasLastPathTarget = true;
-            this._pathCooldown = 1.0;
+            this._pathCooldown = cooldown + jitter;
             this._noPathFound = false;
         }
     }
@@ -940,7 +929,6 @@ export class AIController {
                 this.moveTarget = null;
                 this.currentPath = [];
                 this.pathIndex = 0;
-                this._hasLastPathTarget = false;
                 this._pathCooldown = 0;
             }
             this.lastPos.copy(myPos);
@@ -960,9 +948,8 @@ export class AIController {
             if (wpDist < 1.5) {
                 this.pathIndex++;
                 if (this.pathIndex >= this.currentPath.length) {
-                    // Path completed — clear for immediate re-pathfind
+                    // Path completed — will recompute on next cooldown
                     this._pathCooldown = 0;
-                    this._hasLastPathTarget = false;
                     steerTarget = this.moveTarget;
                 } else {
                     const nextWp = this.currentPath[this.pathIndex];
@@ -990,7 +977,6 @@ export class AIController {
             } else {
                 // Arrived at final destination — clear moveTarget so BT assigns fresh
                 this.moveTarget = null;
-                this._hasLastPathTarget = false;
                 this.btTimer = this.btInterval;
             }
             this.lastPos.copy(myPos);
@@ -1105,14 +1091,12 @@ export class AIController {
             if (this.stuckTimer > 0.6) {
                 // Force BT to recalculate target on next tick
                 this.seekingCover = false;
-                this.btTimer = this.btInterval; // trigger BT next frame
+                this.btTimer = this.btInterval;
                 this.stuckTimer = 0;
-                // Force A* recompute from current position
+                // Clear path — next 0.5s cooldown will recompute from current pos
                 this.currentPath = [];
                 this.pathIndex = 0;
-                this._hasLastPathTarget = false;
-                this._pathCooldown = 0; // allow immediate recompute
-                this._requestPath(true);
+                this._pathCooldown = 0;
             }
         } else {
             this.stuckTimer = 0;
@@ -1401,31 +1385,32 @@ export class AIController {
         // Reset path state
         this.currentPath = [];
         this.pathIndex = 0;
-        this._hasLastPathTarget = false;
         this._pathCooldown = 0;
         this._lastRiskLevel = 0;
         this._noPathFound = false;
     }
 
-    // ───── Debug Arc ─────
+    // ───── Debug Path Line ─────
 
-    _createDebugArc() {
-        const segments = 20;
+    _ensureDebugPath(pointCount) {
+        if (this._debugArc && this._debugArcSize >= pointCount) {
+            return this._debugArc;
+        }
+        // (Re)create with enough capacity
+        if (this._debugArc) {
+            this._debugArc.geometry.dispose();
+            this._debugArc.material.dispose();
+            this.soldier.scene.remove(this._debugArc);
+        }
         const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(segments * 3), 3));
-        const color = this.team === 'teamA' ? 0x4488ff : 0xff4444;
-        const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.6 });
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(pointCount * 3), 3));
+        const mat = new THREE.LineBasicMaterial({ color: 0xffdd00, transparent: true, opacity: 0.7 });
         const line = new THREE.Line(geo, mat);
         line.frustumCulled = false;
+        this.soldier.scene.add(line);
+        this._debugArc = line;
+        this._debugArcSize = pointCount;
         return line;
-    }
-
-    _ensureDebugArc() {
-        if (!this._debugArc) {
-            this._debugArc = this._createDebugArc();
-            this.soldier.scene.add(this._debugArc);
-        }
-        return this._debugArc;
     }
 
     _updateDebugArc() {
@@ -1434,30 +1419,59 @@ export class AIController {
             return;
         }
 
-        const arc = this._ensureDebugArc();
         if (!this.soldier.alive || !this.moveTarget) {
-            arc.visible = false;
+            if (this._debugArc) this._debugArc.visible = false;
             return;
         }
-        arc.visible = true;
 
-        const start = this.soldier.getPosition();
-        const end = this.moveTarget;
-        const dist = start.distanceTo(end);
-        const peakHeight = Math.min(dist * 0.3, 8); // arc height proportional to distance
+        // Build key-point list: soldier → remaining waypoints → moveTarget
+        const myPos = this.soldier.getPosition();
+        const keys = [{ x: myPos.x, z: myPos.z }];
 
-        const positions = arc.geometry.attributes.position;
-        const segments = positions.count;
-        for (let i = 0; i < segments; i++) {
-            const t = i / (segments - 1);
-            const x = start.x + (end.x - start.x) * t;
-            const z = start.z + (end.z - start.z) * t;
-            const baseY = start.y + (end.y - start.y) * t;
-            // Parabola: 4*t*(1-t) peaks at t=0.5
-            const arcY = baseY + peakHeight * 4 * t * (1 - t);
-            positions.setXYZ(i, x, arcY + 1.5, z);
+        if (this.currentPath.length > 0 && this.pathIndex < this.currentPath.length) {
+            for (let i = this.pathIndex; i < this.currentPath.length; i++) {
+                keys.push(this.currentPath[i]);
+            }
+        }
+        keys.push({ x: this.moveTarget.x, z: this.moveTarget.z });
+
+        // Subdivide each segment so the line hugs terrain (~1.5m steps)
+        const SUB_STEP = 1.5;
+        const groundOffset = 0.3;
+        const verts = [];
+
+        for (let k = 0; k < keys.length - 1; k++) {
+            const ax = keys[k].x, az = keys[k].z;
+            const bx = keys[k + 1].x, bz = keys[k + 1].z;
+            const dx = bx - ax, dz = bz - az;
+            const segLen = Math.sqrt(dx * dx + dz * dz);
+            const steps = Math.max(1, Math.ceil(segLen / SUB_STEP));
+
+            for (let s = 0; s < steps; s++) {
+                const t = s / steps;
+                const px = ax + dx * t;
+                const pz = az + dz * t;
+                verts.push(px, this.getHeightAt(px, pz) + groundOffset, pz);
+            }
+        }
+        // Final point
+        const last = keys[keys.length - 1];
+        verts.push(last.x, this.getHeightAt(last.x, last.z) + groundOffset, last.z);
+
+        const totalPts = verts.length / 3;
+        const line = this._ensureDebugPath(totalPts);
+        line.visible = true;
+
+        const positions = line.geometry.attributes.position;
+        for (let i = 0; i < totalPts; i++) {
+            positions.setXYZ(i, verts[i * 3], verts[i * 3 + 1], verts[i * 3 + 2]);
+        }
+        // Collapse unused
+        for (let i = totalPts; i < this._debugArcSize; i++) {
+            positions.setXYZ(i, verts[verts.length - 3], verts[verts.length - 2], verts[verts.length - 1]);
         }
         positions.needsUpdate = true;
+        line.geometry.setDrawRange(0, totalPts);
     }
 
     // ───── Tactical Label ─────
