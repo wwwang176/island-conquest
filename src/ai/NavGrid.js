@@ -122,41 +122,8 @@ export class NavGrid {
             }
         }
 
-        // Save pre-inflation grid for debug visualization
-        this._rawGrid = new Uint8Array(grid);
-
-        // Inflate blocked cells: mark neighbors of blocked cells as blocked too.
-        // This prevents A* from routing paths that brush against obstacle edges,
-        // where the COM's collision radius would still hit the obstacle.
-        this._inflate();
-
         // Build proximity cost: walkable cells near obstacles cost more
         this._buildProxCost();
-    }
-
-    /**
-     * Inflate obstacles by 1 cell in all 8 directions.
-     * Uses a copy to avoid cascade inflation.
-     */
-    _inflate() {
-        const { cols, rows, grid } = this;
-        const copy = new Uint8Array(grid);
-
-        for (let row = 0; row < rows; row++) {
-            for (let col = 0; col < cols; col++) {
-                if (copy[row * cols + col] !== 1) continue;
-                // Mark all 8 neighbors as blocked
-                for (let dr = -1; dr <= 1; dr++) {
-                    for (let dc = -1; dc <= 1; dc++) {
-                        if (dr === 0 && dc === 0) continue;
-                        const nr = row + dr;
-                        const nc = col + dc;
-                        if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
-                        grid[nr * cols + nc] = 1;
-                    }
-                }
-            }
-        }
     }
 
     /**
@@ -327,7 +294,7 @@ export class NavGrid {
                 // Add proximity + threat avoidance cost
                 const proxMul = this.proxCost[nIdx];
                 const threatPenalty = threatGrid
-                    ? threatGrid[(nr >> 1) * threatCols + (nc >> 1)] * 5 : 0;
+                    ? threatGrid[(nr >> 1) * threatCols + (nc >> 1)] * 1.5 : 0;
                 const ng = cg + cost * proxMul + threatPenalty;
                 const prevG = _genBuf[nIdx] === genOpen ? gCost[nIdx] : Infinity;
                 if (ng < prevG) {
@@ -364,54 +331,8 @@ export class NavGrid {
         }
         raw.reverse();
 
-        // Smooth path via line-of-sight
-        const smoothed = this._smoothPath(raw);
-
         // Convert to world coords
-        return smoothed.map(p => this.gridToWorld(p.col, p.row));
-    }
-
-    _smoothPath(path) {
-        if (path.length <= 2) return path;
-        const result = [path[0]];
-        let current = 0;
-        while (current < path.length - 1) {
-            let farthest = current + 1;
-            for (let i = path.length - 1; i > current + 1; i--) {
-                if (this._gridLOS(path[current], path[i])) {
-                    farthest = i;
-                    break;
-                }
-            }
-            result.push(path[farthest]);
-            current = farthest;
-        }
-        return result;
-    }
-
-    /**
-     * Bresenham line-of-sight check on the grid.
-     */
-    _gridLOS(a, b) {
-        let c0 = a.col, r0 = a.row;
-        const c1 = b.col, r1 = b.row;
-        const dc = Math.abs(c1 - c0), dr = Math.abs(r1 - r0);
-        const sc = c0 < c1 ? 1 : -1, sr = r0 < r1 ? 1 : -1;
-        let err = dc - dr;
-
-        while (true) {
-            if (!this.isWalkable(c0, r0)) return false;
-            if (c0 === c1 && r0 === r1) return true;
-            const e2 = 2 * err;
-            const stepC = e2 > -dr;
-            const stepR = e2 < dc;
-            // Diagonal step: also check both adjacent cells to prevent slipping through gaps
-            if (stepC && stepR) {
-                if (!this.isWalkable(c0 + sc, r0) || !this.isWalkable(c0, r0 + sr)) return false;
-            }
-            if (stepC) { err -= dr; c0 += sc; }
-            if (stepR) { err += dc; r0 += sr; }
-        }
+        return raw.map(p => this.gridToWorld(p.col, p.row));
     }
 
     // ───── Binary Min-Heap ─────
@@ -461,71 +382,39 @@ export class NavGrid {
         group.name = 'navgrid-blocked-vis';
 
         const { cols, rows, cellSize, originX, originZ, grid } = this;
-        const raw = this._rawGrid || grid; // pre-inflation if available
 
-        // Count each type
-        let rawCount = 0, inflCount = 0;
+        let count = 0;
         for (let i = 0; i < cols * rows; i++) {
-            if (raw[i] === 1) rawCount++;
-            else if (grid[i] === 1) inflCount++;
+            if (grid[i] === 1) count++;
         }
 
         const dummy = new THREE.Object3D();
-
-        // Red = original obstacle (tall, clearly above rocks)
-        const rawH = 8;
-        const rawGeo = new THREE.BoxGeometry(cellSize * 0.9, rawH, cellSize * 0.9);
-        const rawMat = new THREE.MeshBasicMaterial({
+        const boxH = 8;
+        const geo = new THREE.BoxGeometry(cellSize * 0.9, boxH, cellSize * 0.9);
+        const mat = new THREE.MeshBasicMaterial({
             color: 0xff2222,
             transparent: true,
             opacity: 0.4,
             depthWrite: false,
         });
-        const rawMesh = new THREE.InstancedMesh(rawGeo, rawMat, rawCount);
-        let ri = 0;
-
-        // Black = inflation zone (shorter)
-        const inflH = 3;
-        const inflGeo = new THREE.BoxGeometry(cellSize * 0.9, inflH, cellSize * 0.9);
-        const inflMat = new THREE.MeshBasicMaterial({
-            color: 0x000000,
-            transparent: true,
-            opacity: 0.3,
-            depthWrite: false,
-        });
-        const inflMesh = new THREE.InstancedMesh(inflGeo, inflMat, inflCount);
-        let ii = 0;
+        const mesh = new THREE.InstancedMesh(geo, mat, count);
+        let idx3d = 0;
 
         for (let row = 0; row < rows; row++) {
             for (let col = 0; col < cols; col++) {
-                const idx = row * cols + col;
-                if (grid[idx] !== 1) continue;
-
+                if (grid[row * cols + col] !== 1) continue;
                 const wx = originX + col * cellSize + cellSize / 2;
                 const wz = originZ + row * cellSize + cellSize / 2;
                 const h = getHeightAt(wx, wz);
-
-                if (raw[idx] === 1) {
-                    // Original obstacle
-                    dummy.position.set(wx, h + rawH / 2, wz);
-                    dummy.updateMatrix();
-                    rawMesh.setMatrixAt(ri++, dummy.matrix);
-                } else {
-                    // Inflation only
-                    dummy.position.set(wx, h + inflH / 2, wz);
-                    dummy.updateMatrix();
-                    inflMesh.setMatrixAt(ii++, dummy.matrix);
-                }
+                dummy.position.set(wx, h + boxH / 2, wz);
+                dummy.updateMatrix();
+                mesh.setMatrixAt(idx3d++, dummy.matrix);
             }
         }
 
-        rawMesh.instanceMatrix.needsUpdate = true;
-        inflMesh.instanceMatrix.needsUpdate = true;
-        rawMesh.frustumCulled = false;
-        inflMesh.frustumCulled = false;
-
-        group.add(rawMesh);
-        group.add(inflMesh);
+        mesh.instanceMatrix.needsUpdate = true;
+        mesh.frustumCulled = false;
+        group.add(mesh);
         scene.add(group);
 
         this._blockedVis = group;

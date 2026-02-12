@@ -157,26 +157,6 @@ self.onmessage = (e) => {
         }
     }
 
-    // Save pre-inflation copy
-    const rawGrid = new Uint8Array(grid);
-
-    // ── Inflate obstacles by 1 cell ──
-    const copy = new Uint8Array(grid);
-    for (let row = 0; row < navRows; row++) {
-        for (let col = 0; col < navCols; col++) {
-            if (copy[row * navCols + col] !== 1) continue;
-            for (let dr = -1; dr <= 1; dr++) {
-                for (let dc = -1; dc <= 1; dc++) {
-                    if (dr === 0 && dc === 0) continue;
-                    const nr = row + dr;
-                    const nc = col + dc;
-                    if (nr < 0 || nr >= navRows || nc < 0 || nc >= navCols) continue;
-                    grid[nr * navCols + nc] = 1;
-                }
-            }
-        }
-    }
-
     // ── Build ThreatMap height grid ──
     const heightGrid = new Float32Array(navCols * navRows);
     for (let r = 0; r < navRows; r++) {
@@ -189,7 +169,7 @@ self.onmessage = (e) => {
 
     // ── Return results via Transferable ──
     self.postMessage(
-        { grid, rawGrid, heightGrid, navCols, navRows },
-        [grid.buffer, rawGrid.buffer, heightGrid.buffer]
+        { grid, heightGrid, navCols, navRows },
+        [grid.buffer, heightGrid.buffer]
     );
 };

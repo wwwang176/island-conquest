@@ -232,11 +232,10 @@ export class Island {
             }, transferables);
 
             worker.onmessage = (e) => {
-                const { grid, rawGrid, heightGrid } = e.data;
+                const { grid, heightGrid } = e.data;
 
                 const navGrid = new NavGrid(this.width, this.depth, navCols, navRows);
                 navGrid.grid = grid;
-                navGrid._rawGrid = rawGrid;
                 navGrid._buildProxCost();
                 this.navGrid = navGrid;
 
