@@ -13,7 +13,7 @@ self.onmessage = (e) => {
         heightData,     // Float32Array — terrain vertex heights
         width, depth,   // Island dimensions (300, 120)
         segW, segD,     // Terrain mesh segments (150, 60)
-        navCols, navRows, // NavGrid resolution (300, 120)
+        navCols, navRows, // NavGrid resolution (600, 240)
     } = e.data;
 
     const cellSize = width / navCols;

@@ -721,8 +721,13 @@ export class AIController {
             if (this._pathCooldown > 0) return;
         }
 
-        const threatData = this.threatMap ? this.threatMap.threat : null;
-        const path = this.navGrid.findPath(myPos.x, myPos.z, this.moveTarget.x, this.moveTarget.z, threatData);
+        const tm = this.threatMap;
+        const getThreat = tm ? (col, row) => {
+            const wx = this.navGrid.originX + col * this.navGrid.cellSize;
+            const wz = this.navGrid.originZ + row * this.navGrid.cellSize;
+            return tm.getThreat(wx, wz);
+        } : null;
+        const path = this.navGrid.findPath(myPos.x, myPos.z, this.moveTarget.x, this.moveTarget.z, getThreat);
         if (path === null) {
             // Genuinely no path — stay put, wait for BT to pick a new target
             this.currentPath = [];
@@ -821,6 +826,13 @@ export class AIController {
                     const nextWp = this.currentPath[this.pathIndex];
                     steerTarget = new THREE.Vector3(nextWp.x, 0, nextWp.z);
                 }
+            }
+        } else {
+            // No A* path — only allow direct movement when close to target
+            const directDist = myPos.distanceTo(this.moveTarget);
+            if (directDist > 5) {
+                this.lastPos.copy(myPos);
+                return; // wait for A* path before moving
             }
         }
 

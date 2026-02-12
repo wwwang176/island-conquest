@@ -201,8 +201,8 @@ export class Island {
      * Returns a Promise that resolves to the NavGrid.
      */
     buildNavGridAsync() {
-        const navCols = this.segW * 2;  // 300
-        const navRows = this.segD * 2;  // 120
+        const navCols = this.segW * 4;  // 600
+        const navRows = this.segD * 4;  // 240
 
         return new Promise((resolve) => {
             const worker = new Worker(
@@ -250,8 +250,8 @@ export class Island {
     buildNavGrid() {
         this.scene.updateMatrixWorld(true);
 
-        const navCols = this.segW * 2;
-        const navRows = this.segD * 2;
+        const navCols = this.segW * 4;
+        const navRows = this.segD * 4;
         const navGrid = new NavGrid(this.width, this.depth, navCols, navRows);
         navGrid.build(
             (x, z) => this.getHeightAt(x, z),

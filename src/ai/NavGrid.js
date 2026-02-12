@@ -8,9 +8,9 @@ export class NavGrid {
     constructor(width, depth, cols, rows) {
         this.width = width;       // 300
         this.depth = depth;       // 120
-        this.cols = cols;         // 150
-        this.rows = rows;         // 60
-        this.cellSize = width / cols; // 2
+        this.cols = cols;         // 600
+        this.rows = rows;         // 240
+        this.cellSize = width / cols; // 0.5
         this.originX = -width / 2;    // -150
         this.originZ = -depth / 2;    // -60
 
@@ -195,10 +195,10 @@ export class NavGrid {
 
     /**
      * A* pathfinding. Returns array of {x, z} world waypoints, or null.
-     * @param {Float32Array} [threatGrid] - optional threat cost per cell (same resolution)
-     * @param {Float32Array} [fogGrid] - optional fog cost per cell (same resolution)
+     * @param {Function} [getThreat] - optional (col, row) => threat cost
+     * @param {Function} [getFog] - optional (col, row) => fog cost
      */
-    findPath(startX, startZ, goalX, goalZ, threatGrid = null, fogGrid = null) {
+    findPath(startX, startZ, goalX, goalZ, getThreat = null, getFog = null) {
         const start = this.worldToGrid(startX, startZ);
         const goal = this.worldToGrid(goalX, goalZ);
 
@@ -231,7 +231,7 @@ export class NavGrid {
         fCost[startIdx] = this._heuristic(sc, sr, gc, gr);
 
         let iterations = 0;
-        const maxIter = 15000;
+        const maxIter = 60000;
 
         while (heap.length > 0 && iterations < maxIter) {
             iterations++;
@@ -263,8 +263,8 @@ export class NavGrid {
                 }
 
                 // Add threat + fog avoidance cost
-                const threatPenalty = threatGrid ? threatGrid[nIdx] * 5 : 0;
-                const fogPenalty = fogGrid ? fogGrid[nIdx] * 2 : 0;
+                const threatPenalty = getThreat ? getThreat(nc, nr) * 5 : 0;
+                const fogPenalty = getFog ? getFog(nc, nr) * 2 : 0;
                 const ng = cg + cost + threatPenalty + fogPenalty;
                 if (ng < gCost[nIdx]) {
                     gCost[nIdx] = ng;
