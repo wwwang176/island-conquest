@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 const _v = new THREE.Vector3();
+const _formationPos = new THREE.Vector3();
 
 /**
  * Coordinates a squad of AI controllers toward shared objectives.
@@ -96,7 +97,7 @@ export class SquadCoordinator {
         }
 
         // Anchor to flag, not captain
-        const pos = new THREE.Vector3(
+        _formationPos.set(
             objPos.x + _v.x * offsetForward + perpX * offsetSide,
             0,
             objPos.z + _v.z * offsetForward + perpZ * offsetSide
@@ -104,20 +105,20 @@ export class SquadCoordinator {
 
         // Validate against NavGrid — snap to walkable if out of bounds
         if (navGrid) {
-            const g = navGrid.worldToGrid(pos.x, pos.z);
+            const g = navGrid.worldToGrid(_formationPos.x, _formationPos.z);
             if (!navGrid.isWalkable(g.col, g.row)) {
                 const nearest = navGrid._findNearestWalkable(g.col, g.row);
                 if (nearest) {
                     const w = navGrid.gridToWorld(nearest.col, nearest.row);
-                    pos.x = w.x;
-                    pos.z = w.z;
+                    _formationPos.x = w.x;
+                    _formationPos.z = w.z;
                 } else {
                     return null; // no valid position
                 }
             }
         }
 
-        return pos;
+        return _formationPos;
     }
 
     /**

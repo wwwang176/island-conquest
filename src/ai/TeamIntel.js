@@ -20,6 +20,7 @@ export class TeamIntel {
         this.team = team;
         /** @type {Map<object, EnemyContact>} keyed by enemy reference */
         this.contacts = new Map();
+        this._resultsBuf = [];
     }
 
     /**
@@ -62,7 +63,8 @@ export class TeamIntel {
      * @param {object} [filter] - { minConfidence, status, maxDist, fromPos }
      */
     getKnownEnemies(filter) {
-        const results = [];
+        const results = this._resultsBuf;
+        results.length = 0;
         for (const contact of this.contacts.values()) {
             if (filter) {
                 if (filter.minConfidence !== undefined && contact.confidence < filter.minConfidence) continue;

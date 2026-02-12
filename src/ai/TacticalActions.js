@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 const _v = new THREE.Vector3();
+const _threatDir = new THREE.Vector3();
 
 /**
  * Pure-function helpers for tactical AI decisions.
@@ -13,9 +14,10 @@ const _v = new THREE.Vector3();
  * @param {CoverSystem|null} coverSystem
  * @param {number} side - 1 for right flank, -1 for left flank
  * @param {object} [navGrid] - NavGrid for walkability validation
- * @returns {THREE.Vector3}
+ * @param {THREE.Vector3} out - output vector (mutated in place)
+ * @returns {THREE.Vector3} out
  */
-export function findFlankPosition(myPos, enemyPos, coverSystem, side = 1, navGrid = null) {
+export function findFlankPosition(myPos, enemyPos, coverSystem, side = 1, navGrid = null, out) {
     // Vector from enemy to me
     _v.subVectors(myPos, enemyPos);
     _v.y = 0;
@@ -27,7 +29,7 @@ export function findFlankPosition(myPos, enemyPos, coverSystem, side = 1, navGri
     const perpZ = -_v.x * side;
 
     // Flank position: 18m to the side of enemy, at similar distance
-    const flankPos = new THREE.Vector3(
+    out.set(
         enemyPos.x + perpX * 18 + _v.x * (dist * 0.5),
         myPos.y,
         enemyPos.z + perpZ * 18 + _v.z * (dist * 0.5)
@@ -35,54 +37,56 @@ export function findFlankPosition(myPos, enemyPos, coverSystem, side = 1, navGri
 
     // Try to snap to nearby cover if available
     if (coverSystem) {
-        const threatDir = new THREE.Vector3().subVectors(enemyPos, flankPos).normalize();
-        const covers = coverSystem.findCover(flankPos, threatDir, 10, 1);
+        _threatDir.subVectors(enemyPos, out).normalize();
+        const covers = coverSystem.findCover(out, _threatDir, 10, 1);
         if (covers.length > 0) {
-            flankPos.copy(covers[0].cover.position);
+            out.copy(covers[0].cover.position);
         }
     }
 
     // Validate against NavGrid — snap to walkable if off-island or in water
     if (navGrid) {
-        const g = navGrid.worldToGrid(flankPos.x, flankPos.z);
+        const g = navGrid.worldToGrid(out.x, out.z);
         if (!navGrid.isWalkable(g.col, g.row)) {
             const nearest = navGrid._findNearestWalkable(g.col, g.row);
             if (nearest) {
                 const w = navGrid.gridToWorld(nearest.col, nearest.row);
-                flankPos.x = w.x;
-                flankPos.z = w.z;
+                out.x = w.x;
+                out.z = w.z;
             } else {
                 // No walkable cell — fall back to own position
-                flankPos.copy(myPos);
+                out.copy(myPos);
             }
         }
     }
 
-    return flankPos;
+    return out;
 }
 
 /**
  * Predict enemy position using last known position + velocity × lead time.
  * @param {object} contact - TeamIntel contact { lastSeenPos, lastSeenVelocity }
- * @returns {THREE.Vector3}
+ * @param {THREE.Vector3} out - output vector (mutated in place)
+ * @returns {THREE.Vector3} out
  */
-export function computePreAimPoint(contact) {
-    const predicted = contact.lastSeenPos.clone();
-    predicted.x += contact.lastSeenVelocity.x * 0.5;
-    predicted.z += contact.lastSeenVelocity.z * 0.5;
-    predicted.y += 1.2; // aim at chest height
-    return predicted;
+export function computePreAimPoint(contact, out) {
+    out.copy(contact.lastSeenPos);
+    out.x += contact.lastSeenVelocity.x * 0.5;
+    out.z += contact.lastSeenVelocity.z * 0.5;
+    out.y += 1.2; // aim at chest height
+    return out;
 }
 
 /**
  * Compute suppression target: last known position + random scatter.
  * @param {object} contact - TeamIntel contact
- * @returns {THREE.Vector3}
+ * @param {THREE.Vector3} out - output vector (mutated in place)
+ * @returns {THREE.Vector3} out
  */
-export function computeSuppressionTarget(contact) {
-    const target = contact.lastSeenPos.clone();
-    target.x += (Math.random() - 0.5) * 3;
-    target.z += (Math.random() - 0.5) * 3;
-    target.y += 1.0 + Math.random() * 0.5;
-    return target;
+export function computeSuppressionTarget(contact, out) {
+    out.copy(contact.lastSeenPos);
+    out.x += (Math.random() - 0.5) * 3;
+    out.z += (Math.random() - 0.5) * 3;
+    out.y += 1.0 + Math.random() * 0.5;
+    return out;
 }

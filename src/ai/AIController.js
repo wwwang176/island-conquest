@@ -6,6 +6,11 @@ import { findFlankPosition, computePreAimPoint, computeSuppressionTarget } from 
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _raycaster = new THREE.Raycaster();
+const _origin = new THREE.Vector3();
+const _target = new THREE.Vector3();
+const _strafeDir = new THREE.Vector3();
+const _tmpVec = new THREE.Vector3();
+const _targetMeshes = [];
 
 /** Lerp between two angles handling wraparound. */
 function _lerpAngle(a, b, t) {
@@ -84,7 +89,8 @@ export class AIController {
         this.navGrid = null;         // set by AIManager
         this.currentPath = [];       // [{x, z}, ...]
         this.pathIndex = 0;
-        this.lastPathTarget = null;  // THREE.Vector3
+        this.lastPathTarget = new THREE.Vector3();
+        this._hasLastPathTarget = false;
         this._pathCooldown = 0;      // seconds until next A* allowed
         this._lastRiskLevel = 0;     // for detecting risk spikes (under attack)
         this._noPathFound = false;   // true when A* fails — blocks direct movement
@@ -98,6 +104,9 @@ export class AIController {
 
         // Previously seen enemies (for intel lost reporting)
         this._previouslyVisible = new Set();
+        this._visSetA = new Set();
+        this._visSetB = new Set();
+        this._useSetA = true;
 
         // Behavior tree update throttle
         this.btTimer = 0;
@@ -227,7 +236,7 @@ export class AIController {
         if (this.riskLevel > this._lastRiskLevel + 0.15 && this._pathCooldown <= 0) {
             this.currentPath = [];
             this.pathIndex = 0;
-            this.lastPathTarget = null;
+            this._hasLastPathTarget = false;
         }
         this._lastRiskLevel = this.riskLevel;
 
@@ -244,7 +253,12 @@ export class AIController {
         const myPos = this.soldier.getPosition();
         let closestDist = Infinity;
         let closestEnemy = null;
-        const currentlyVisible = new Set();
+        const currentlyVisible = this._useSetA ? this._visSetA : this._visSetB;
+        currentlyVisible.clear();
+
+        // Compute eye position once outside the loop
+        _origin.copy(myPos);
+        _origin.y += 1.5;
 
         for (const enemy of this.enemies) {
             if (!enemy.alive) continue;
@@ -259,10 +273,7 @@ export class AIController {
             if (dot < -0.2) continue; // behind us (~120° FOV)
 
             // Line of sight check
-            _raycaster.set(
-                myPos.clone().add(new THREE.Vector3(0, 1.5, 0)),
-                _v1
-            );
+            _raycaster.set(_origin, _v1);
             _raycaster.far = dist;
             const hits = _raycaster.intersectObjects(this.collidables, true);
             if (hits.length > 0 && hits[0].distance < dist - 1) continue; // blocked
@@ -289,6 +300,7 @@ export class AIController {
             }
         }
         this._previouslyVisible = currentlyVisible;
+        this._useSetA = !this._useSetA;
 
         // Target switching: only switch if new target is significantly closer
         if (closestEnemy) {
@@ -489,8 +501,7 @@ export class AIController {
         if (!this.suppressionTarget) return BTState.FAILURE;
 
         // Fire at predicted cover edge / last known position
-        const target = computeSuppressionTarget(this.suppressionTarget);
-        this.aimPoint.copy(target);
+        computeSuppressionTarget(this.suppressionTarget, this.aimPoint);
         this.aimOffset.set(0, 0, 0);
         this.hasReacted = true; // allow shooting
 
@@ -527,8 +538,7 @@ export class AIController {
         this._validateMoveTarget();
 
         // Pre-aim at predicted position
-        const preAim = computePreAimPoint(nearest);
-        this.aimPoint.copy(preAim);
+        computePreAimPoint(nearest, this.aimPoint);
 
         // Update facing toward threat
         _v1.subVectors(nearest.lastSeenPos, myPos).normalize();
@@ -559,10 +569,10 @@ export class AIController {
             const contact = this.teamIntel.getContactFor(this.targetEnemy);
             if (contact) {
                 this.squad.requestSuppression(contact);
-                const flankPos = findFlankPosition(
-                    myPos, enemyPos, this.coverSystem, this.flankSide, this.navGrid
+                findFlankPosition(
+                    myPos, enemyPos, this.coverSystem, this.flankSide, this.navGrid, _tmpVec
                 );
-                this.moveTarget = flankPos;
+                this.moveTarget = _tmpVec.clone();
                 this._validateMoveTarget();
                 this.seekingCover = false;
                 this.missionPressure = 0.5;
@@ -572,7 +582,7 @@ export class AIController {
 
         // Strafe while shooting (move perpendicular to enemy)
         const toEnemy = _v1.subVectors(enemyPos, myPos).normalize();
-        const strafeDir = new THREE.Vector3(toEnemy.z, 0, -toEnemy.x);
+        _strafeDir.set(toEnemy.z, 0, -toEnemy.x);
         let strafeSide = Math.sin(Date.now() * 0.002 + this.soldier.id * 7) > 0 ? 1 : -1;
 
         // Ally-aware strafe: if an ally is already on the chosen side, flip
@@ -582,8 +592,8 @@ export class AIController {
                 if (!a.alive || a === this.soldier) continue;
                 const aPos = a.getPosition();
                 if (myPos.distanceTo(aPos) > 15) continue;
-                const toAlly = new THREE.Vector3(aPos.x - myPos.x, 0, aPos.z - myPos.z);
-                const dot = strafeDir.x * toAlly.x + strafeDir.z * toAlly.z;
+                _tmpVec.set(aPos.x - myPos.x, 0, aPos.z - myPos.z);
+                const dot = _strafeDir.x * _tmpVec.x + _strafeDir.z * _tmpVec.z;
                 if (dot * strafeSide > 0) alliesOnSide++;
             }
             if (alliesOnSide >= 2) strafeSide *= -1;
@@ -591,15 +601,19 @@ export class AIController {
 
         if (dist > 35) {
             // Far away: move toward enemy position directly — let A* handle routing
-            this.moveTarget = enemyPos.clone();
+            _tmpVec.copy(enemyPos);
+            this.moveTarget = _tmpVec.clone();
         } else if (dist < 10) {
-            this.moveTarget = myPos.clone()
-                .add(toEnemy.clone().multiplyScalar(-3))
-                .add(strafeDir.clone().multiplyScalar(strafeSide * 4));
+            _tmpVec.copy(myPos);
+            _tmpVec.x += toEnemy.x * -3 + _strafeDir.x * strafeSide * 4;
+            _tmpVec.z += toEnemy.z * -3 + _strafeDir.z * strafeSide * 4;
+            this.moveTarget = _tmpVec.clone();
         } else {
             // Medium range: strafe but use a longer offset so A* can route properly
-            this.moveTarget = enemyPos.clone()
-                .add(strafeDir.clone().multiplyScalar(strafeSide * 8));
+            _tmpVec.copy(enemyPos);
+            _tmpVec.x += _strafeDir.x * strafeSide * 8;
+            _tmpVec.z += _strafeDir.z * strafeSide * 8;
+            this.moveTarget = _tmpVec.clone();
         }
         this._validateMoveTarget();
 
@@ -627,7 +641,7 @@ export class AIController {
                     formationPos.x += Math.cos(jAngle) * jDist;
                     formationPos.z += Math.sin(jAngle) * jDist;
                 }
-                this.moveTarget = formationPos;
+                this.moveTarget = formationPos.clone();
                 this._validateMoveTarget();
                 this.missionPressure = 0.5;
                 this.seekingCover = false;
@@ -705,13 +719,13 @@ export class AIController {
 
             if (hasActivePath) {
                 // Only allow recompute if target moved drastically (mission change)
-                const targetShift = this.lastPathTarget ?
+                const targetShift = this._hasLastPathTarget ?
                     this.moveTarget.distanceTo(this.lastPathTarget) : Infinity;
                 if (targetShift < 15) return; // keep current path
             } else {
                 // No active path — only skip if target is identical (< 1m)
                 // to avoid blocking valid new targets
-                if (this.lastPathTarget &&
+                if (this._hasLastPathTarget &&
                     this.moveTarget.distanceTo(this.lastPathTarget) < 1) {
                     return;
                 }
@@ -732,20 +746,22 @@ export class AIController {
             // Genuinely no path — stay put, wait for BT to pick a new target
             this.currentPath = [];
             this.pathIndex = 0;
-            this.lastPathTarget = null;
+            this._hasLastPathTarget = false;
             this._pathCooldown = 0.5;  // retry after 0.5s
             this._noPathFound = true;
         } else if (path.length === 0) {
             // Same cell — already at goal, not a failure
             this.currentPath = [];
             this.pathIndex = 0;
-            this.lastPathTarget = this.moveTarget.clone();
+            this.lastPathTarget.copy(this.moveTarget);
+            this._hasLastPathTarget = true;
             this._pathCooldown = 0.3;
             this._noPathFound = false;
         } else {
             this.currentPath = path;
             this.pathIndex = 0;
-            this.lastPathTarget = this.moveTarget.clone();
+            this.lastPathTarget.copy(this.moveTarget);
+            this._hasLastPathTarget = true;
             this._pathCooldown = 1.0;
             this._noPathFound = false;
         }
@@ -799,7 +815,7 @@ export class AIController {
                 this.moveTarget = null;
                 this.currentPath = [];
                 this.pathIndex = 0;
-                this.lastPathTarget = null;
+                this._hasLastPathTarget = false;
                 this._pathCooldown = 0;
             }
             this.lastPos.copy(myPos);
@@ -810,7 +826,8 @@ export class AIController {
         let steerTarget = this.moveTarget;
         if (this.currentPath.length > 0 && this.pathIndex < this.currentPath.length) {
             const wp = this.currentPath[this.pathIndex];
-            steerTarget = new THREE.Vector3(wp.x, 0, wp.z);
+            _tmpVec.set(wp.x, 0, wp.z);
+            steerTarget = _tmpVec;
             // Advance waypoint when close enough
             const wpDist = Math.sqrt(
                 (myPos.x - wp.x) ** 2 + (myPos.z - wp.z) ** 2
@@ -820,11 +837,12 @@ export class AIController {
                 if (this.pathIndex >= this.currentPath.length) {
                     // Path completed — clear for immediate re-pathfind
                     this._pathCooldown = 0;
-                    this.lastPathTarget = null;
+                    this._hasLastPathTarget = false;
                     steerTarget = this.moveTarget;
                 } else {
                     const nextWp = this.currentPath[this.pathIndex];
-                    steerTarget = new THREE.Vector3(nextWp.x, 0, nextWp.z);
+                    _tmpVec.set(nextWp.x, 0, nextWp.z);
+                    steerTarget = _tmpVec;
                 }
             }
         } else {
@@ -847,7 +865,7 @@ export class AIController {
             } else {
                 // Arrived at final destination — clear moveTarget so BT assigns fresh
                 this.moveTarget = null;
-                this.lastPathTarget = null;
+                this._hasLastPathTarget = false;
                 this.btTimer = this.btInterval;
             }
             this.lastPos.copy(myPos);
@@ -967,7 +985,7 @@ export class AIController {
                 // Force A* recompute from current position
                 this.currentPath = [];
                 this.pathIndex = 0;
-                this.lastPathTarget = null;
+                this._hasLastPathTarget = false;
                 this._pathCooldown = 0; // allow immediate recompute
                 this._requestPath(true);
             }
@@ -996,7 +1014,8 @@ export class AIController {
 
         // Aim at enemy center mass with offset
         const enemyPos = this.targetEnemy.getPosition();
-        this.aimPoint.copy(enemyPos).add(new THREE.Vector3(0, 1.2, 0));
+        this.aimPoint.copy(enemyPos);
+        this.aimPoint.y += 1.2;
 
         // Gradually reduce aim offset
         this.aimOffset.multiplyScalar(1 - this.aimCorrectionSpeed * dt);
@@ -1055,11 +1074,12 @@ export class AIController {
 
     _fireShot() {
         const myPos = this.soldier.getPosition();
-        const origin = myPos.clone().add(new THREE.Vector3(0, 1.5, 0));
+        _origin.copy(myPos);
+        _origin.y += 1.5;
 
         // Direction to aim point + offset + random spread
-        const target = this.aimPoint.clone().add(this.aimOffset);
-        const dir = _v1.subVectors(target, origin).normalize();
+        _target.copy(this.aimPoint).add(this.aimOffset);
+        const dir = _v1.subVectors(_target, _origin).normalize();
 
         // Add weapon spread
         const spread = 0.02 + (1 - this.personality.aimSkill) * 0.03;
@@ -1069,18 +1089,18 @@ export class AIController {
         dir.normalize();
 
         // Hitscan
-        _raycaster.set(origin, dir);
+        _raycaster.set(_origin, dir);
         _raycaster.far = 200;
 
         // Check against all enemies
-        const targetMeshes = [];
+        _targetMeshes.length = 0;
         for (const e of this.enemies) {
-            if (e.alive && e.mesh) targetMeshes.push(e.mesh);
+            if (e.alive && e.mesh) _targetMeshes.push(e.mesh);
         }
-        if (this._playerMesh) targetMeshes.push(this._playerMesh);
+        if (this._playerMesh) _targetMeshes.push(this._playerMesh);
 
         const envHits = _raycaster.intersectObjects(this.collidables, true);
-        const charHits = _raycaster.intersectObjects(targetMeshes, true);
+        const charHits = _raycaster.intersectObjects(_targetMeshes, true);
 
         let hitChar = charHits.length > 0 ? charHits[0] : null;
         let hitEnv = envHits.length > 0 ? envHits[0] : null;
@@ -1095,7 +1115,7 @@ export class AIController {
 
         // Spawn tracer VFX
         if (this.tracerSystem) {
-            this.tracerSystem.fire(origin, dir.clone(), tracerDist);
+            this.tracerSystem.fire(_origin, dir, tracerDist);
         }
 
         // Notify minimap that this AI fired
@@ -1198,7 +1218,7 @@ export class AIController {
         // Reset path state
         this.currentPath = [];
         this.pathIndex = 0;
-        this.lastPathTarget = null;
+        this._hasLastPathTarget = false;
         this._pathCooldown = 0;
         this._lastRiskLevel = 0;
         this._noPathFound = false;
