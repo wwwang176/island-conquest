@@ -56,6 +56,7 @@ function _lerpAngle(a, b, t) {
  */
 export class AIController {
     static debugArcs = false;
+    static showTacLabels = true;
 
     constructor(soldier, personality, team, flags, getHeightAt, coverSystem, teamIntel, eventBus) {
         this.soldier = soldier;
@@ -79,6 +80,16 @@ export class AIController {
         // Suppression state (set by SquadCoordinator)
         this.suppressionTarget = null;  // TeamIntel contact
         this.suppressionTimer = 0;
+
+        // Tactical state (set by SquadCoordinator)
+        this.fallbackTarget = null;   // Vector3 | null
+        this.rushTarget = null;        // Vector3 | null
+        this.rushReady = false;
+        this.crossfirePos = null;      // Vector3 | null
+
+        // Tactical label sprite (above head)
+        this._tacLabel = null;
+        this._tacLabelText = '';
 
         // Mission pressure: 0.0 capturing, 0.5 moving, 1.0 idle
         this.missionPressure = 0.5;
@@ -189,43 +200,61 @@ export class AIController {
                 new Action(() => ctx._actionSeekCover()),
             ]),
 
-            // 4. Suppression fire (assigned by squad)
+            // 4. Fallback — retreat to friendly flag
+            new Sequence([
+                new Condition(() => ctx.fallbackTarget !== null),
+                new Action(() => ctx._actionFallback()),
+            ]),
+
+            // 5. Suppression fire (assigned by squad)
             new Sequence([
                 new Condition(() => ctx.suppressionTarget !== null && ctx.suppressionTimer > 0),
                 new Action(() => ctx._actionSuppress()),
             ]),
 
-            // 5. Close-range enemy (< 20m) — must engage, survival priority
+            // 6. Crossfire — spread to flanking positions
+            new Sequence([
+                new Condition(() => ctx.crossfirePos !== null),
+                new Action(() => ctx._actionCrossfire()),
+            ]),
+
+            // 7. Close-range enemy (< 20m) — must engage, survival priority
             new Sequence([
                 new Condition(() => ctx.targetEnemy !== null && ctx._enemyDist() < 20),
                 new Action(() => ctx._actionEngage()),
             ]),
 
-            // 6. Uncaptured flag exists — go capture (flanking is part of approach)
+            // 8. Rush — coordinated assault on flag
+            new Sequence([
+                new Condition(() => ctx.rushTarget !== null),
+                new Action(() => ctx._actionRush()),
+            ]),
+
+            // 9. Uncaptured flag exists — go capture (flanking is part of approach)
             new Sequence([
                 new Condition(() => ctx.targetFlag !== null && ctx.targetFlag.owner !== ctx.team),
                 new Action(() => ctx._actionCaptureFlag()),
             ]),
 
-            // 7. Investigate intel contact (nearby suspected enemy, no direct visual)
+            // 10. Investigate intel contact (nearby suspected enemy, no direct visual)
             new Sequence([
                 new Condition(() => ctx.targetEnemy === null && ctx._hasNearbyIntelContact()),
                 new Action(() => ctx._actionInvestigate()),
             ]),
 
-            // 8. Has visible enemy (long range) — engage
+            // 11. Has visible enemy (long range) — engage
             new Sequence([
                 new Condition(() => ctx.targetEnemy !== null),
                 new Action(() => ctx._actionEngage()),
             ]),
 
-            // 9. Has owned flag target — defend / patrol near it
+            // 12. Has owned flag target — defend / patrol near it
             new Sequence([
                 new Condition(() => ctx.targetFlag !== null),
                 new Action(() => ctx._actionCaptureFlag()),
             ]),
 
-            // 10. Default — find something to do
+            // 13. Default — find something to do
             new Action(() => ctx._actionPatrol()),
         ]);
     }
@@ -270,7 +299,13 @@ export class AIController {
      * Handles aiming + shooting so fire rate is not throttled by stagger.
      */
     updateContinuous(dt) {
-        if (!this.soldier.alive) return;
+        if (!this.soldier.alive) {
+            if (this._tacLabel && this._tacLabel.visible) {
+                this._tacLabel.visible = false;
+                this._tacLabelText = '';
+            }
+            return;
+        }
 
         // Decay path cooldown
         if (this._pathCooldown > 0) this._pathCooldown -= dt;
@@ -555,6 +590,44 @@ export class AIController {
 
         // Hold position while suppressing
         this.seekingCover = false;
+        return BTState.RUNNING;
+    }
+
+    _actionFallback() {
+        this.moveTarget = this.fallbackTarget;
+        this._validateMoveTarget();
+        this.seekingCover = false;
+        this.missionPressure = 0.0;
+        return BTState.RUNNING;
+    }
+
+    _actionRush() {
+        if (!this.squad) return BTState.FAILURE;
+
+        if (!this.squad.rushActive) {
+            // Rally phase: move toward flag but don't charge in
+            const myPos = this.soldier.getPosition();
+            const dist = myPos.distanceTo(this.rushTarget);
+            if (dist > 20) {
+                this.moveTarget = this.rushTarget.clone();
+                this._validateMoveTarget();
+            }
+            return BTState.RUNNING;
+        }
+
+        // Rush active — charge the flag
+        this.moveTarget = this.rushTarget.clone();
+        this._validateMoveTarget();
+        this.seekingCover = false;
+        this.missionPressure = 0.0;
+        return BTState.RUNNING;
+    }
+
+    _actionCrossfire() {
+        this.moveTarget = this.crossfirePos;
+        this._validateMoveTarget();
+        this.seekingCover = false;
+        this.missionPressure = 0.5;
         return BTState.RUNNING;
     }
 
@@ -1109,8 +1182,11 @@ export class AIController {
             return;
         }
 
-        // Auto-reload when empty
+        // Auto-reload when empty (staggered: wait if squadmate reloading)
         if (this.currentAmmo <= 0) {
+            if (this.squad && !this.squad.canReload(this)) {
+                return; // squadmate reloading — wait
+            }
             this.isReloading = true;
             this.reloadTimer = this.reloadTime;
             this.fireTimer = 0;
@@ -1295,6 +1371,12 @@ export class AIController {
         this.targetEnemy = null;
         this.suppressionTarget = null;
         this.suppressionTimer = 0;
+        this.fallbackTarget = null;
+        this.rushTarget = null;
+        this.rushReady = false;
+        this.crossfirePos = null;
+        if (this._tacLabel) this._tacLabel.visible = false;
+        this._tacLabelText = '';
         this._previouslyVisible.clear();
         // Random weapon on respawn
         this.weaponId = Math.random() > 0.5 ? 'AR15' : 'SMG';
@@ -1378,6 +1460,74 @@ export class AIController {
         positions.needsUpdate = true;
     }
 
+    // ───── Tactical Label ─────
+
+    _getTacticText() {
+        if (this.fallbackTarget) return 'FALLBACK';
+        if (this.rushTarget) return this.squad && this.squad.rushActive ? 'RUSH!' : 'RALLY';
+        if (this.crossfirePos) return 'CROSSFIRE';
+        if (this.isReloading) return null; // normal, no label
+        if (this.currentAmmo <= 0 && this.squad && !this.squad.canReload(this)) return 'HOLD';
+        return null;
+    }
+
+    _createTacLabel(text) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 64;
+        const c = canvas.getContext('2d');
+        c.clearRect(0, 0, 256, 64);
+        c.fillStyle = 'rgba(0,0,0,0.5)';
+        c.roundRect(8, 4, 240, 56, 8);
+        c.fill();
+        c.fillStyle = '#ffffff';
+        c.font = 'bold 36px Arial';
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+        c.fillText(text, 128, 32);
+
+        const tex = new THREE.CanvasTexture(canvas);
+        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+        const sprite = new THREE.Sprite(mat);
+        sprite.scale.set(2.7, 0.675, 1);
+        sprite.position.set(0, 2.2, 0);
+        sprite.renderOrder = 999;
+        return sprite;
+    }
+
+    _updateTacLabel() {
+        if (!AIController.showTacLabels) {
+            if (this._tacLabel) this._tacLabel.visible = false;
+            return;
+        }
+
+        const text = this._getTacticText();
+
+        if (!text) {
+            if (this._tacLabel) {
+                this._tacLabel.visible = false;
+                this._tacLabelText = '';
+            }
+            return;
+        }
+
+        if (text === this._tacLabelText && this._tacLabel) {
+            this._tacLabel.visible = true;
+            return;
+        }
+
+        // Create or re-create sprite with new text
+        if (this._tacLabel) {
+            this._tacLabel.material.map.dispose();
+            this._tacLabel.material.dispose();
+            this.soldier.mesh.remove(this._tacLabel);
+        }
+        this._tacLabel = this._createTacLabel(text);
+        this._tacLabel.raycast = () => {}; // exclude from hitscan raycaster
+        this.soldier.mesh.add(this._tacLabel);
+        this._tacLabelText = text;
+    }
+
     // ───── Visual Sync ─────
 
     _updateSoldierVisual(dt) {
@@ -1413,6 +1563,9 @@ export class AIController {
 
         // No need to rotate the root mesh — upper/lower body handle it
         soldier.mesh.rotation.y = 0;
+
+        // Tactical label above head
+        this._updateTacLabel();
     }
 
     /** Set references for player damage. */

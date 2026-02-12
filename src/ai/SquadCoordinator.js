@@ -22,6 +22,19 @@ export class SquadCoordinator {
         this.evalInterval = strategy === 'secure'
             ? 3 + Math.random() * 2    // 3-5s
             : 8 + Math.random() * 4;   // 8-12s
+
+        // Fallback state
+        this.fallbackFlag = null;
+        this.fallbackTimer = 0;
+
+        // Rush state
+        this.rushTarget = null;
+        this.rushTimer = 0;
+        this.rushActive = false;
+
+        // Crossfire state
+        this.crossfireContact = null;
+        this.crossfireTimer = 0;
     }
 
     /**
@@ -119,6 +132,78 @@ export class SquadCoordinator {
         }
 
         return _formationPos;
+    }
+
+    /**
+     * Staggered reload: only one squad member reloads at a time.
+     */
+    canReload(controller) {
+        for (const ctrl of this.controllers) {
+            if (ctrl === controller || !ctrl.soldier.alive) continue;
+            if (ctrl.isReloading) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Request fallback to nearest friendly flag.
+     */
+    requestFallback() {
+        const aliveMembers = this.controllers.filter(c => c.soldier.alive);
+        if (aliveMembers.length === 0) return;
+        const captainPos = aliveMembers[0].soldier.getPosition();
+
+        let bestFlag = null, bestDist = Infinity;
+        for (const flag of this.flags) {
+            if (flag.owner !== this.team) continue;
+            const d = captainPos.distanceTo(flag.position);
+            if (d < bestDist) { bestDist = d; bestFlag = flag; }
+        }
+        if (!bestFlag) return;
+
+        this.fallbackFlag = bestFlag;
+        this.fallbackTimer = 8;
+        for (const ctrl of aliveMembers) {
+            ctrl.fallbackTarget = bestFlag.position.clone();
+        }
+    }
+
+    /**
+     * Request coordinated rush on a flag.
+     */
+    requestRush(flag) {
+        this.rushTarget = flag;
+        this.rushTimer = 2.0;
+        this.rushActive = false;
+        for (const ctrl of this.controllers) {
+            if (!ctrl.soldier.alive) continue;
+            ctrl.rushTarget = flag.position.clone();
+            ctrl.rushReady = false;
+        }
+    }
+
+    /**
+     * Request crossfire positions around a contact.
+     */
+    requestCrossfire(contact) {
+        this.crossfireContact = contact;
+        this.crossfireTimer = 6;
+
+        const contactPos = contact.lastSeenPos;
+        for (const ctrl of this.controllers) {
+            if (!ctrl.soldier.alive) continue;
+            const myPos = ctrl.soldier.getPosition();
+
+            const toEnemy = _v.subVectors(contactPos, myPos).normalize();
+            const perpX = toEnemy.z;
+            const perpZ = -toEnemy.x;
+
+            const side = ctrl.flankSide || 1;
+            const crossPos = contactPos.clone();
+            crossPos.x += perpX * side * 15;
+            crossPos.z += perpZ * side * 15;
+            ctrl.crossfirePos = crossPos;
+        }
     }
 
     /**
@@ -236,6 +321,72 @@ export class SquadCoordinator {
         // Initial objective
         if (!this.objective) {
             this._evaluateObjective();
+        }
+
+        // ── Fallback trigger: ≤1 alive & objective held by enemy ──
+        const alive = this.controllers.filter(c => c.soldier.alive);
+        if (alive.length <= 1 && this.objective && this.objective.owner !== this.team
+            && this.objective.owner !== null && !this.fallbackFlag) {
+            this.requestFallback();
+        }
+
+        // Fallback countdown
+        if (this.fallbackTimer > 0) {
+            this.fallbackTimer -= dt;
+            if (this.fallbackTimer <= 0) {
+                this.fallbackFlag = null;
+                for (const ctrl of this.controllers) ctrl.fallbackTarget = null;
+            }
+        }
+
+        // ── Rush trigger: push squad, 2+ alive, >50% avg ammo, objective not owned ──
+        if (this.strategy === 'push' && !this.rushTarget && !this.fallbackFlag && this.objective) {
+            if (alive.length >= 2 && this.objective.owner !== this.team) {
+                const avgAmmo = alive.reduce((s, c) => s + c.currentAmmo / c.magazineSize, 0) / alive.length;
+                if (avgAmmo > 0.5) {
+                    this.requestRush(this.objective);
+                }
+            }
+        }
+
+        // Rush countdown
+        if (this.rushTarget) {
+            this.rushTimer -= dt;
+            if (this.rushTimer <= 0 && !this.rushActive) {
+                this.rushActive = true;
+            }
+            // Clear rush when flag captured or all dead
+            if (this.rushTarget && this.objective && this.objective.owner === this.team) {
+                this.rushTarget = null;
+                this.rushActive = false;
+                for (const ctrl of this.controllers) {
+                    ctrl.rushTarget = null;
+                    ctrl.rushReady = false;
+                }
+            }
+        }
+
+        // ── Crossfire trigger: secure squad, 2+ alive, 2+ threats near objective ──
+        if (this.strategy === 'secure' && !this.crossfireContact && !this.fallbackFlag && this.objective) {
+            if (alive.length >= 2 && this.teamIntel) {
+                const threats = this.teamIntel.getKnownEnemies({
+                    minConfidence: 0.6,
+                    maxDist: 40,
+                    fromPos: this.objective.position,
+                });
+                if (threats.length >= 2) {
+                    this.requestCrossfire(threats[0]);
+                }
+            }
+        }
+
+        // Crossfire countdown
+        if (this.crossfireTimer > 0) {
+            this.crossfireTimer -= dt;
+            if (this.crossfireTimer <= 0) {
+                this.crossfireContact = null;
+                for (const ctrl of this.controllers) ctrl.crossfirePos = null;
+            }
         }
     }
 }

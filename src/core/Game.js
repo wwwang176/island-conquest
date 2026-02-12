@@ -203,6 +203,11 @@ export class Game {
             if (vis) vis.visible = !vis.visible;
         }
 
+        // Tactical labels toggle
+        if (e.code === 'KeyN') {
+            AIController.showTacLabels = !AIController.showTacLabels;
+        }
+
         if (this.gameMode === 'spectator') {
             if (e.code === 'Tab') {
                 e.preventDefault();
@@ -432,6 +437,7 @@ export class Game {
             '<span style="color:#fff">T</span> Threat map',
             '<span style="color:#fff">B</span> NavGrid',
             '<span style="color:#fff">G</span> Move arcs',
+            '<span style="color:#fff">N</span> Tactic labels',
             '<span style="color:#fff">Tab</span> Next COM',
             '<span style="color:#fff">V</span> Camera mode',
             '<span style="color:#fff">1/2</span> Join team',
