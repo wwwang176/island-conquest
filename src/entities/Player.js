@@ -175,22 +175,37 @@ export class Player {
         const newX = pos.x + dx;
         const newZ = pos.z + dz;
 
-        // NavGrid obstacle check — block movement into non-walkable cells
+        // NavGrid obstacle check with axis-separated sliding
+        let finalX = newX;
+        let finalZ = newZ;
         if (this.navGrid) {
-            const g = this.navGrid.worldToGrid(newX, newZ);
-            if (!this.navGrid.isWalkable(g.col, g.row)) return;
+            let g = this.navGrid.worldToGrid(newX, newZ);
+            if (!this.navGrid.isWalkable(g.col, g.row)) {
+                // Try sliding along each axis individually
+                const gX = this.navGrid.worldToGrid(newX, pos.z);
+                const gZ = this.navGrid.worldToGrid(pos.x, newZ);
+                if (this.navGrid.isWalkable(gX.col, gX.row)) {
+                    finalX = newX; finalZ = pos.z;
+                } else if (this.navGrid.isWalkable(gZ.col, gZ.row)) {
+                    finalX = pos.x; finalZ = newZ;
+                } else {
+                    return; // fully blocked
+                }
+            }
         }
 
-        const newGroundY = getH(newX, newZ);
+        const newGroundY = getH(finalX, finalZ);
         const currentFootY = pos.y;
         const slopeRise = newGroundY - currentFootY;
-        const slopeRun = Math.sqrt(dx * dx + dz * dz);
+        const stepX = finalX - pos.x;
+        const stepZ = finalZ - pos.z;
+        const slopeRun = Math.sqrt(stepX * stepX + stepZ * stepZ);
         const slopeAngle = slopeRun > 0.001 ? Math.atan2(slopeRise, slopeRun) : 0;
         const maxClimbAngle = Math.PI * 0.42; // ~75°
 
         if (slopeAngle < maxClimbAngle) {
-            pos.x = newX;
-            pos.z = newZ;
+            pos.x = finalX;
+            pos.z = finalZ;
             if (!this.isJumping) pos.y = newGroundY + 0.05;
         } else {
             // Steep terrain — auto jump

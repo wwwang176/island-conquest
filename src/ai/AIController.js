@@ -890,25 +890,38 @@ export class AIController {
         const newX = body.position.x + dx;
         const newZ = body.position.z + dz;
 
-        // NavGrid obstacle check — block movement into non-walkable cells
+        // NavGrid obstacle check with axis-separated sliding
+        let finalX = newX;
+        let finalZ = newZ;
         if (this.navGrid) {
-            const g = this.navGrid.worldToGrid(newX, newZ);
+            let g = this.navGrid.worldToGrid(newX, newZ);
             if (!this.navGrid.isWalkable(g.col, g.row)) {
-                movementBlocked = true;
+                // Try sliding along each axis individually
+                const gX = this.navGrid.worldToGrid(newX, body.position.z);
+                const gZ = this.navGrid.worldToGrid(body.position.x, newZ);
+                if (this.navGrid.isWalkable(gX.col, gX.row)) {
+                    finalX = newX; finalZ = body.position.z;
+                } else if (this.navGrid.isWalkable(gZ.col, gZ.row)) {
+                    finalX = body.position.x; finalZ = newZ;
+                } else {
+                    movementBlocked = true;
+                }
             }
         }
 
         if (!movementBlocked) {
-            const newGroundY = this.getHeightAt(newX, newZ);
+            const newGroundY = this.getHeightAt(finalX, finalZ);
             const currentFootY = body.position.y;
             const slopeRise = newGroundY - currentFootY;
-            const slopeRun = Math.sqrt(dx * dx + dz * dz);
+            const stepX = finalX - body.position.x;
+            const stepZ = finalZ - body.position.z;
+            const slopeRun = Math.sqrt(stepX * stepX + stepZ * stepZ);
             const slopeAngle = slopeRun > 0.001 ? Math.atan2(slopeRise, slopeRun) : 0;
             const maxClimbAngle = Math.PI * 0.42; // ~75°
 
             if (slopeAngle < maxClimbAngle) {
-                body.position.x = newX;
-                body.position.z = newZ;
+                body.position.x = finalX;
+                body.position.z = finalZ;
                 if (!this.isJumping) {
                     body.position.y = newGroundY + 0.05;
                 }
