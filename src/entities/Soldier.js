@@ -45,6 +45,9 @@ export class Soldier {
 
         // Ragdoll death effect
         this.ragdollActive = false;
+
+        // Cached position vector (avoids new Vector3 per getPosition call)
+        this._posCache = new THREE.Vector3();
     }
 
     _createMesh() {
@@ -63,7 +66,7 @@ export class Soldier {
             new THREE.MeshLambertMaterial({ color: hipColor })
         );
         hips.position.y = 0.75;
-        hips.castShadow = true;
+        hips.castShadow = false;
         lowerBody.add(hips);
 
         // Left leg
@@ -74,7 +77,7 @@ export class Soldier {
             new THREE.MeshLambertMaterial({ color: limbColor })
         );
         leftLegMesh.position.y = -0.275;
-        leftLegMesh.castShadow = true;
+        leftLegMesh.castShadow = false;
         leftLeg.add(leftLegMesh);
         lowerBody.add(leftLeg);
 
@@ -86,7 +89,7 @@ export class Soldier {
             new THREE.MeshLambertMaterial({ color: limbColor })
         );
         rightLegMesh.position.y = -0.275;
-        rightLegMesh.castShadow = true;
+        rightLegMesh.castShadow = false;
         rightLeg.add(rightLegMesh);
         lowerBody.add(rightLeg);
 
@@ -110,7 +113,7 @@ export class Soldier {
             new THREE.MeshLambertMaterial({ color: 0xddbb99 })
         );
         head.position.y = 1.575;
-        head.castShadow = true;
+        head.castShadow = false;
         upperBody.add(head);
         this.headMesh = head;
 
@@ -123,7 +126,7 @@ export class Soldier {
             new THREE.MeshLambertMaterial({ color: limbColor })
         );
         rightArmMesh.position.y = -0.2;
-        rightArmMesh.castShadow = true;
+        rightArmMesh.castShadow = false;
         rightArm.add(rightArmMesh);
         upperBody.add(rightArm);
 
@@ -136,7 +139,7 @@ export class Soldier {
             new THREE.MeshLambertMaterial({ color: limbColor })
         );
         leftArmMesh.position.y = -0.275;
-        leftArmMesh.castShadow = true;
+        leftArmMesh.castShadow = false;
         leftArm.add(leftArmMesh);
         upperBody.add(leftArm);
 
@@ -397,7 +400,7 @@ export class Soldier {
     }
 
     getPosition() {
-        return new THREE.Vector3(this.body.position.x, this.body.position.y, this.body.position.z);
+        return this._posCache.set(this.body.position.x, this.body.position.y, this.body.position.z);
     }
 
     canRespawn() {

@@ -9,6 +9,7 @@ const ENTRY_LIFE = 5;  // seconds
 export class KillFeed {
     constructor() {
         this.entries = []; // { killerName, killerTeam, victimName, victimTeam, headshot, life }
+        this._dirty = false;
         this._createDOM();
     }
 
@@ -39,6 +40,7 @@ export class KillFeed {
             headshot,
             life: ENTRY_LIFE,
         });
+        this._dirty = true;
         // Trim old entries
         while (this.entries.length > MAX_ENTRIES) {
             this.entries.shift();
@@ -46,13 +48,28 @@ export class KillFeed {
     }
 
     update(dt) {
+        if (this.entries.length === 0) {
+            if (this._dirty) {
+                this.container.innerHTML = '';
+                this._dirty = false;
+            }
+            return;
+        }
+
         // Decay entries
         for (let i = this.entries.length - 1; i >= 0; i--) {
             this.entries[i].life -= dt;
             if (this.entries[i].life <= 0) {
                 this.entries.splice(i, 1);
+                this._dirty = true;
             }
         }
+
+        // Entries with fading opacity need DOM update each frame
+        if (this.entries.length > 0) this._dirty = true;
+
+        if (!this._dirty) return;
+        this._dirty = false;
 
         // Render
         let html = '';

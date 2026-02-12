@@ -2,8 +2,12 @@ import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { Weapon } from './Weapon.js';
 
-const _raycaster = new THREE.Raycaster();
-const _downDir = new THREE.Vector3(0, -1, 0);
+// Module-level reusable objects (avoid per-frame allocation)
+const _forward = new THREE.Vector3();
+const _right = new THREE.Vector3();
+const _yawQuat = new THREE.Quaternion();
+const _moveDir = new THREE.Vector3();
+const _yAxis = new THREE.Vector3(0, 1, 0);
 
 /**
  * First-person player controller.
@@ -48,8 +52,6 @@ export class Player {
         // Terrain helpers (set by Game after creation)
         /** @type {Function|null} */
         this.getHeightAt = null;
-        /** @type {THREE.Object3D[]|null} */
-        this.collidables = null;
 
         // Kinematic jump state
         this.isJumping = false;
@@ -143,20 +145,20 @@ export class Player {
         }
 
         // Build move direction from input
-        const forward = new THREE.Vector3(0, 0, -1);
-        const right = new THREE.Vector3(1, 0, 0);
-        const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
-        forward.applyQuaternion(yawQuat);
-        right.applyQuaternion(yawQuat);
+        _forward.set(0, 0, -1);
+        _right.set(1, 0, 0);
+        _yawQuat.setFromAxisAngle(_yAxis, this.yaw);
+        _forward.applyQuaternion(_yawQuat);
+        _right.applyQuaternion(_yawQuat);
 
-        const moveDir = new THREE.Vector3(0, 0, 0);
-        if (this.input.isKeyDown('KeyW')) moveDir.add(forward);
-        if (this.input.isKeyDown('KeyS')) moveDir.sub(forward);
-        if (this.input.isKeyDown('KeyA')) moveDir.sub(right);
-        if (this.input.isKeyDown('KeyD')) moveDir.add(right);
+        _moveDir.set(0, 0, 0);
+        if (this.input.isKeyDown('KeyW')) _moveDir.add(_forward);
+        if (this.input.isKeyDown('KeyS')) _moveDir.sub(_forward);
+        if (this.input.isKeyDown('KeyA')) _moveDir.sub(_right);
+        if (this.input.isKeyDown('KeyD')) _moveDir.add(_right);
 
-        if (moveDir.lengthSq() > 0) {
-            moveDir.normalize();
+        if (_moveDir.lengthSq() > 0) {
+            _moveDir.normalize();
         } else {
             // No input — just snap to ground if not jumping
             if (!this.isJumping) {
@@ -166,45 +168,30 @@ export class Player {
         }
 
         // Kinematic position update
-        const dx = moveDir.x * this.moveSpeed * dt;
-        const dz = moveDir.z * this.moveSpeed * dt;
+        const dx = _moveDir.x * this.moveSpeed * dt;
+        const dz = _moveDir.z * this.moveSpeed * dt;
         const newX = pos.x + dx;
         const newZ = pos.z + dz;
 
-        // Effective ground = max(terrain, obstacle top)
-        const newTerrainY = getH(newX, newZ);
-        let newGroundY = newTerrainY;
-        if (this.collidables) {
-            const origin = new THREE.Vector3(newX, pos.y + 2.0, newZ);
-            _raycaster.set(origin, _downDir);
-            _raycaster.far = 4.0;
-            const hits = _raycaster.intersectObjects(this.collidables, true);
-            for (const hit of hits) {
-                if (hit.point.y <= newTerrainY + 0.3) continue;
-                if (hit.point.y > newGroundY) newGroundY = hit.point.y;
-            }
-        }
-
+        // Ground height at new position (terrain only — physics handles obstacles)
+        const newGroundY = getH(newX, newZ);
         const currentFootY = pos.y;
         const slopeRise = newGroundY - currentFootY;
         const slopeRun = Math.sqrt(dx * dx + dz * dz);
         const slopeAngle = slopeRun > 0.001 ? Math.atan2(slopeRise, slopeRun) : 0;
         const maxClimbAngle = Math.PI * 0.42; // ~75°
-        const isObstacle = newGroundY > newTerrainY + 0.3;
 
-        if (isObstacle && newGroundY > currentFootY + 0.3) {
-            // Blocked by obstacle — don't move
-        } else if (slopeAngle < maxClimbAngle) {
+        if (slopeAngle < maxClimbAngle) {
             pos.x = newX;
             pos.z = newZ;
             if (!this.isJumping) pos.y = newGroundY + 0.05;
-        } else if (!isObstacle) {
+        } else {
             // Steep terrain — auto jump
             if (!this.isJumping) {
                 this.isJumping = true;
                 this.jumpVelY = 2.5;
-                pos.x += moveDir.x * this.moveSpeed * 0.3 * dt;
-                pos.z += moveDir.z * this.moveSpeed * 0.3 * dt;
+                pos.x += _moveDir.x * this.moveSpeed * 0.3 * dt;
+                pos.z += _moveDir.z * this.moveSpeed * 0.3 * dt;
             }
         }
 

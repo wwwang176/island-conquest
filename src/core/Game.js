@@ -15,6 +15,7 @@ import { ImpactVFX } from '../vfx/ImpactVFX.js';
 import { Minimap } from '../ui/Minimap.js';
 import { KillFeed } from '../ui/KillFeed.js';
 import { SpectatorMode } from './SpectatorMode.js';
+import Stats from 'three/addons/libs/stats.module.js';
 
 export class Game {
     constructor() {
@@ -82,6 +83,11 @@ export class Game {
         this.aiManager.impactVFX = this.impactVFX;
 
         this._threatVisState = 0; // 0=off, 1=teamA, 2=teamB
+
+        // FPS stats panel
+        this.stats = new Stats();
+        this.stats.showPanel(0); // 0 = FPS
+        document.body.appendChild(this.stats.dom);
 
         // HUD elements
         this._createAllHUD();
@@ -218,7 +224,6 @@ export class Game {
         if (!this.player) {
             this.player = new Player(this.scene, this.camera, this.physics, this.input, this.eventBus);
             this.player.getHeightAt = (x, z) => this.island.getHeightAt(x, z);
-            this.player.collidables = this.island.collidables;
             this.player.weapon.tracerSystem = this.tracerSystem;
             this.player.weapon.impactVFX = this.impactVFX;
         }
@@ -416,26 +421,34 @@ export class Game {
 
         const p = this.player;
         const w = p.weapon;
-        const s = this.scoreManager.scores;
 
-        // Ammo
-        const reloadText = w.isReloading ? `<span style="color:#ffaa00">RELOADING...</span>` : '';
-        this.ammoHUD.innerHTML = `
-            <div style="font-size:12px;color:#aaa;margin-bottom:4px">AR-15</div>
-            <div style="font-size:28px;font-weight:bold">
-                ${w.currentAmmo}<span style="font-size:16px;color:#888"> / ${w.magazineSize}</span>
-            </div>${reloadText}`;
+        // Ammo — only update DOM when values change
+        const curAmmo = w.currentAmmo;
+        const curReloading = w.isReloading;
+        if (curAmmo !== this._lastAmmo || curReloading !== this._lastReloading) {
+            this._lastAmmo = curAmmo;
+            this._lastReloading = curReloading;
+            const reloadText = curReloading ? `<span style="color:#ffaa00">RELOADING...</span>` : '';
+            this.ammoHUD.innerHTML = `
+                <div style="font-size:12px;color:#aaa;margin-bottom:4px">AR-15</div>
+                <div style="font-size:28px;font-weight:bold">
+                    ${curAmmo}<span style="font-size:16px;color:#888"> / ${w.magazineSize}</span>
+                </div>${reloadText}`;
+        }
 
-        // Health
-        const hpPct = Math.round(p.hp);
-        const hpColor = hpPct > 60 ? '#4f4' : hpPct > 30 ? '#ff4' : '#f44';
-        const barWidth = Math.max(0, p.hp / p.maxHP * 100);
-        this.healthHUD.innerHTML = `
-            <div style="font-size:12px;color:#aaa;margin-bottom:4px">HEALTH</div>
-            <div style="font-size:28px;font-weight:bold;color:${hpColor}">${hpPct}</div>
-            <div style="width:120px;height:6px;background:#333;border-radius:3px;margin-top:4px;">
-                <div style="width:${barWidth}%;height:100%;background:${hpColor};border-radius:3px;"></div>
-            </div>`;
+        // Health — only update DOM when value changes
+        const curHP = Math.round(p.hp);
+        if (curHP !== this._lastHP) {
+            this._lastHP = curHP;
+            const hpColor = curHP > 60 ? '#4f4' : curHP > 30 ? '#ff4' : '#f44';
+            const barWidth = Math.max(0, p.hp / p.maxHP * 100);
+            this.healthHUD.innerHTML = `
+                <div style="font-size:12px;color:#aaa;margin-bottom:4px">HEALTH</div>
+                <div style="font-size:28px;font-weight:bold;color:${hpColor}">${curHP}</div>
+                <div style="width:120px;height:6px;background:#333;border-radius:3px;margin-top:4px;">
+                    <div style="width:${barWidth}%;height:100%;background:${hpColor};border-radius:3px;"></div>
+                </div>`;
+        }
 
         // Damage direction indicator
         this._updateDamageIndicator();
@@ -448,6 +461,12 @@ export class Game {
         const s = this.scoreManager.scores;
         const aFlagCount = this.flags.filter(f => f.owner === 'teamA').length;
         const bFlagCount = this.flags.filter(f => f.owner === 'teamB').length;
+        if (s.teamA === this._lastScoreA && s.teamB === this._lastScoreB &&
+            aFlagCount === this._lastFlagsA && bFlagCount === this._lastFlagsB) return;
+        this._lastScoreA = s.teamA;
+        this._lastScoreB = s.teamB;
+        this._lastFlagsA = aFlagCount;
+        this._lastFlagsB = bFlagCount;
         this.scoreHUD.innerHTML = `
             <span style="color:#4488ff;font-weight:bold">${s.teamA}</span>
             <span style="color:#aaa;font-size:14px;margin:0 6px">
@@ -577,7 +596,8 @@ export class Game {
 
     _animate() {
         requestAnimationFrame(() => this._animate());
-        if (this.paused) return;
+        this.stats.begin();
+        if (this.paused) { this.stats.end(); return; }
 
         const dt = Math.min(this.clock.getDelta(), 0.1);
 
@@ -643,5 +663,6 @@ export class Game {
         this.killFeed.update(dt);
 
         this.renderer.render(this.scene, this.camera);
+        this.stats.end();
     }
 }

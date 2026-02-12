@@ -878,47 +878,20 @@ export class AIController {
         const newX = body.position.x + dx;
         const newZ = body.position.z + dz;
 
-        // Effective ground height = max(terrain, obstacle top) at new position
-        const newTerrainY = this.getHeightAt(newX, newZ);
-        let newGroundY = newTerrainY;
-        const downOrigin = new THREE.Vector3(newX, myPos.y + 2.0, newZ);
-        _raycaster.set(downOrigin, _v2.set(0, -1, 0));
-        _raycaster.far = 4.0;
-        const downHits = _raycaster.intersectObjects(this.collidables, true);
-        for (const hit of downHits) {
-            if (hit.point.y <= newTerrainY + 0.3) continue;
-            if (hit.point.y > newGroundY) {
-                newGroundY = hit.point.y;
-            }
-        }
-
+        // Ground height at new position (terrain only — A* handles obstacle avoidance)
+        const newGroundY = this.getHeightAt(newX, newZ);
         const currentFootY = body.position.y;
-        const currentTerrainY = this.getHeightAt(myPos.x, myPos.z);
-        const alreadyOnObstacle = currentFootY > currentTerrainY + 0.3;
         const slopeRise = newGroundY - currentFootY;
         const slopeRun = Math.sqrt(dx * dx + dz * dz);
         const slopeAngle = slopeRun > 0.001 ? Math.atan2(slopeRise, slopeRun) : 0;
         const maxClimbAngle = Math.PI * 0.42; // ~75°
-        const isObstacle = newGroundY > newTerrainY + 0.3;
 
-        if (isObstacle && newGroundY > currentFootY + 0.3) {
-            // Allow movement only if already on obstacle AND moving downhill (escaping)
-            if (alreadyOnObstacle && newGroundY <= currentFootY) {
-                // Downhill escape — allow
-                body.position.x = newX;
-                body.position.z = newZ;
-                if (!this.isJumping) body.position.y = newGroundY + 0.05;
-            } else {
-                movementBlocked = true;
-            }
-        } else if (slopeAngle < maxClimbAngle) {
+        if (slopeAngle < maxClimbAngle) {
             body.position.x = newX;
             body.position.z = newZ;
             if (!this.isJumping) {
                 body.position.y = newGroundY + 0.05;
             }
-        } else if (isObstacle) {
-            movementBlocked = true;
         } else {
             // Steep terrain — trigger jump
             if (!this.isJumping) {
@@ -926,6 +899,8 @@ export class AIController {
                 this.jumpVelY = 2.5;
                 body.position.x += _v1.x * speed * 0.3 * dt;
                 body.position.z += _v1.z * speed * 0.3 * dt;
+            } else {
+                movementBlocked = true;
             }
         }
 

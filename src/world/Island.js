@@ -525,15 +525,36 @@ export class Island {
             }
         }
 
-        // Low bushes/grass clumps
+        // Low bushes/grass clumps — collect valid positions, then use InstancedMesh
+        const bushPositions = [];
         for (let i = 0; i < 100; i++) {
             const x = (this.noise.noise2D(i * 4.7, 700) * 0.85) * this.width / 2;
             const z = (this.noise.noise2D(i * 6.1, 800) * 0.85) * this.depth / 2;
             const h = this.getHeightAt(x, z);
 
             if (h > 0.5 && h < 6) {
-                this._placeBush(x, h, z);
+                const size = 0.4 + Math.abs(this.noise.noise2D(x * 3, z * 3)) * 0.6;
+                bushPositions.push({ x, y: h + size * 0.5, z, size });
             }
+        }
+
+        if (bushPositions.length > 0) {
+            const bushGeo = new THREE.IcosahedronGeometry(1, 0);
+            const bushMat = new THREE.MeshLambertMaterial({ color: 0x3a7a2a, flatShading: true });
+            const bushMesh = new THREE.InstancedMesh(bushGeo, bushMat, bushPositions.length);
+            bushMesh.castShadow = false;
+            const _mat4 = new THREE.Matrix4();
+            const _pos = new THREE.Vector3();
+            const _quat = new THREE.Quaternion();
+            const _scale = new THREE.Vector3();
+            for (let i = 0; i < bushPositions.length; i++) {
+                const bp = bushPositions[i];
+                _pos.set(bp.x, bp.y, bp.z);
+                _scale.set(bp.size, bp.size * 0.6, bp.size);
+                _mat4.compose(_pos, _quat, _scale);
+                bushMesh.setMatrixAt(i, _mat4);
+            }
+            this.scene.add(bushMesh);
         }
     }
 
@@ -557,7 +578,7 @@ export class Island {
         const trunkMat = new THREE.MeshLambertMaterial({ color: 0x8B6508, flatShading: true });
         const trunk = new THREE.Mesh(trunkGeo, trunkMat);
         trunk.position.y = trunkH / 2;
-        trunk.castShadow = true;
+        trunk.castShadow = false;
         group.add(trunk);
 
         // Palm fronds (simple flat diamond shapes)
@@ -586,7 +607,7 @@ export class Island {
             frondGeo.computeVertexNormals();
             const frond = new THREE.Mesh(frondGeo, frondMat);
             frond.position.set(topX, trunkH, topZ);
-            frond.castShadow = true;
+            frond.castShadow = false;
             group.add(frond);
         }
 
@@ -602,14 +623,4 @@ export class Island {
         );
     }
 
-    _placeBush(x, h, z) {
-        const size = 0.4 + Math.abs(this.noise.noise2D(x * 3, z * 3)) * 0.6;
-        const geo = new THREE.IcosahedronGeometry(size, 0);
-        const mat = new THREE.MeshLambertMaterial({ color: 0x3a7a2a, flatShading: true });
-        const bush = new THREE.Mesh(geo, mat);
-        bush.position.set(x, h + size * 0.5, z);
-        bush.scale.y = 0.6;
-        bush.castShadow = true;
-        this.scene.add(bush);
-    }
 }
