@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Noise } from './Noise.js';
 import { NavGrid } from '../ai/NavGrid.js';
 
@@ -513,16 +514,70 @@ export class Island {
     }
 
     _generateVegetation() {
-        // Palm trees
+        // Palm trees — merge all into 2 draw calls (trunks + fronds)
+        const trunkGeometries = [];
+        const frondGeometries = [];
         for (let i = 0; i < 80; i++) {
             const x = (this.noise.noise2D(i * 5.1, 500) * 0.85) * this.width / 2;
             const z = (this.noise.noise2D(i * 3.3, 600) * 0.85) * this.depth / 2;
             const h = this.getHeightAt(x, z);
 
-            // Only place on land, not too high
             if (h > 0.5 && h < 5) {
-                this._placePalmTree(x, h, z);
+                // Trunk (tapered cylinder, slightly curved via segments)
+                const trunkH = 4 + Math.abs(this.noise.noise2D(x, z)) * 3;
+                const trunkGeo = new THREE.CylinderGeometry(0.08, 0.18, trunkH, 5, 4);
+                const trunkPos = trunkGeo.attributes.position;
+                const bendX = this.noise.noise2D(x * 10, z * 10) * 0.8;
+                const bendZ = this.noise.noise2D(z * 10, x * 10) * 0.8;
+                for (let j = 0; j < trunkPos.count; j++) {
+                    const ty = (trunkPos.getY(j) + trunkH / 2) / trunkH;
+                    trunkPos.setX(j, trunkPos.getX(j) + bendX * ty * ty);
+                    trunkPos.setZ(j, trunkPos.getZ(j) + bendZ * ty * ty);
+                }
+                trunkGeo.translate(x, h + trunkH / 2, z);
+                trunkGeo.computeVertexNormals();
+                trunkGeometries.push(trunkGeo);
+
+                // Palm fronds (6 per tree)
+                const topX = bendX;
+                const topZ = bendZ;
+                for (let f = 0; f < 6; f++) {
+                    const angle = (f / 6) * Math.PI * 2 + this.noise.noise2D(x + f, z + f);
+                    const frondGeo = new THREE.BufferGeometry();
+                    const len = 2 + Math.random();
+                    const vertices = new Float32Array([
+                        0, 0, 0,
+                        Math.cos(angle) * len, -0.5, Math.sin(angle) * len,
+                        Math.cos(angle + 0.3) * len * 0.7, 0.1, Math.sin(angle + 0.3) * len * 0.7,
+                        Math.cos(angle - 0.3) * len * 0.7, 0.1, Math.sin(angle - 0.3) * len * 0.7,
+                    ]);
+                    const indices = [0, 1, 2, 0, 3, 1];
+                    frondGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+                    frondGeo.setIndex(indices);
+                    frondGeo.translate(x + topX, h + trunkH, z + topZ);
+                    frondGeo.computeVertexNormals();
+                    frondGeometries.push(frondGeo);
+                }
+
+                this.coverSystem.register(
+                    new THREE.Vector3(x, h, z),
+                    new THREE.Vector3(0, 0, 1),
+                    0.2,
+                    1
+                );
             }
+        }
+
+        if (trunkGeometries.length > 0) {
+            const mergedTrunks = mergeGeometries(trunkGeometries);
+            const trunkMesh = new THREE.Mesh(mergedTrunks, new THREE.MeshLambertMaterial({ color: 0x8B6508, flatShading: true }));
+            trunkMesh.castShadow = false;
+            this.scene.add(trunkMesh);
+
+            const mergedFronds = mergeGeometries(frondGeometries);
+            const frondMesh = new THREE.Mesh(mergedFronds, new THREE.MeshLambertMaterial({ color: 0x2d8a2d, side: THREE.DoubleSide, flatShading: true }));
+            frondMesh.castShadow = false;
+            this.scene.add(frondMesh);
         }
 
         // Low bushes/grass clumps — collect valid positions, then use InstancedMesh
@@ -556,71 +611,6 @@ export class Island {
             }
             this.scene.add(bushMesh);
         }
-    }
-
-    _placePalmTree(x, h, z) {
-        const group = new THREE.Group();
-
-        // Trunk (tapered cylinder, slightly curved via segments)
-        const trunkH = 4 + Math.abs(this.noise.noise2D(x, z)) * 3;
-        const trunkGeo = new THREE.CylinderGeometry(0.08, 0.18, trunkH, 5, 4);
-        const trunkPos = trunkGeo.attributes.position;
-        // Slight bend
-        const bendX = this.noise.noise2D(x * 10, z * 10) * 0.8;
-        const bendZ = this.noise.noise2D(z * 10, x * 10) * 0.8;
-        for (let i = 0; i < trunkPos.count; i++) {
-            const ty = (trunkPos.getY(i) + trunkH / 2) / trunkH; // 0 at bottom, 1 at top
-            trunkPos.setX(i, trunkPos.getX(i) + bendX * ty * ty);
-            trunkPos.setZ(i, trunkPos.getZ(i) + bendZ * ty * ty);
-        }
-        trunkGeo.computeVertexNormals();
-
-        const trunkMat = new THREE.MeshLambertMaterial({ color: 0x8B6508, flatShading: true });
-        const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-        trunk.position.y = trunkH / 2;
-        trunk.castShadow = false;
-        group.add(trunk);
-
-        // Palm fronds (simple flat diamond shapes)
-        const frondMat = new THREE.MeshLambertMaterial({
-            color: 0x2d8a2d,
-            side: THREE.DoubleSide,
-            flatShading: true,
-        });
-
-        const topX = bendX;
-        const topZ = bendZ;
-
-        for (let f = 0; f < 6; f++) {
-            const angle = (f / 6) * Math.PI * 2 + this.noise.noise2D(x + f, z + f);
-            const frondGeo = new THREE.BufferGeometry();
-            const len = 2 + Math.random();
-            const vertices = new Float32Array([
-                0, 0, 0,
-                Math.cos(angle) * len, -0.5, Math.sin(angle) * len,
-                Math.cos(angle + 0.3) * len * 0.7, 0.1, Math.sin(angle + 0.3) * len * 0.7,
-                Math.cos(angle - 0.3) * len * 0.7, 0.1, Math.sin(angle - 0.3) * len * 0.7,
-            ]);
-            const indices = [0, 1, 2, 0, 3, 1];
-            frondGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-            frondGeo.setIndex(indices);
-            frondGeo.computeVertexNormals();
-            const frond = new THREE.Mesh(frondGeo, frondMat);
-            frond.position.set(topX, trunkH, topZ);
-            frond.castShadow = false;
-            group.add(frond);
-        }
-
-        group.position.set(x, h, z);
-        this.scene.add(group);
-
-        // Palm trees only block vision, not bullets — coverLevel 0.2
-        this.coverSystem.register(
-            new THREE.Vector3(x, h, z),
-            new THREE.Vector3(0, 0, 1), // arbitrary normal
-            0.2,
-            1
-        );
     }
 
 }
