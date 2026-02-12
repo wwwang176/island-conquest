@@ -52,6 +52,8 @@ export class Player {
         // Terrain helpers (set by Game after creation)
         /** @type {Function|null} */
         this.getHeightAt = null;
+        /** @type {import('../ai/NavGrid.js').NavGrid|null} */
+        this.navGrid = null;
 
         // Kinematic jump state
         this.isJumping = false;
@@ -173,7 +175,12 @@ export class Player {
         const newX = pos.x + dx;
         const newZ = pos.z + dz;
 
-        // Ground height at new position (terrain only — physics handles obstacles)
+        // NavGrid obstacle check — block movement into non-walkable cells
+        if (this.navGrid) {
+            const g = this.navGrid.worldToGrid(newX, newZ);
+            if (!this.navGrid.isWalkable(g.col, g.row)) return;
+        }
+
         const newGroundY = getH(newX, newZ);
         const currentFootY = pos.y;
         const slopeRise = newGroundY - currentFootY;

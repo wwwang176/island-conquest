@@ -867,7 +867,6 @@ export class AIController {
             if (rLen > 0.001) { _v1.x /= rLen; _v1.z /= rLen; }
         }
 
-        // Wall sliding disabled — A* handles obstacle avoidance
         let movementBlocked = false;
 
         const speed = this.seekingCover ? this.moveSpeed * 1.2 : this.moveSpeed;
@@ -878,29 +877,38 @@ export class AIController {
         const newX = body.position.x + dx;
         const newZ = body.position.z + dz;
 
-        // Ground height at new position (terrain only — A* handles obstacle avoidance)
-        const newGroundY = this.getHeightAt(newX, newZ);
-        const currentFootY = body.position.y;
-        const slopeRise = newGroundY - currentFootY;
-        const slopeRun = Math.sqrt(dx * dx + dz * dz);
-        const slopeAngle = slopeRun > 0.001 ? Math.atan2(slopeRise, slopeRun) : 0;
-        const maxClimbAngle = Math.PI * 0.42; // ~75°
-
-        if (slopeAngle < maxClimbAngle) {
-            body.position.x = newX;
-            body.position.z = newZ;
-            if (!this.isJumping) {
-                body.position.y = newGroundY + 0.05;
-            }
-        } else {
-            // Steep terrain — trigger jump
-            if (!this.isJumping) {
-                this.isJumping = true;
-                this.jumpVelY = 2.5;
-                body.position.x += _v1.x * speed * 0.3 * dt;
-                body.position.z += _v1.z * speed * 0.3 * dt;
-            } else {
+        // NavGrid obstacle check — block movement into non-walkable cells
+        if (this.navGrid) {
+            const g = this.navGrid.worldToGrid(newX, newZ);
+            if (!this.navGrid.isWalkable(g.col, g.row)) {
                 movementBlocked = true;
+            }
+        }
+
+        if (!movementBlocked) {
+            const newGroundY = this.getHeightAt(newX, newZ);
+            const currentFootY = body.position.y;
+            const slopeRise = newGroundY - currentFootY;
+            const slopeRun = Math.sqrt(dx * dx + dz * dz);
+            const slopeAngle = slopeRun > 0.001 ? Math.atan2(slopeRise, slopeRun) : 0;
+            const maxClimbAngle = Math.PI * 0.42; // ~75°
+
+            if (slopeAngle < maxClimbAngle) {
+                body.position.x = newX;
+                body.position.z = newZ;
+                if (!this.isJumping) {
+                    body.position.y = newGroundY + 0.05;
+                }
+            } else {
+                // Steep terrain — trigger jump
+                if (!this.isJumping) {
+                    this.isJumping = true;
+                    this.jumpVelY = 2.5;
+                    body.position.x += _v1.x * speed * 0.3 * dt;
+                    body.position.z += _v1.z * speed * 0.3 * dt;
+                } else {
+                    movementBlocked = true;
+                }
             }
         }
 

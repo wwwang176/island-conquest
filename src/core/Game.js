@@ -224,6 +224,7 @@ export class Game {
         if (!this.player) {
             this.player = new Player(this.scene, this.camera, this.physics, this.input, this.eventBus);
             this.player.getHeightAt = (x, z) => this.island.getHeightAt(x, z);
+            this.player.navGrid = this.island.navGrid;
             this.player.weapon.tracerSystem = this.tracerSystem;
             this.player.weapon.impactVFX = this.impactVFX;
         }
