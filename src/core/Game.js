@@ -13,6 +13,7 @@ import { AIManager } from '../ai/AIManager.js';
 import { AIController } from '../ai/AIController.js';
 import { TracerSystem } from '../vfx/TracerSystem.js';
 import { ImpactVFX } from '../vfx/ImpactVFX.js';
+import { GrenadeManager } from '../systems/GrenadeManager.js';
 import { Minimap } from '../ui/Minimap.js';
 import { KillFeed } from '../ui/KillFeed.js';
 import { SpectatorMode } from './SpectatorMode.js';
@@ -72,7 +73,7 @@ export class Game {
         this.tracerSystem = new TracerSystem(this.scene);
 
         // Impact particle VFX
-        this.impactVFX = new ImpactVFX(this.scene);
+        this.impactVFX = new ImpactVFX(this.scene, (x, z) => this.island.getHeightAt(x, z));
 
         // AI Manager (24 COMs total: 12 per team)
         this.aiManager = new AIManager(
@@ -82,6 +83,10 @@ export class Game {
         );
         this.aiManager.tracerSystem = this.tracerSystem;
         this.aiManager.impactVFX = this.impactVFX;
+
+        // Grenade manager
+        this.grenadeManager = new GrenadeManager(this.scene, this.physics, this.impactVFX, this.eventBus);
+        this.aiManager.grenadeManager = this.grenadeManager;
 
         this._threatVisState = 0; // 0=off, 1=teamA, 2=teamB
 
@@ -671,6 +676,14 @@ export class Game {
 
         // Update AI
         this.aiManager.update(dt, this.island.collidables);
+
+        // Update grenades
+        if (!this._allSoldiersBuf) this._allSoldiersBuf = [];
+        const allSoldiersBuf = this._allSoldiersBuf;
+        allSoldiersBuf.length = 0;
+        for (const s of this.aiManager.teamA.soldiers) allSoldiersBuf.push(s);
+        for (const s of this.aiManager.teamB.soldiers) allSoldiersBuf.push(s);
+        this.grenadeManager.update(dt, allSoldiersBuf, this.player);
 
         if (this.gameMode === 'spectator') {
             // Spectator camera

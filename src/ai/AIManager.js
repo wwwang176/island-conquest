@@ -166,6 +166,16 @@ export class AIManager {
     }
 
     /**
+     * Set the grenade manager so AI can throw grenades.
+     */
+    set grenadeManager(mgr) {
+        this._grenadeManager = mgr;
+        for (const ctrl of [...this.teamA.controllers, ...this.teamB.controllers]) {
+            ctrl.grenadeManager = mgr;
+        }
+    }
+
+    /**
      * Set the impact VFX system so AI shots produce hit particles.
      */
     set impactVFX(sys) {
@@ -240,9 +250,17 @@ export class AIManager {
         this.threatMapA.update(dt, allB);
         this.threatMapB.update(dt, allA);
 
-        // Update squad coordinators
-        for (const squad of this.teamA.squads) squad.update(dt);
-        for (const squad of this.teamB.squads) squad.update(dt);
+        // Calculate flag deficit per team (positive = behind)
+        const aFlags = this.flags.filter(f => f.owner === 'teamA').length;
+        const bFlags = this.flags.filter(f => f.owner === 'teamB').length;
+
+        // Pass deficit to controllers
+        for (const ctrl of this.teamA.controllers) ctrl.flagDeficit = bFlags - aFlags;
+        for (const ctrl of this.teamB.controllers) ctrl.flagDeficit = aFlags - bFlags;
+
+        // Update squad coordinators with deficit
+        for (const squad of this.teamA.squads) squad.update(dt, bFlags - aFlags);
+        for (const squad of this.teamB.squads) squad.update(dt, aFlags - bFlags);
 
         // Add player to appropriate enemy list
         const playerAsEnemy = this.player && this.player.alive && this.player.team

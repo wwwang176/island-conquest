@@ -21,6 +21,15 @@ export const WeaponDefs = {
         spreadIncreasePerShot: 0.004,
         spreadRecoveryRate: 0.4,
     },
+    GRENADE: {
+        name: 'Grenade',
+        throwSpeed: 14,
+        fuseTime: 2.5,
+        blastRadius: 6,
+        damageCenter: 200,
+        maxPerLife: 2,
+        cooldown: 5,
+    },
     SMG: {
         name: 'SMG',
         magazineSize: 35,

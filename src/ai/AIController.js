@@ -4,6 +4,9 @@ import { PersonalityTypes } from './Personality.js';
 import { findFlankPosition, computePreAimPoint, computeSuppressionTarget } from './TacticalActions.js';
 import { WeaponDefs } from '../entities/WeaponDefs.js';
 
+const _grenadeOrigin = new THREE.Vector3();
+const _grenadeDir = new THREE.Vector3();
+
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _raycaster = new THREE.Raycaster();
@@ -165,6 +168,16 @@ export class AIController {
         this.btTimer = 0;
         this.btInterval = 0.15 + Math.random() * 0.1;
 
+        // Grenade state
+        this.grenadeCount = WeaponDefs.GRENADE.maxPerLife;
+        this.grenadeCooldown = 0;
+        this._engageTimer = 0;        // time engaging same enemy
+        this._lastEngageEnemy = null;  // track which enemy we're timing
+        this.grenadeManager = null;    // set by AIManager
+
+        // Flag deficit (positive = behind, set by AIManager each frame)
+        this.flagDeficit = 0;
+
         // Build behavior tree
         this.behaviorTree = this._buildBehaviorTree();
 
@@ -181,11 +194,13 @@ export class AIController {
                 new Action(() => BTState.SUCCESS),
             ]),
 
-            // 2. Under heavy threat — seek cover (threshold raised during active rush)
+            // 2. Under heavy threat — seek cover (threshold raised during rush or underdog)
             new Sequence([
                 new Condition(() => {
                     const rushing = ctx.rushTarget && ctx.squad && ctx.squad.rushActive;
-                    const threshold = rushing ? 0.95 : ctx.personality.riskThreshold;
+                    let threshold = ctx.personality.riskThreshold;
+                    if (rushing) threshold = 0.95;
+                    else if (ctx.flagDeficit >= 2) threshold = Math.min(threshold + 0.15, 0.9);
                     return ctx.riskLevel > threshold;
                 }),
                 new Action(() => ctx._actionSeekCover()),
@@ -231,7 +246,14 @@ export class AIController {
 
             // ── Individual combat ──
 
-            // 8. Close-range enemy (< 20m) — must engage
+            // 8. Throw grenade (checked before engage so it can interrupt close combat)
+            new Sequence([
+                new Condition(() => ctx.grenadeCount > 0 && ctx.grenadeCooldown <= 0),
+                new Condition(() => ctx._shouldThrowGrenade()),
+                new Action(() => ctx._actionThrowGrenade()),
+            ]),
+
+            // 8.5. Close-range enemy (< 20m) — must engage
             new Sequence([
                 new Condition(() => ctx.targetEnemy !== null && ctx._enemyDist() < 20),
                 new Action(() => ctx._actionEngage()),
@@ -316,6 +338,22 @@ export class AIController {
 
         // Decay path cooldown
         if (this._pathCooldown > 0) this._pathCooldown -= dt;
+
+        // Decay grenade cooldown
+        if (this.grenadeCooldown > 0) this.grenadeCooldown -= dt;
+
+        // Track engage timer (how long fighting the same enemy)
+        if (this.targetEnemy && this.targetEnemy.alive && this.hasReacted) {
+            if (this.targetEnemy === this._lastEngageEnemy) {
+                this._engageTimer += dt;
+            } else {
+                this._lastEngageEnemy = this.targetEnemy;
+                this._engageTimer = 0;
+            }
+        } else {
+            this._engageTimer = 0;
+            this._lastEngageEnemy = null;
+        }
 
         // Detect risk spike (under attack) → force path recompute
         if (this.riskLevel > this._lastRiskLevel + 0.15 && this._pathCooldown <= 0) {
@@ -523,6 +561,155 @@ export class AIController {
             fromPos: myPos,
         });
         return contacts.length > 0;
+    }
+
+    // ───── Grenade Logic ─────
+
+    _shouldThrowGrenade() {
+        if (!this.grenadeManager) return false;
+
+        // Safety: don't throw if nearest enemy is too close (blast would hit self)
+        if (this.targetEnemy && this.targetEnemy.alive && this._enemyDist() < 8) return false;
+
+        const myPos = this.soldier.getPosition();
+
+        // Scenario 1: Rush — rushing toward flag
+        if (this.rushTarget && this.squad && this.squad.rushActive) {
+            const distToFlag = myPos.distanceTo(this.rushTarget);
+            if (distToFlag >= 8 && distToFlag <= 40) return true;
+        }
+
+        // Scenario 2: Enemy holding a flag we're attacking
+        if (this.targetFlag && this.targetFlag.owner !== this.team && this.targetFlag.owner !== null) {
+            const flagPos = this.targetFlag.position;
+            const distToFlag = myPos.distanceTo(flagPos);
+            if (distToFlag >= 8 && distToFlag <= 45 && this.teamIntel) {
+                const threats = this.teamIntel.getKnownEnemies({
+                    minConfidence: 0.3,
+                    maxDist: 18,
+                    fromPos: flagPos,
+                });
+                if (threats.length > 0) return true;
+            }
+        }
+
+        // Scenario 3: Visible enemy in range
+        if (this.targetEnemy && this.targetEnemy.alive) {
+            const dist = this._enemyDist();
+            if (dist >= 8 && dist <= 40) return true;
+        }
+
+        // Scenario 4: Multiple enemies clustered — 2+ enemies within blast radius
+        if (this.teamIntel) {
+            const nearby = this.teamIntel.getKnownEnemies({
+                minConfidence: 0.4,
+                maxDist: 40,
+                fromPos: myPos,
+            });
+            if (nearby.length >= 2) {
+                for (let i = 0; i < nearby.length - 1; i++) {
+                    const pi = nearby[i].lastSeenPos;
+                    const di = myPos.distanceTo(pi);
+                    if (di < 8) continue;
+                    for (let j = i + 1; j < nearby.length; j++) {
+                        if (pi.distanceTo(nearby[j].lastSeenPos) < 8) return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    _actionThrowGrenade() {
+        const myPos = this.soldier.getPosition();
+        const def = WeaponDefs.GRENADE;
+
+        // Determine target position
+        let targetPos;
+        if (this.rushTarget && this.squad && this.squad.rushActive) {
+            targetPos = this.rushTarget;
+        } else if (this.targetEnemy && this.targetEnemy.alive) {
+            targetPos = this.targetEnemy.getPosition();
+        } else if (this.targetFlag) {
+            targetPos = this.targetFlag.position;
+        } else {
+            return BTState.FAILURE;
+        }
+
+        // Face the target before throwing
+        _grenadeDir.set(targetPos.x - myPos.x, 0, targetPos.z - myPos.z).normalize();
+        this.facingDir.copy(_grenadeDir);
+
+        // Origin: shoulder height
+        _grenadeOrigin.set(myPos.x, myPos.y + 1.5, myPos.z);
+
+        // Horizontal direction and distance
+        _grenadeDir.set(targetPos.x - _grenadeOrigin.x, 0, targetPos.z - _grenadeOrigin.z);
+        const horizDist = _grenadeDir.length();
+        if (horizDist < 0.1) {
+            _grenadeDir.set(this.facingDir.x, 0, this.facingDir.z);
+        }
+        _grenadeDir.normalize();
+
+        // No linearDamping on grenade — use clean projectile formula.
+        // Solve for launch angle given fixed speed v to hit (horizDist, dy).
+        //   horizDist = v·cos(a)·t,  dy = v·sin(a)·t - ½g·t²
+        // Eliminate t → quadratic in tan(a). Pick the low-angle solution.
+        const v = def.throwSpeed;
+        const g = 9.8;
+        const dy = (targetPos.y != null ? targetPos.y : myPos.y) - _grenadeOrigin.y;
+        const v2 = v * v;
+        const d2 = horizDist * horizDist;
+        const disc = v2 * v2 - g * (g * d2 + 2 * dy * v2);
+
+        let vHoriz, vy;
+        if (disc >= 0) {
+            const sqrtDisc = Math.sqrt(disc);
+            const gd = g * horizDist;
+
+            // High-angle solution (preferred — arcs over obstacles)
+            const tanHi = (v2 + sqrtDisc) / gd;
+            const cosHi = 1 / Math.sqrt(1 + tanHi * tanHi);
+            const vHorizHi = v * cosHi;
+            const flightTimeHi = horizDist / vHorizHi;
+
+            if (flightTimeHi <= def.fuseTime) {
+                // High angle fits within fuse — use it
+                const sinHi = tanHi * cosHi;
+                vHoriz = vHorizHi;
+                vy = v * sinHi;
+            } else {
+                // High angle too slow — fall back to low angle
+                const tanLo = (v2 - sqrtDisc) / gd;
+                const cosLo = 1 / Math.sqrt(1 + tanLo * tanLo);
+                const sinLo = tanLo * cosLo;
+                vHoriz = v * cosLo;
+                vy = v * sinLo;
+            }
+        } else {
+            // Out of range — throw at 45° (maximum range)
+            vHoriz = v * 0.707;
+            vy = v * 0.707;
+        }
+
+        const scale = 1; // already at throwSpeed
+
+        const velocity = new THREE.Vector3(
+            _grenadeDir.x * vHoriz * scale,
+            vy * scale,
+            _grenadeDir.z * vHoriz * scale
+        );
+
+        this.grenadeManager.spawn(_grenadeOrigin, velocity, def.fuseTime, this.team);
+
+        this.grenadeCount--;
+        this.grenadeCooldown = def.cooldown;
+
+        // Brief pause after throwing (don't shoot for 0.5s)
+        this.fireTimer = 0.5;
+
+        return BTState.SUCCESS;
     }
 
     // ───── Actions ─────
@@ -1402,6 +1589,11 @@ export class AIController {
         this.isReloading = false;
         this.reloadTimer = 0;
         this.currentSpread = this.baseSpread;
+        // Reset grenade state
+        this.grenadeCount = WeaponDefs.GRENADE.maxPerLife;
+        this.grenadeCooldown = 0;
+        this._engageTimer = 0;
+        this._lastEngageEnemy = null;
         // Reset jump state
         this.isJumping = false;
         this.jumpVelY = 0;

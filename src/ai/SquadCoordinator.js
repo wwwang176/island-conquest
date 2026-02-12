@@ -307,7 +307,8 @@ export class SquadCoordinator {
     /**
      * Main update loop.
      */
-    update(dt) {
+    update(dt, flagDeficit = 0) {
+        this.flagDeficit = flagDeficit;
         // Periodic objective evaluation
         this.evalTimer += dt;
         if (this.evalTimer >= this.evalInterval) {
@@ -339,11 +340,16 @@ export class SquadCoordinator {
             }
         }
 
-        // ── Rush trigger: push squad, 2+ alive, >50% avg ammo, objective not owned ──
-        if (this.strategy === 'push' && !this.rushTarget && !this.fallbackFlag && this.objective) {
-            if (alive.length >= 2 && this.objective.owner !== this.team) {
+        // ── Rush trigger ──
+        // Underdog (flagDeficit >= 2): secure squads also rush, 1 alive enough, lower ammo threshold
+        const isUnderdog = flagDeficit >= 2;
+        const canRush = this.strategy === 'push' || isUnderdog;
+        if (canRush && !this.rushTarget && !this.fallbackFlag && this.objective) {
+            const minAlive = isUnderdog ? 1 : 2;
+            const minAmmo = isUnderdog ? 0.3 : 0.5;
+            if (alive.length >= minAlive && this.objective.owner !== this.team) {
                 const avgAmmo = alive.reduce((s, c) => s + c.currentAmmo / c.magazineSize, 0) / alive.length;
-                if (avgAmmo > 0.5) {
+                if (avgAmmo > minAmmo) {
                     this.requestRush(this.objective);
                 }
             }
