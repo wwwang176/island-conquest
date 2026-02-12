@@ -552,6 +552,9 @@ export class Game {
                 const soldier = obj.userData.soldier;
                 if (!soldier.alive) return;
                 if (soldier.team === this.player.team) return;
+                if (this.impactVFX) {
+                    this.impactVFX.spawn('blood', hit.point, null);
+                }
                 const headshot = hit.target === soldier.headMesh;
                 const result = soldier.takeDamage(hit.damage, this.player.getPosition(), headshot);
                 if (result.killed) {

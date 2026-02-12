@@ -1026,6 +1026,14 @@ export class AIController {
         } else {
             this.stuckTimer = 0;
         }
+        // Record velocity for death momentum inheritance
+        const invDt = dt > 0.001 ? 1 / dt : 0;
+        this.soldier.lastMoveVelocity.set(
+            (myPos.x - this.lastPos.x) * invDt,
+            0,
+            (myPos.z - this.lastPos.z) * invDt
+        );
+
         this.lastPos.copy(myPos);
     }
 
@@ -1163,6 +1171,9 @@ export class AIController {
             for (const enemy of this.enemies) {
                 if (!enemy.alive) continue;
                 if (this._isChildOf(hitChar.object, enemy.mesh)) {
+                    if (this.impactVFX) {
+                        this.impactVFX.spawn('blood', hitChar.point, _v1.copy(dir).negate());
+                    }
                     const headshot = hitChar.object === enemy.headMesh;
                     const result = enemy.takeDamage(12, myPos, headshot);
                     if (result.killed && this.eventBus) {
@@ -1179,6 +1190,9 @@ export class AIController {
                 }
             }
             if (this._playerRef && this._isChildOf(hitChar.object, this._playerMesh)) {
+                if (this.impactVFX) {
+                    this.impactVFX.spawn('blood', hitChar.point, _v1.copy(dir).negate());
+                }
                 const result = this._playerRef.takeDamage(12, myPos, false);
                 if (result.killed && this.eventBus) {
                     this.eventBus.emit('kill', {

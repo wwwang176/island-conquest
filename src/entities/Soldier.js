@@ -52,6 +52,9 @@ export class Soldier {
         // Ragdoll death effect
         this.ragdollActive = false;
 
+        // Last movement velocity (for death momentum inheritance)
+        this.lastMoveVelocity = new THREE.Vector3();
+
         // Cached position vector (avoids new Vector3 per getPosition call)
         this._posCache = new THREE.Vector3();
     }
@@ -311,6 +314,10 @@ export class Soldier {
                 new CANNON.Vec3(0, 0.6, 0)
             );
         }
+
+        // Inherit walking momentum
+        this.body.velocity.x += this.lastMoveVelocity.x;
+        this.body.velocity.z += this.lastMoveVelocity.z;
     }
 
     /**

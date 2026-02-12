@@ -10,7 +10,7 @@ const PARTICLE_TYPES = {
     dirt: {
         colors: [new THREE.Color(0x8B7355), new THREE.Color(0x6B5B3A)],
         count: 8,
-        sizeMin: 0.75, sizeMax: 1.5,
+        sizeMin: 0.375, sizeMax: 0.75,
         life: 0.4,
         speedMin: 2, speedMax: 5,
         gravity: 9.8,
@@ -18,7 +18,7 @@ const PARTICLE_TYPES = {
     water: {
         colors: [new THREE.Color(0xffffff), new THREE.Color(0xeeeeff)],
         count: 10,
-        sizeMin: 0.6, sizeMax: 1.25,
+        sizeMin: 0.3, sizeMax: 0.625,
         life: 0.5,
         speedMin: 3, speedMax: 6,
         gravity: 5.0,
@@ -26,10 +26,18 @@ const PARTICLE_TYPES = {
     spark: {
         colors: [new THREE.Color(0xffcc00), new THREE.Color(0xffaa00)],
         count: 6,
-        sizeMin: 0.5, sizeMax: 1.0,
+        sizeMin: 0.25, sizeMax: 0.5,
         life: 0.3,
         speedMin: 4, speedMax: 8,
         gravity: 2.0,
+    },
+    blood: {
+        colors: [new THREE.Color(0xcc0000), new THREE.Color(0x880000)],
+        count: 10,
+        sizeMin: 0.3, sizeMax: 0.7,
+        life: 0.5,
+        speedMin: 2, speedMax: 5,
+        gravity: 6.0,
     },
 };
 
@@ -148,7 +156,7 @@ export class ImpactVFX {
 
             // Random direction in hemisphere around normal
             const phi = Math.random() * Math.PI * 2;
-            const cosTheta = Math.random();
+            const cosTheta = Math.cos(Math.random() * (Math.PI / 6));
             const sinTheta = Math.sqrt(1 - cosTheta * cosTheta);
 
             const dx = _tangent.x * Math.cos(phi) * sinTheta + _bitangent.x * Math.sin(phi) * sinTheta + n.x * cosTheta;
