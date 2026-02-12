@@ -37,6 +37,9 @@ export class AIManager {
         // Staggered updates: split AI updates across frames
         this.updateIndex = 0;
         this.totalAI = this.teamA.soldiers.length + this.teamB.soldiers.length;
+
+        // Soldiers are created but not yet positioned — call spawnAll() after NavGrid is ready
+        this._spawned = false;
     }
 
     _createTeam(team, teamData) {
@@ -51,13 +54,8 @@ export class AIManager {
                 // Create soldier
                 const soldier = new Soldier(this.scene, this.physics, team, id, true);
 
-                // Spawn near team's base flag
-                const angle = Math.random() * Math.PI * 2;
-                const dist = 5 + Math.random() * 10;
-                const sx = spawnFlag.position.x + Math.cos(angle) * dist;
-                const sz = spawnFlag.position.z + Math.sin(angle) * dist;
-                const sy = this.getHeightAt(sx, sz) + 2;
-                soldier.body.position.set(sx, sy, sz);
+                // Position off-screen until spawnAll() places them properly
+                soldier.body.position.set(0, -100, 0);
 
                 // Create AI controller with coverSystem and teamIntel
                 const controller = new AIController(
@@ -117,6 +115,37 @@ export class AIManager {
     // Keep setter for backward compatibility
     set navGrid(grid) {
         this.setNavGrid(grid, null, null);
+    }
+
+    /**
+     * Place all soldiers at safe initial positions.
+     * Must be called after NavGrid + ThreatMap are ready.
+     */
+    spawnAll() {
+        if (this._spawned) return;
+        this._spawned = true;
+
+        const spawnTeam = (teamData, team) => {
+            const spawnFlag = team === 'teamA' ? this.flags[0] : this.flags[this.flags.length - 1];
+            const threatMap = team === 'teamA' ? this.threatMapA : this.threatMapB;
+            for (const soldier of teamData.soldiers) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = 5 + Math.random() * 10;
+                const cx = spawnFlag.position.x + Math.cos(angle) * dist;
+                const cz = spawnFlag.position.z + Math.sin(angle) * dist;
+                const safe = this._findSafeCell(cx, cz, threatMap, 30);
+                if (safe) {
+                    soldier.body.position.set(safe.x, safe.y + 1, safe.z);
+                } else {
+                    // Fallback: flag position directly
+                    const h = this.getHeightAt(spawnFlag.position.x, spawnFlag.position.z);
+                    soldier.body.position.set(spawnFlag.position.x, h + 1, spawnFlag.position.z);
+                }
+            }
+        };
+
+        spawnTeam(this.teamA, 'teamA');
+        spawnTeam(this.teamB, 'teamB');
     }
 
     /**
