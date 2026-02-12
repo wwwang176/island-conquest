@@ -12,6 +12,34 @@ const _strafeDir = new THREE.Vector3();
 const _tmpVec = new THREE.Vector3();
 const _targetMeshes = [];
 
+const EYE_HEIGHT = 1.5;
+
+/** Grid-based Bresenham LOS check using ThreatMap heightGrid. */
+function _hasGridLOS(tm, c0, r0, eyeY0, c1, r1) {
+    const eyeY1 = tm.heightGrid[r1 * tm.cols + c1] + EYE_HEIGHT;
+    let nc = c0, nr = r0;
+    const dc = Math.abs(c1 - c0), dr = Math.abs(r1 - r0);
+    const sc = c0 < c1 ? 1 : -1, sr = r0 < r1 ? 1 : -1;
+    let err = dc - dr;
+    const totalSteps = Math.max(dc, dr);
+    let step = 0;
+    while (true) {
+        if (!(nc === c0 && nr === r0)) {
+            if (totalSteps > 0) {
+                const t = step / totalSteps;
+                const expectedY = eyeY0 + (eyeY1 - eyeY0) * t;
+                const cellY = tm.heightGrid[nr * tm.cols + nc];
+                if (cellY > expectedY) return false;
+            }
+        }
+        if (nc === c1 && nr === r1) return true;
+        step++;
+        const e2 = 2 * err;
+        if (e2 > -dr) { err -= dr; nc += sc; }
+        if (e2 < dc) { err += dc; nr += sr; }
+    }
+}
+
 /** Lerp between two angles handling wraparound. */
 function _lerpAngle(a, b, t) {
     let diff = b - a;
@@ -26,6 +54,8 @@ function _lerpAngle(a, b, t) {
  * Manages behavior tree, movement, aiming, shooting, and tactical decisions.
  */
 export class AIController {
+    static debugArcs = false;
+
     constructor(soldier, personality, team, flags, getHeightAt, coverSystem, teamIntel, eventBus) {
         this.soldier = soldier;
         this.personality = PersonalityTypes[personality] || PersonalityTypes.SUPPORT;
@@ -115,9 +145,8 @@ export class AIController {
         // Build behavior tree
         this.behaviorTree = this._buildBehaviorTree();
 
-        // Debug: movement arc visualization
-        this._debugArc = this._createDebugArc();
-        this.soldier.scene.add(this._debugArc);
+        // Debug: movement arc visualization (lazy-created)
+        this._debugArc = null;
     }
 
     _buildBehaviorTree() {
@@ -256,9 +285,14 @@ export class AIController {
         const currentlyVisible = this._useSetA ? this._visSetA : this._visSetB;
         currentlyVisible.clear();
 
-        // Compute eye position once outside the loop
-        _origin.copy(myPos);
-        _origin.y += 1.5;
+        // Pre-compute grid coordinates for Bresenham LOS
+        const tm = this.threatMap;
+        const useGridLOS = tm && tm.heightGrid;
+        let myGrid, myEyeY;
+        if (useGridLOS) {
+            myGrid = tm._worldToGrid(myPos.x, myPos.z);
+            myEyeY = tm.heightGrid[myGrid.row * tm.cols + myGrid.col] + EYE_HEIGHT;
+        }
 
         for (const enemy of this.enemies) {
             if (!enemy.alive) continue;
@@ -272,11 +306,11 @@ export class AIController {
             const dot = this.facingDir.dot(_v1);
             if (dot < -0.2) continue; // behind us (~120° FOV)
 
-            // Line of sight check
-            _raycaster.set(_origin, _v1);
-            _raycaster.far = dist;
-            const hits = _raycaster.intersectObjects(this.collidables, true);
-            if (hits.length > 0 && hits[0].distance < dist - 1) continue; // blocked
+            // Line of sight check — use fast grid Bresenham instead of raycaster
+            if (useGridLOS) {
+                const eGrid = tm._worldToGrid(ePos.x, ePos.z);
+                if (!_hasGridLOS(tm, myGrid.col, myGrid.row, myEyeY, eGrid.col, eGrid.row)) continue;
+            }
 
             currentlyVisible.add(enemy);
 
@@ -1237,8 +1271,21 @@ export class AIController {
         return line;
     }
 
+    _ensureDebugArc() {
+        if (!this._debugArc) {
+            this._debugArc = this._createDebugArc();
+            this.soldier.scene.add(this._debugArc);
+        }
+        return this._debugArc;
+    }
+
     _updateDebugArc() {
-        const arc = this._debugArc;
+        if (!AIController.debugArcs) {
+            if (this._debugArc) this._debugArc.visible = false;
+            return;
+        }
+
+        const arc = this._ensureDebugArc();
         if (!this.soldier.alive || !this.moveTarget) {
             arc.visible = false;
             return;

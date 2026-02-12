@@ -38,6 +38,13 @@ export class AIManager {
         this.updateIndex = 0;
         this.totalAI = this.teamA.soldiers.length + this.teamB.soldiers.length;
 
+        // Pre-allocated buffers for per-frame lists
+        this._teamAEnemies = [];
+        this._teamBEnemies = [];
+        this._meshBuf = [];
+        this._posABuf = [];
+        this._posBBuf = [];
+
         // Soldiers are created but not yet positioned — call spawnAll() after NavGrid is ready
         this._spawned = false;
     }
@@ -194,19 +201,28 @@ export class AIManager {
      * Get all soldier positions for a team (for flag capture detection).
      */
     getTeamPositions(team) {
+        const buf = team === 'teamA' ? this._posABuf : this._posBBuf;
+        buf.length = 0;
         const data = team === 'teamA' ? this.teamA : this.teamB;
-        return data.soldiers.filter(s => s.alive).map(s => s.getPosition());
+        for (const s of data.soldiers) {
+            if (s.alive) buf.push(s.getPosition());
+        }
+        return buf;
     }
 
     /**
      * Get all collidable meshes (soldier bodies for hitscan).
      */
     getAllSoldierMeshes() {
-        const meshes = [];
-        for (const s of [...this.teamA.soldiers, ...this.teamB.soldiers]) {
-            if (s.alive) meshes.push(s.mesh);
+        const buf = this._meshBuf;
+        buf.length = 0;
+        for (const s of this.teamA.soldiers) {
+            if (s.alive) buf.push(s.mesh);
         }
-        return meshes;
+        for (const s of this.teamB.soldiers) {
+            if (s.alive) buf.push(s.mesh);
+        }
+        return buf;
     }
 
     /**
@@ -242,9 +258,15 @@ export class AIManager {
             }
             : null;
 
-        // Build enemy/ally lists
-        const teamAEnemies = [...allB];
-        const teamBEnemies = [...allA];
+        // Build enemy/ally lists (reuse pre-allocated buffers)
+        const teamAEnemies = this._teamAEnemies;
+        teamAEnemies.length = 0;
+        for (const s of allB) teamAEnemies.push(s);
+
+        const teamBEnemies = this._teamBEnemies;
+        teamBEnemies.length = 0;
+        for (const s of allA) teamBEnemies.push(s);
+
         if (playerAsEnemy && this.player.team === 'teamA') {
             teamBEnemies.push(playerAsEnemy);
         } else if (playerAsEnemy && this.player.team === 'teamB') {
@@ -252,9 +274,8 @@ export class AIManager {
         }
 
         // Update all soldiers base (health regen, mesh sync)
-        for (const s of [...allA, ...allB]) {
-            s.update(dt);
-        }
+        for (const s of allA) s.update(dt);
+        for (const s of allB) s.update(dt);
 
         // Staggered AI controller updates: update 8 AIs per frame (BT + movement)
         const updatesPerFrame = 8;

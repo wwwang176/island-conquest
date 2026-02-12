@@ -34,7 +34,13 @@ export class Soldier {
 
         // Physics body
         this.body = this._createPhysicsBody();
+        this._inWorld = true;
         physicsWorld.addBody(this.body);
+
+        // Kinematic AI soldiers don't need physics simulation — remove immediately
+        if (this.kinematic) {
+            this.removeFromPhysics();
+        }
 
         // Damage direction tracking (for HUD indicator)
         this.lastDamageDirection = null;
@@ -211,6 +217,20 @@ export class Soldier {
         return body;
     }
 
+    removeFromPhysics() {
+        if (this._inWorld) {
+            this.physics.removeBody(this.body);
+            this._inWorld = false;
+        }
+    }
+
+    addToPhysics() {
+        if (!this._inWorld) {
+            this.physics.addBody(this.body);
+            this._inWorld = true;
+        }
+    }
+
     /**
      * Apply damage to this soldier.
      * @param {number} amount - Damage amount
@@ -248,6 +268,9 @@ export class Soldier {
         this.hp = 0;
         this.deathTimer = this.respawnDelay;
         this.ragdollActive = true;
+
+        // Ragdoll needs physics — re-add if removed (kinematic AI)
+        this.addToPhysics();
 
         // Replace shapes with a single cylinder centered on body.position
         // Move body.position up to body center so rotation axis = geometric center
@@ -341,6 +364,11 @@ export class Soldier {
         this.body.position.set(position.x, position.y + 1, position.z); // back to feet level
         this.body.velocity.set(0, 0, 0);
         this.ragdollActive = false;
+
+        // Kinematic AI soldiers don't need physics after respawn
+        if (this.kinematic) {
+            this.removeFromPhysics();
+        }
     }
 
     update(dt) {

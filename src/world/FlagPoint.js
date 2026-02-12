@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 
+const _flagWorldPos = new THREE.Vector3();
+const _flagLookDir = new THREE.Vector3();
+const _defaultQuat = new THREE.Quaternion();
+
 /**
  * A flag capture point on the map.
  * Handles visual representation and capture state.
@@ -293,8 +297,8 @@ export class FlagPoint {
         // Make label and progress bar face camera (billboarding handled by Sprite for label)
         // Progress bar needs manual billboarding
         this.progressBarBg.lookAt(
-            this.progressBarBg.getWorldPosition(new THREE.Vector3()).add(
-                new THREE.Vector3(0, 0, 1).applyQuaternion(this.scene.children[0]?.quaternion || new THREE.Quaternion())
+            this.progressBarBg.getWorldPosition(_flagWorldPos).add(
+                _flagLookDir.set(0, 0, 1).applyQuaternion(this.scene.children[0]?.quaternion || _defaultQuat)
             )
         );
     }

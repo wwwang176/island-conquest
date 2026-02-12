@@ -10,6 +10,7 @@ import { FlagPoint } from '../world/FlagPoint.js';
 import { ScoreManager } from '../systems/ScoreManager.js';
 import { SpawnSystem } from '../systems/SpawnSystem.js';
 import { AIManager } from '../ai/AIManager.js';
+import { AIController } from '../ai/AIController.js';
 import { TracerSystem } from '../vfx/TracerSystem.js';
 import { ImpactVFX } from '../vfx/ImpactVFX.js';
 import { Minimap } from '../ui/Minimap.js';
@@ -30,7 +31,7 @@ export class Game {
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         this.renderer.shadowMap.enabled = true;
-        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.renderer.shadowMap.type = THREE.PCFShadowMap;
         this.renderer.setClearColor(0x87CEEB);
         document.body.appendChild(this.renderer.domElement);
 
@@ -133,8 +134,8 @@ export class Game {
         const sun = new THREE.DirectionalLight(0xfff5e0, 1.0);
         sun.position.set(50, 80, 30);
         sun.castShadow = true;
-        sun.shadow.mapSize.width = 2048;
-        sun.shadow.mapSize.height = 2048;
+        sun.shadow.mapSize.width = 1024;
+        sun.shadow.mapSize.height = 1024;
         sun.shadow.camera.near = 0.5;
         sun.shadow.camera.far = 300;
         sun.shadow.camera.left = -150;
@@ -189,6 +190,11 @@ export class Game {
             this._threatVisState = (this._threatVisState + 1) % 3;
             this.aiManager.threatMapA.setVisible(this._threatVisState === 1);
             this.aiManager.threatMapB.setVisible(this._threatVisState === 2);
+        }
+
+        // Debug arc toggle
+        if (e.code === 'KeyG') {
+            AIController.debugArcs = !AIController.debugArcs;
         }
 
         // NavGrid blocked-cell visualization toggle
@@ -410,6 +416,7 @@ export class Game {
             '<b style="color:rgba(255,255,255,0.7)">Keys</b>',
             '<span style="color:#fff">T</span> Threat map',
             '<span style="color:#fff">B</span> NavGrid',
+            '<span style="color:#fff">G</span> Move arcs',
             '<span style="color:#fff">Tab</span> Next COM',
             '<span style="color:#fff">V</span> Camera mode',
             '<span style="color:#fff">1/2</span> Join team',
@@ -585,7 +592,12 @@ export class Game {
     _updateShootTargets() {
         if (!this.player) return;
         const enemyMeshes = this.aiManager.getAllSoldierMeshes();
-        this.player.shootTargets = [...this.island.collidables, ...enemyMeshes];
+        if (!this._shootTargets) this._shootTargets = [];
+        const buf = this._shootTargets;
+        buf.length = 0;
+        for (const c of this.island.collidables) buf.push(c);
+        for (const m of enemyMeshes) buf.push(m);
+        this.player.shootTargets = buf;
     }
 
     _onResize() {
@@ -626,11 +638,9 @@ export class Game {
             this._updateShootTargets();
         }
 
-        // Update flags — include AI + player positions
-        const aiTeamAPos = this.aiManager.getTeamPositions('teamA');
-        const aiTeamBPos = this.aiManager.getTeamPositions('teamB');
-        const teamAPositions = [...aiTeamAPos];
-        const teamBPositions = [...aiTeamBPos];
+        // Update flags — include AI + player positions (buffers reused by AIManager)
+        const teamAPositions = this.aiManager.getTeamPositions('teamA');
+        const teamBPositions = this.aiManager.getTeamPositions('teamB');
         if (this.player && this.player.alive && this.player.team) {
             const playerPos = this.player.getPosition();
             if (this.player.team === 'teamA') teamAPositions.push(playerPos);
