@@ -262,19 +262,38 @@ export class AIManager {
      * Snap a spawn point to the nearest walkable NavGrid cell.
      * Returns the corrected Vector3, or the original if no NavGrid.
      */
-    _validateSpawnPoint(point) {
-        if (!this._navGrid) return point;
-        const g = this._navGrid.worldToGrid(point.x, point.z);
-        // Must be walkable AND above water surface (y = -0.3)
-        if (this._navGrid.isWalkable(g.col, g.row) && point.y >= -0.3) return point;
-        const nearest = this._navGrid._findNearestWalkable(g.col, g.row);
-        if (nearest) {
-            const w = this._navGrid.gridToWorld(nearest.col, nearest.row);
-            point.x = w.x;
-            point.z = w.z;
-            point.y = this.getHeightAt(point.x, point.z);
+    /**
+     * Search outward from a grid cell for a safe spawn cell.
+     * Returns {x, y, z} or null if nothing found within radius.
+     */
+    _findSafeCell(centerX, centerZ, threatMap, searchRadius = 30) {
+        if (!this._navGrid) return null;
+        const nav = this._navGrid;
+        const g = nav.worldToGrid(centerX, centerZ);
+        const maxThreat = 0.3;
+        // Check center first
+        if (nav.isWalkable(g.col, g.row)) {
+            const h = this.getHeightAt(centerX, centerZ);
+            if (h >= 0.3 && threatMap.getThreat(centerX, centerZ) < maxThreat) {
+                return { x: centerX, y: h, z: centerZ };
+            }
         }
-        return point;
+        // Spiral outward
+        for (let r = 1; r <= searchRadius; r++) {
+            for (let dr = -r; dr <= r; dr++) {
+                for (let dc = -r; dc <= r; dc++) {
+                    if (Math.abs(dr) !== r && Math.abs(dc) !== r) continue;
+                    const nc = g.col + dc, nr = g.row + dr;
+                    if (!nav.isWalkable(nc, nr)) continue;
+                    const w = nav.gridToWorld(nc, nr);
+                    const h = this.getHeightAt(w.x, w.z);
+                    if (h >= 0.3 && threatMap.getThreat(w.x, w.z) < maxThreat) {
+                        return { x: w.x, y: h, z: w.z };
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     _handleRespawns(soldiers, team) {
@@ -285,87 +304,60 @@ export class AIManager {
         for (const soldier of soldiers) {
             if (!soldier.canRespawn()) continue;
 
-            // Find the most forward owned flag (for fallback)
-            let forwardFlagPos = spawnFlag.position.clone();
+            // Collect anchors: owned flags + safe allies
+            const anchors = [];
             const basePos = spawnFlag.position;
-            let bestDist = 0;
-            for (const flag of this.flags) {
-                if (flag.owner === team) {
-                    const d = flag.position.distanceTo(basePos);
-                    if (d > bestDist) {
-                        bestDist = d;
-                        forwardFlagPos = flag.position.clone();
-                    }
-                }
+            const now = performance.now();
+
+            // Owned flags (sorted by distance from base — most forward first)
+            const ownedFlags = this.flags
+                .filter(f => f.owner === team)
+                .sort((a, b) => b.position.distanceTo(basePos) - a.position.distanceTo(basePos));
+            for (const flag of ownedFlags) {
+                anchors.push(flag.position);
+            }
+
+            // Safe allies
+            for (const ally of teamData.soldiers) {
+                if (!ally.alive || ally === soldier) continue;
+                const allyPos = ally.getPosition();
+                if (threatMap.getThreat(allyPos.x, allyPos.z) >= 0.3) continue;
+                if (now - ally.lastDamagedTime < 10000) continue;
+                anchors.push(allyPos);
             }
 
             let spawnPoint = null;
 
-            // ── Priority 1: Safe teammate spawn ──
-            const now = performance.now();
-            const allySoldiers = teamData.soldiers;
-            let bestAlly = null;
-            let bestAllyFrontDist = -1;
-
-            for (const ally of allySoldiers) {
-                if (!ally.alive || ally === soldier) continue;
-                const allyPos = ally.getPosition();
-                // Must be in low-threat area
-                const threat = threatMap.getThreat(allyPos.x, allyPos.z);
-                if (threat >= 0.3) continue;
-                // Must not have been damaged in last 10 seconds
-                if (now - ally.lastDamagedTime < 10000) continue;
-                // Prefer allies closer to front line (farther from base)
-                const frontDist = allyPos.distanceTo(basePos);
-                if (frontDist > bestAllyFrontDist) {
-                    bestAllyFrontDist = frontDist;
-                    bestAlly = ally;
+            // ── Try each anchor: find safe cell nearby ──
+            for (const anchor of anchors) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = 5 + Math.random() * 5; // 5-10m offset
+                const cx = anchor.x + Math.cos(angle) * dist;
+                const cz = anchor.z + Math.sin(angle) * dist;
+                const safe = this._findSafeCell(cx, cz, threatMap, 20);
+                if (safe) {
+                    spawnPoint = new THREE.Vector3(safe.x, safe.y, safe.z);
+                    break;
                 }
             }
 
-            if (bestAlly) {
-                const allyPos = bestAlly.getPosition();
-                const angle = Math.random() * Math.PI * 2;
-                const dist = 5 + Math.random() * 3; // 5-8m
-                spawnPoint = new THREE.Vector3(
-                    allyPos.x + Math.cos(angle) * dist,
-                    0,
-                    allyPos.z + Math.sin(angle) * dist
-                );
-                spawnPoint.y = this.getHeightAt(spawnPoint.x, spawnPoint.z);
-            }
-
-            // ── Priority 2: ThreatMap safe zone near flag ──
+            // ── No flag, no ally — random safe spot on map ──
             if (!spawnPoint) {
-                const safePos = threatMap.findSafePosition(forwardFlagPos, 30);
-                if (safePos) {
-                    const angle = Math.random() * Math.PI * 2;
-                    const dist = 3 + Math.random() * 2; // 3-5m
-                    spawnPoint = new THREE.Vector3(
-                        safePos.x + Math.cos(angle) * dist,
-                        0,
-                        safePos.z + Math.sin(angle) * dist
-                    );
-                    spawnPoint.y = this.getHeightAt(spawnPoint.x, spawnPoint.z);
+                for (let attempt = 0; attempt < 10; attempt++) {
+                    const rx = (Math.random() - 0.5) * this._navGrid.width;
+                    const rz = (Math.random() - 0.5) * this._navGrid.depth;
+                    const safe = this._findSafeCell(rx, rz, threatMap, 15);
+                    if (safe) {
+                        spawnPoint = new THREE.Vector3(safe.x, safe.y, safe.z);
+                        break;
+                    }
                 }
             }
 
-            // ── Priority 3: Fallback — farther from flag center (15-25m) ──
-            if (!spawnPoint) {
-                const angle = Math.random() * Math.PI * 2;
-                const dist = 15 + Math.random() * 10; // 15-25m
-                spawnPoint = new THREE.Vector3(
-                    forwardFlagPos.x + Math.cos(angle) * dist,
-                    0,
-                    forwardFlagPos.z + Math.sin(angle) * dist
-                );
-                spawnPoint.y = this.getHeightAt(spawnPoint.x, spawnPoint.z);
-            }
+            // Still nothing — skip this frame, try next frame
+            if (!spawnPoint) continue;
 
-            // Ensure spawn point is on a walkable cell
-            this._validateSpawnPoint(spawnPoint);
-
-            soldier.respawn(new THREE.Vector3(spawnPoint.x, Math.max(spawnPoint.y, 1), spawnPoint.z));
+            soldier.respawn(spawnPoint);
         }
     }
 }
