@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { BTState, Selector, Sequence, Condition, Action } from './BehaviorTree.js';
 import { PersonalityTypes } from './Personality.js';
 import { findFlankPosition, computePreAimPoint, computeSuppressionTarget } from './TacticalActions.js';
+import { WeaponDefs } from '../entities/WeaponDefs.js';
 
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -89,19 +90,30 @@ export class AIController {
         this.hasReacted = false;
         this.aimCorrectionSpeed = 2 + this.personality.aimSkill * 3;
 
+        // Weapon definition (shared with Player)
+        const def = WeaponDefs['AR15'];
+        this.weaponDef = def;
+
         // Firing state
         this.fireTimer = 0;
-        this.fireInterval = 0.10; // ~600 RPM for AI
+        this.fireInterval = 60 / def.fireRate;
         this.burstCount = 0;
         this.burstMax = 8 + Math.floor(Math.random() * 8);
         this.burstCooldown = 0;
 
         // Magazine / reload
-        this.magazineSize = 30;
-        this.currentAmmo = 30;
+        this.magazineSize = def.magazineSize;
+        this.currentAmmo = def.magazineSize;
         this.isReloading = false;
         this.reloadTimer = 0;
-        this.reloadTime = 2.5; // seconds
+        this.reloadTime = def.reloadTime;
+
+        // Spread state (dynamic, same model as Player)
+        this.baseSpread = def.baseSpread;
+        this.maxSpread = def.maxSpread;
+        this.spreadIncreasePerShot = def.spreadIncreasePerShot;
+        this.spreadRecoveryRate = def.spreadRecoveryRate;
+        this.currentSpread = def.baseSpread;
 
         // Movement
         this.moveSpeed = 4.125; // 5.5 * 0.75
@@ -1075,6 +1087,11 @@ export class AIController {
         this.fireTimer -= dt;
         this.burstCooldown -= dt;
 
+        // Spread recovery during burst cooldown or when not shooting
+        if (this.burstCooldown > 0 || !this.targetEnemy) {
+            this.currentSpread = Math.max(this.baseSpread, this.currentSpread - this.spreadRecoveryRate * dt);
+        }
+
         // Handle reload
         if (this.isReloading) {
             this.reloadTimer -= dt;
@@ -1123,12 +1140,14 @@ export class AIController {
         _target.copy(this.aimPoint).add(this.aimOffset);
         const dir = _v1.subVectors(_target, _origin).normalize();
 
-        // Add weapon spread
-        const spread = 0.02 + (1 - this.personality.aimSkill) * 0.03;
-        dir.x += (Math.random() - 0.5) * spread;
-        dir.y += (Math.random() - 0.5) * spread;
-        dir.z += (Math.random() - 0.5) * spread;
+        // Apply current dynamic spread (same model as Player)
+        dir.x += (Math.random() - 0.5) * 2 * this.currentSpread;
+        dir.y += (Math.random() - 0.5) * 2 * this.currentSpread;
+        dir.z += (Math.random() - 0.5) * 2 * this.currentSpread;
         dir.normalize();
+
+        // Increase spread per shot
+        this.currentSpread = Math.min(this.maxSpread, this.currentSpread + this.spreadIncreasePerShot);
 
         // Hitscan
         _raycaster.set(_origin, dir);
@@ -1168,6 +1187,13 @@ export class AIController {
         const myName = `${this.team === 'teamA' ? 'A' : 'B'}-${this.soldier.id}`;
 
         if (hitChar && (!hitEnv || hitChar.distance < hitEnv.distance)) {
+            // Calculate damage with falloff (same formula as Player)
+            let dmg = this.weaponDef.damage;
+            if (hitChar.distance > this.weaponDef.falloffStart) {
+                const t = Math.min((hitChar.distance - this.weaponDef.falloffStart) / (this.weaponDef.falloffEnd - this.weaponDef.falloffStart), 1);
+                dmg *= (1 - t * (1 - this.weaponDef.falloffMinScale));
+            }
+
             for (const enemy of this.enemies) {
                 if (!enemy.alive) continue;
                 if (this._isChildOf(hitChar.object, enemy.mesh)) {
@@ -1175,7 +1201,7 @@ export class AIController {
                         this.impactVFX.spawn('blood', hitChar.point, _v1.copy(dir).negate());
                     }
                     const headshot = hitChar.object === enemy.headMesh;
-                    const result = enemy.takeDamage(12, myPos, headshot);
+                    const result = enemy.takeDamage(dmg, myPos, headshot);
                     if (result.killed && this.eventBus) {
                         const vTeam = enemy.team || (this.team === 'teamA' ? 'teamB' : 'teamA');
                         this.eventBus.emit('kill', {
@@ -1193,7 +1219,7 @@ export class AIController {
                 if (this.impactVFX) {
                     this.impactVFX.spawn('blood', hitChar.point, _v1.copy(dir).negate());
                 }
-                const result = this._playerRef.takeDamage(12, myPos, false);
+                const result = this._playerRef.takeDamage(dmg, myPos, false);
                 if (result.killed && this.eventBus) {
                     this.eventBus.emit('kill', {
                         killerName: myName,
@@ -1256,10 +1282,11 @@ export class AIController {
         this.suppressionTarget = null;
         this.suppressionTimer = 0;
         this._previouslyVisible.clear();
-        // Reset ammo on respawn
+        // Reset ammo and spread on respawn
         this.currentAmmo = this.magazineSize;
         this.isReloading = false;
         this.reloadTimer = 0;
+        this.currentSpread = this.baseSpread;
         // Reset jump state
         this.isJumping = false;
         this.jumpVelY = 0;

@@ -1,34 +1,39 @@
 import * as THREE from 'three';
+import { WeaponDefs } from './WeaponDefs.js';
 
 /**
  * Assault Rifle weapon system.
  * Handles firing (hitscan), reloading, recoil spread, and visual feedback.
  */
 export class Weapon {
-    constructor(scene, camera) {
+    constructor(scene, camera, weaponId = 'AR15') {
         this.scene = scene;
         this.camera = camera;
 
-        // Stats
-        this.magazineSize = 30;
-        this.currentAmmo = 30;
-        this.fireRate = 600;                // RPM
-        this.fireInterval = 60 / this.fireRate; // seconds between shots
-        this.reloadTime = 2.5;              // seconds
-        this.damage = 25;
-        this.headshotMultiplier = 2;
-        this.maxRange = 200;
+        const def = WeaponDefs[weaponId];
+        this.def = def;
 
-        // Damage falloff: full damage up to 50m, then linear decrease
-        this.falloffStart = 50;
-        this.falloffEnd = 150;
+        // Stats
+        this.magazineSize = def.magazineSize;
+        this.currentAmmo = def.magazineSize;
+        this.fireRate = def.fireRate;
+        this.fireInterval = 60 / def.fireRate;
+        this.reloadTime = def.reloadTime;
+        this.damage = def.damage;
+        this.headshotMultiplier = def.headshotMultiplier;
+        this.maxRange = def.maxRange;
+
+        // Damage falloff
+        this.falloffStart = def.falloffStart;
+        this.falloffEnd = def.falloffEnd;
+        this.falloffMinScale = def.falloffMinScale;
 
         // Recoil / spread
-        this.baseSpread = 0.003;            // radians, single shot nearly perfect
-        this.maxSpread = 0.075;             // radians, ~4.3° max when full spray
-        this.spreadIncreasePerShot = 0.004; // spread added per shot
-        this.spreadRecoveryRate = 0.4;      // spread decrease per second (tap shots recover quickly)
-        this.currentSpread = this.baseSpread;
+        this.baseSpread = def.baseSpread;
+        this.maxSpread = def.maxSpread;
+        this.spreadIncreasePerShot = def.spreadIncreasePerShot;
+        this.spreadRecoveryRate = def.spreadRecoveryRate;
+        this.currentSpread = def.baseSpread;
 
         // State
         this.isReloading = false;
@@ -169,7 +174,7 @@ export class Weapon {
             let dmg = this.damage;
             if (hit.distance > this.falloffStart) {
                 const t = Math.min((hit.distance - this.falloffStart) / (this.falloffEnd - this.falloffStart), 1);
-                dmg = this.damage * (1 - t * 0.7); // min 30% damage at max range
+                dmg = this.damage * (1 - t * (1 - this.falloffMinScale));
             }
 
             return {
