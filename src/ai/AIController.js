@@ -838,8 +838,12 @@ export class AIController {
             body.position.y = groundY + 0.05;
         }
 
-        // Facing direction — unconditional (fixes frozen aim while shooting)
-        if (this.targetEnemy && this.targetEnemy.alive) {
+        // Facing direction — suppression takes priority (body must face where bullets go)
+        if (this.suppressionTarget && this.suppressionTimer > 0) {
+            _v2.subVectors(this.aimPoint, myPos).normalize();
+            _v2.y = 0;
+            this.facingDir.lerp(_v2, 0.3).normalize();
+        } else if (this.targetEnemy && this.targetEnemy.alive) {
             _v2.subVectors(this.targetEnemy.getPosition(), myPos).normalize();
             _v2.y = 0;
             const turnRate = this.hasReacted ? 0.45 : 0.15;
