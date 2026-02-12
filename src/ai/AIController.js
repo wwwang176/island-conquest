@@ -173,6 +173,7 @@ export class AIController {
         this.grenadeCooldown = 0;
         this._engageTimer = 0;        // time engaging same enemy
         this._lastEngageEnemy = null;  // track which enemy we're timing
+        this._grenadeTargetPos = null; // set by _shouldThrowGrenade, used by _actionThrowGrenade
         this.grenadeManager = null;    // set by AIManager
 
         // Flag deficit (positive = behind, set by AIManager each frame)
@@ -576,7 +577,10 @@ export class AIController {
         // Scenario 1: Rush — rushing toward flag
         if (this.rushTarget && this.squad && this.squad.rushActive) {
             const distToFlag = myPos.distanceTo(this.rushTarget);
-            if (distToFlag >= 8 && distToFlag <= 40) return true;
+            if (distToFlag >= 8 && distToFlag <= 40) {
+                this._grenadeTargetPos = this.rushTarget;
+                return true;
+            }
         }
 
         // Scenario 2: Enemy holding a flag we're attacking
@@ -589,14 +593,20 @@ export class AIController {
                     maxDist: 18,
                     fromPos: flagPos,
                 });
-                if (threats.length > 0) return true;
+                if (threats.length > 0) {
+                    this._grenadeTargetPos = flagPos;
+                    return true;
+                }
             }
         }
 
         // Scenario 3: Visible enemy in range
         if (this.targetEnemy && this.targetEnemy.alive) {
             const dist = this._enemyDist();
-            if (dist >= 8 && dist <= 40) return true;
+            if (dist >= 8 && dist <= 40) {
+                this._grenadeTargetPos = this.targetEnemy.getPosition();
+                return true;
+            }
         }
 
         // Scenario 4: Multiple enemies clustered — 2+ enemies within blast radius
@@ -612,7 +622,11 @@ export class AIController {
                     const di = myPos.distanceTo(pi);
                     if (di < 8) continue;
                     for (let j = i + 1; j < nearby.length; j++) {
-                        if (pi.distanceTo(nearby[j].lastSeenPos) < 8) return true;
+                        if (pi.distanceTo(nearby[j].lastSeenPos) < 8) {
+                            // Aim at midpoint between the clustered enemies
+                            this._grenadeTargetPos = pi.clone().add(nearby[j].lastSeenPos).multiplyScalar(0.5);
+                            return true;
+                        }
                     }
                 }
             }
@@ -625,17 +639,10 @@ export class AIController {
         const myPos = this.soldier.getPosition();
         const def = WeaponDefs.GRENADE;
 
-        // Determine target position
-        let targetPos;
-        if (this.rushTarget && this.squad && this.squad.rushActive) {
-            targetPos = this.rushTarget;
-        } else if (this.targetEnemy && this.targetEnemy.alive) {
-            targetPos = this.targetEnemy.getPosition();
-        } else if (this.targetFlag) {
-            targetPos = this.targetFlag.position;
-        } else {
-            return BTState.FAILURE;
-        }
+        // Use the target decided by _shouldThrowGrenade
+        const targetPos = this._grenadeTargetPos;
+        if (!targetPos) return BTState.FAILURE;
+        this._grenadeTargetPos = null;
 
         // Face the target before throwing
         _grenadeDir.set(targetPos.x - myPos.x, 0, targetPos.z - myPos.z).normalize();
@@ -1594,6 +1601,7 @@ export class AIController {
         this.grenadeCooldown = 0;
         this._engageTimer = 0;
         this._lastEngageEnemy = null;
+        this._grenadeTargetPos = null;
         // Reset jump state
         this.isJumping = false;
         this.jumpVelY = 0;
