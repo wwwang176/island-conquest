@@ -764,6 +764,19 @@ export class AIController {
             }
         }
 
+        // Ground snap — unconditional (fixes floating after respawn)
+        if (!this.isJumping) {
+            body.position.y = groundY + 0.05;
+        }
+
+        // Facing direction — unconditional (fixes frozen aim while shooting)
+        if (this.targetEnemy && this.targetEnemy.alive) {
+            _v2.subVectors(this.targetEnemy.getPosition(), myPos).normalize();
+            _v2.y = 0;
+            const turnRate = this.hasReacted ? 0.45 : 0.15;
+            this.facingDir.lerp(_v2, turnRate).normalize();
+        }
+
         if (!this.moveTarget) return;
 
         // Request A* path if available
@@ -912,14 +925,8 @@ export class AIController {
             }
         }
 
-        // Update facing direction
-        if (this.targetEnemy && this.targetEnemy.alive) {
-            _v2.subVectors(this.targetEnemy.getPosition(), myPos).normalize();
-            _v2.y = 0;
-            // Fast turn when aiming (reacted) so body faces where bullets go
-            const turnRate = this.hasReacted ? 0.45 : 0.15;
-            this.facingDir.lerp(_v2, turnRate).normalize();
-        } else {
+        // Update facing toward movement direction (no enemy — enemy case handled above)
+        if (!this.targetEnemy || !this.targetEnemy.alive) {
             this.facingDir.lerp(_v1, 0.1).normalize();
         }
 
