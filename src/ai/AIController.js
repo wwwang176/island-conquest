@@ -181,15 +181,20 @@ export class AIController {
                 new Action(() => BTState.SUCCESS),
             ]),
 
-            // 2. Under heavy threat — seek cover
+            // 2. Under heavy threat — seek cover (threshold raised during active rush)
             new Sequence([
-                new Condition(() => ctx.riskLevel > ctx.personality.riskThreshold),
+                new Condition(() => {
+                    const rushing = ctx.rushTarget && ctx.squad && ctx.squad.rushActive;
+                    const threshold = rushing ? 0.95 : ctx.personality.riskThreshold;
+                    return ctx.riskLevel > threshold;
+                }),
                 new Action(() => ctx._actionSeekCover()),
             ]),
 
-            // 3. Spatial threat / unexplored fog too high — seek cover (personality-driven)
+            // 3. Spatial threat — seek cover (skipped during active rush)
             new Sequence([
                 new Condition(() => {
+                    if (ctx.rushTarget && ctx.squad && ctx.squad.rushActive) return false;
                     if (!ctx.threatMap) return false;
                     const pos = ctx.soldier.getPosition();
                     const threat = ctx.threatMap.getThreat(pos.x, pos.z);
@@ -198,34 +203,38 @@ export class AIController {
                 new Action(() => ctx._actionSeekCover()),
             ]),
 
+            // ── Squad tactics (mutually exclusive via SquadCoordinator) ──
+
             // 4. Fallback — retreat to friendly flag
             new Sequence([
                 new Condition(() => ctx.fallbackTarget !== null),
                 new Action(() => ctx._actionFallback()),
             ]),
 
-            // 5. Suppression fire (assigned by squad)
+            // 5. Rush — coordinated assault on flag
+            new Sequence([
+                new Condition(() => ctx.rushTarget !== null),
+                new Action(() => ctx._actionRush()),
+            ]),
+
+            // 6. Suppression fire
             new Sequence([
                 new Condition(() => ctx.suppressionTarget !== null && ctx.suppressionTimer > 0),
                 new Action(() => ctx._actionSuppress()),
             ]),
 
-            // 6. Crossfire — spread to flanking positions
+            // 7. Crossfire — spread to flanking positions
             new Sequence([
                 new Condition(() => ctx.crossfirePos !== null),
                 new Action(() => ctx._actionCrossfire()),
             ]),
 
-            // 7. Close-range enemy (< 20m) — must engage, survival priority
+            // ── Individual combat ──
+
+            // 8. Close-range enemy (< 20m) — must engage
             new Sequence([
                 new Condition(() => ctx.targetEnemy !== null && ctx._enemyDist() < 20),
                 new Action(() => ctx._actionEngage()),
-            ]),
-
-            // 8. Rush — coordinated assault on flag
-            new Sequence([
-                new Condition(() => ctx.rushTarget !== null),
-                new Action(() => ctx._actionRush()),
             ]),
 
             // 9. Uncaptured flag exists — go capture (flanking is part of approach)
@@ -592,9 +601,17 @@ export class AIController {
     }
 
     _actionFallback() {
-        this.moveTarget = this.fallbackTarget;
-        this._validateMoveTarget();
-        this.seekingCover = false;
+        const myPos = this.soldier.getPosition();
+        const dist = myPos.distanceTo(this.fallbackTarget);
+        if (dist > 8) {
+            // Still far — run toward friendly flag
+            this.moveTarget = this.fallbackTarget;
+            this._validateMoveTarget();
+            this.seekingCover = false;
+        } else {
+            // Arrived — find nearby cover and hold
+            return this._actionSeekCover();
+        }
         this.missionPressure = 0.0;
         return BTState.RUNNING;
     }
@@ -602,10 +619,11 @@ export class AIController {
     _actionRush() {
         if (!this.squad) return BTState.FAILURE;
 
+        const myPos = this.soldier.getPosition();
+        const dist = myPos.distanceTo(this.rushTarget);
+
         if (!this.squad.rushActive) {
             // Rally phase: move toward flag but don't charge in
-            const myPos = this.soldier.getPosition();
-            const dist = myPos.distanceTo(this.rushTarget);
             if (dist > 20) {
                 this.moveTarget = this.rushTarget.clone();
                 this._validateMoveTarget();
@@ -613,11 +631,16 @@ export class AIController {
             return BTState.RUNNING;
         }
 
-        // Rush active — charge the flag
-        this.moveTarget = this.rushTarget.clone();
-        this._validateMoveTarget();
-        this.seekingCover = false;
-        this.missionPressure = 0.0;
+        if (dist > 8) {
+            // Rush active — charge the flag
+            this.moveTarget = this.rushTarget.clone();
+            this._validateMoveTarget();
+            this.seekingCover = false;
+            this.missionPressure = 0.0;
+        } else {
+            // Arrived at flag — hold position from cover
+            return this._actionSeekCover();
+        }
         return BTState.RUNNING;
     }
 
@@ -1479,6 +1502,7 @@ export class AIController {
     _getTacticText() {
         if (this.fallbackTarget) return 'FALLBACK';
         if (this.rushTarget) return this.squad && this.squad.rushActive ? 'RUSH!' : 'RALLY';
+        if (this.suppressionTarget && this.suppressionTimer > 0) return 'SUPPRESS';
         if (this.crossfirePos) return 'CROSSFIRE';
         if (this.isReloading) return null; // normal, no label
         if (this.currentAmmo <= 0 && this.squad && !this.squad.canReload(this)) return 'HOLD';
