@@ -216,7 +216,21 @@ export class AIController {
                 new Action(() => BTState.SUCCESS),
             ]),
 
-            // 2. Under heavy threat — seek cover (threshold raised during rush or underdog)
+            // 2. Reloading with nearby threats — seek cover
+            new Sequence([
+                new Condition(() => {
+                    if (!ctx.isReloading) return false;
+                    if (!ctx.teamIntel) return false;
+                    const pos = ctx.soldier.getPosition();
+                    for (const contact of ctx.teamIntel.contacts.values()) {
+                        if (pos.distanceTo(contact.lastSeenPos) < ctx.weaponDef.maxRange) return true;
+                    }
+                    return false;
+                }),
+                new Action(() => ctx._actionSeekCover()),
+            ]),
+
+            // 3. Under heavy threat — seek cover (threshold raised during rush or underdog)
             new Sequence([
                 new Condition(() => {
                     const rushing = ctx.rushTarget && ctx.squad && ctx.squad.rushActive;
@@ -228,7 +242,7 @@ export class AIController {
                 new Action(() => ctx._actionSeekCover()),
             ]),
 
-            // 3. Spatial threat — seek cover (skipped during active rush)
+            // 4. Spatial threat — seek cover (skipped during active rush)
             new Sequence([
                 new Condition(() => {
                     if (ctx.rushTarget && ctx.squad && ctx.squad.rushActive) return false;
@@ -242,25 +256,25 @@ export class AIController {
 
             // ── Squad tactics (mutually exclusive via SquadCoordinator) ──
 
-            // 4. Fallback — retreat to friendly flag
+            // 5. Fallback — retreat to friendly flag
             new Sequence([
                 new Condition(() => ctx.fallbackTarget !== null),
                 new Action(() => ctx._actionFallback()),
             ]),
 
-            // 5. Rush — coordinated assault on flag
+            // 6. Rush — coordinated assault on flag
             new Sequence([
                 new Condition(() => ctx.rushTarget !== null),
                 new Action(() => ctx._actionRush()),
             ]),
 
-            // 6. Suppression fire
+            // 7. Suppression fire
             new Sequence([
                 new Condition(() => ctx.suppressionTarget !== null && ctx.suppressionTimer > 0),
                 new Action(() => ctx._actionSuppress()),
             ]),
 
-            // 7. Crossfire — spread to flanking positions
+            // 8. Crossfire — spread to flanking positions
             new Sequence([
                 new Condition(() => ctx.crossfirePos !== null),
                 new Action(() => ctx._actionCrossfire()),
@@ -268,44 +282,44 @@ export class AIController {
 
             // ── Individual combat ──
 
-            // 8. Throw grenade (checked before engage so it can interrupt close combat)
+            // 9. Throw grenade (checked before engage so it can interrupt close combat)
             new Sequence([
                 new Condition(() => ctx.grenadeCount > 0 && ctx.grenadeCooldown <= 0),
                 new Condition(() => ctx._shouldThrowGrenade()),
                 new Action(() => ctx._actionThrowGrenade()),
             ]),
 
-            // 8.5. Close-range enemy (< 20m) — must engage
+            // 9.5. Close-range enemy (< 20m) — must engage
             new Sequence([
                 new Condition(() => ctx.targetEnemy !== null && ctx._enemyDist() < 20),
                 new Action(() => ctx._actionEngage()),
             ]),
 
-            // 9. Uncaptured flag exists — go capture (flanking is part of approach)
+            // 10. Uncaptured flag exists — go capture (flanking is part of approach)
             new Sequence([
                 new Condition(() => ctx.targetFlag !== null && ctx.targetFlag.owner !== ctx.team),
                 new Action(() => ctx._actionCaptureFlag()),
             ]),
 
-            // 10. Investigate intel contact (nearby suspected enemy, no direct visual)
+            // 11. Investigate intel contact (nearby suspected enemy, no direct visual)
             new Sequence([
                 new Condition(() => ctx.targetEnemy === null && ctx._hasNearbyIntelContact()),
                 new Action(() => ctx._actionInvestigate()),
             ]),
 
-            // 11. Has visible enemy (long range) — engage
+            // 12. Has visible enemy (long range) — engage
             new Sequence([
                 new Condition(() => ctx.targetEnemy !== null),
                 new Action(() => ctx._actionEngage()),
             ]),
 
-            // 12. Has owned flag target — defend / patrol near it
+            // 13. Has owned flag target — defend / patrol near it
             new Sequence([
                 new Condition(() => ctx.targetFlag !== null),
                 new Action(() => ctx._actionCaptureFlag()),
             ]),
 
-            // 13. Default — find something to do
+            // 14. Default — find something to do
             new Action(() => ctx._actionPatrol()),
         ]);
     }
@@ -840,13 +854,30 @@ export class AIController {
     _actionSuppress() {
         if (!this.suppressionTarget) return BTState.FAILURE;
 
+        // Abort if contact is stale: enemy dead or pruned from intel
+        const contact = this.suppressionTarget;
+        if (!contact.enemy.alive ||
+            (this.teamIntel && !this.teamIntel.contacts.has(contact.enemy))) {
+            this.suppressionTarget = null;
+            this.suppressionTimer = 0;
+            return BTState.FAILURE;
+        }
+
+        // Opportunistic grenade: suppression target is a known position — lob one in
+        if (this.grenadeCount > 0 && this.grenadeCooldown <= 0) {
+            const myPos = this.soldier.getPosition();
+            const d = myPos.distanceTo(contact.lastSeenPos);
+            if (d >= 8 && d <= 40) {
+                this._grenadeTargetPos = contact.lastSeenPos;
+                this._actionThrowGrenade();
+            }
+        }
+
         // Fire at predicted cover edge / last known position
-        computeSuppressionTarget(this.suppressionTarget, this.aimPoint);
+        computeSuppressionTarget(contact, this.aimPoint);
         this.aimOffset.set(0, 0, 0);
         this.hasReacted = true; // allow shooting
 
-        // Hold position while suppressing
-        this.seekingCover = false;
         return BTState.RUNNING;
     }
 
@@ -1474,6 +1505,18 @@ export class AIController {
             this.reloadTimer = this.reloadTime;
             this.fireTimer = 0;
             return;
+        }
+
+        // Tactical reload: proactively reload when safe and ammo below personality threshold
+        const ammoRatio = this.currentAmmo / this.magazineSize;
+        if (ammoRatio < this.personality.tacticalReloadThreshold &&
+            (!this.targetEnemy || !this.targetEnemy.alive)) {
+            if (!this.squad || this.squad.canReload(this)) {
+                this.isReloading = true;
+                this.reloadTimer = this.reloadTime;
+                this.fireTimer = 0;
+                return;
+            }
         }
 
         // Allow shooting during suppression
