@@ -304,7 +304,7 @@ export class Player {
         const velocity = dir.multiplyScalar(def.throwSpeed);
         velocity.add(this.lastMoveVelocity);
 
-        this.grenadeManager.spawn(origin, velocity, def.fuseTime, this.team);
+        this.grenadeManager.spawn(origin, velocity, def.fuseTime, this.team, 'You');
         this.grenadeCount--;
         this.grenadeCooldown = 1;
     }

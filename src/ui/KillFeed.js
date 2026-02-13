@@ -8,7 +8,7 @@ const ENTRY_LIFE = 5;  // seconds
 
 export class KillFeed {
     constructor() {
-        this.entries = []; // { killerName, killerTeam, victimName, victimTeam, headshot, life }
+        this.entries = []; // { killerName, killerTeam, victimName, victimTeam, headshot, weapon, life }
         this._dirty = false;
         this._createDOM();
     }
@@ -30,14 +30,16 @@ export class KillFeed {
      * @param {string} victimName
      * @param {string} victimTeam - 'teamA' or 'teamB'
      * @param {boolean} headshot
+     * @param {string} [weapon] - weapon ID (e.g. 'AR15', 'SMG', 'LMG', 'GRENADE')
      */
-    addKill(killerName, killerTeam, victimName, victimTeam, headshot = false) {
+    addKill(killerName, killerTeam, victimName, victimTeam, headshot = false, weapon = '') {
         this.entries.push({
             killerName,
             killerTeam,
             victimName,
             victimTeam,
             headshot,
+            weapon,
             life: ENTRY_LIFE,
         });
         this._dirty = true;
@@ -78,11 +80,12 @@ export class KillFeed {
             const kColor = e.killerTeam === 'teamA' ? '#4488ff' : '#ff4444';
             const vColor = e.victimTeam === 'teamA' ? '#4488ff' : '#ff4444';
             const hs = e.headshot ? ' <span style="color:#ffcc00">HS</span>' : '';
+            const wep = e.weapon
+                ? ` <span style="color:#aaa;font-size:11px">[${e.weapon}]</span> `
+                : ' <span style="color:#888"> → </span> ';
             html += `<div style="opacity:${opacity};margin-bottom:3px;
                 background:rgba(0,0,0,0.45);padding:3px 8px;border-radius:3px;display:inline-block;">
-                <span style="color:${kColor}">${e.killerName}</span>
-                <span style="color:#888"> → </span>
-                <span style="color:${vColor}">${e.victimName}</span>${hs}
+                <span style="color:${kColor}">${e.killerName}</span>${wep}<span style="color:${vColor}">${e.victimName}</span>${hs}
             </div><br>`;
         }
         this.container.innerHTML = html;

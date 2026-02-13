@@ -5,10 +5,11 @@ import * as CANNON from 'cannon-es';
  * A single grenade entity with mesh, physics body, and fuse timer.
  */
 export class Grenade {
-    constructor(scene, physicsWorld, origin, velocity, fuseTime, throwerTeam) {
+    constructor(scene, physicsWorld, origin, velocity, fuseTime, throwerTeam, throwerName = '') {
         this.scene = scene;
         this.physics = physicsWorld;
         this.throwerTeam = throwerTeam;
+        this.throwerName = throwerName;
         this.fuseTime = fuseTime;
         this.alive = true;
 

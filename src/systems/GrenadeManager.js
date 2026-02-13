@@ -24,10 +24,11 @@ export class GrenadeManager {
      * @param {THREE.Vector3} velocity — initial velocity vector
      * @param {number} fuseTime — seconds until detonation
      * @param {string} throwerTeam — 'teamA' or 'teamB'
+     * @param {string} [throwerName] — display name for kill feed
      */
-    spawn(origin, velocity, fuseTime, throwerTeam) {
+    spawn(origin, velocity, fuseTime, throwerTeam, throwerName = '') {
         const grenade = new Grenade(
-            this.scene, this.physics, origin, velocity, fuseTime, throwerTeam
+            this.scene, this.physics, origin, velocity, fuseTime, throwerTeam, throwerName
         );
         this.grenades.push(grenade);
     }
@@ -45,7 +46,7 @@ export class GrenadeManager {
 
             if (result) {
                 // Exploded
-                this._handleExplosion(result.position, allSoldiers, player, grenade.throwerTeam);
+                this._handleExplosion(result.position, allSoldiers, player, grenade.throwerTeam, grenade.throwerName);
                 this.grenades.splice(i, 1);
             } else if (!grenade.alive) {
                 this.grenades.splice(i, 1);
@@ -53,7 +54,7 @@ export class GrenadeManager {
         }
     }
 
-    _handleExplosion(pos, allSoldiers, player, throwerTeam) {
+    _handleExplosion(pos, allSoldiers, player, throwerTeam, throwerName) {
         const def = WeaponDefs.GRENADE;
 
         // VFX
@@ -65,7 +66,19 @@ export class GrenadeManager {
         for (const soldier of allSoldiers) {
             if (soldier.alive) {
                 if (soldier.team !== throwerTeam) {
+                    const wasAlive = soldier.alive;
                     this._applyBlastDamage(pos, soldier, def);
+                    if (wasAlive && !soldier.alive && this.eventBus) {
+                        const vTeam = soldier.team;
+                        this.eventBus.emit('kill', {
+                            killerName: throwerName,
+                            killerTeam: throwerTeam,
+                            victimName: `${vTeam === 'teamA' ? 'A' : 'B'}-${soldier.id}`,
+                            victimTeam: vTeam,
+                            headshot: false,
+                            weapon: 'GRENADE',
+                        });
+                    }
                 }
             } else if (soldier.ragdollActive) {
                 this._applyBlastImpulse(pos, soldier, def);
@@ -74,7 +87,18 @@ export class GrenadeManager {
 
         // Damage player (skip if same team)
         if (player && player.alive && player.team !== throwerTeam) {
+            const wasAlive = player.alive;
             this._applyBlastDamage(pos, player, def);
+            if (wasAlive && !player.alive && this.eventBus) {
+                this.eventBus.emit('kill', {
+                    killerName: throwerName,
+                    killerTeam: throwerTeam,
+                    victimName: 'You',
+                    victimTeam: player.team,
+                    headshot: false,
+                    weapon: 'GRENADE',
+                });
+            }
         }
 
         if (this.eventBus) {

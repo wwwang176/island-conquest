@@ -906,6 +906,7 @@ export class Game {
                         victimName: `${soldier.team === 'teamA' ? 'A' : 'B'}-${soldier.id}`,
                         victimTeam: soldier.team,
                         headshot,
+                        weapon: this.player.weapon.weaponId,
                     });
                 }
                 return;
@@ -915,7 +916,7 @@ export class Game {
     }
 
     _onKill(data) {
-        this.killFeed.addKill(data.killerName, data.killerTeam, data.victimName, data.victimTeam, data.headshot);
+        this.killFeed.addKill(data.killerName, data.killerTeam, data.victimName, data.victimTeam, data.headshot, data.weapon);
     }
 
     _onAIFired(data) {

@@ -778,7 +778,8 @@ export class AIController {
             _grenadeDir.z * vHoriz + vs.z
         );
 
-        this.grenadeManager.spawn(_grenadeOrigin, velocity, def.fuseTime, this.team);
+        const myName = `${this.team === 'teamA' ? 'A' : 'B'}-${this.soldier.id}`;
+        this.grenadeManager.spawn(_grenadeOrigin, velocity, def.fuseTime, this.team, myName);
 
         this.grenadeCount--;
         this.grenadeCooldown = def.cooldown;
@@ -1632,6 +1633,7 @@ export class AIController {
                             victimName: `${vTeam === 'teamA' ? 'A' : 'B'}-${enemy.id}`,
                             victimTeam: vTeam,
                             headshot,
+                            weapon: this.weaponId,
                         });
                     }
                     return;
@@ -1649,6 +1651,7 @@ export class AIController {
                         victimName: 'You',
                         victimTeam: this._playerRef.team,
                         headshot: false,
+                        weapon: this.weaponId,
                     });
                 }
             }
