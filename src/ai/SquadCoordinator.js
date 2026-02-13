@@ -35,6 +35,9 @@ export class SquadCoordinator {
         // Crossfire state
         this.crossfireContact = null;
         this.crossfireTimer = 0;
+
+        // Proactive suppression cooldown
+        this._suppressCooldown = 0;
     }
 
     /**
@@ -361,8 +364,8 @@ export class SquadCoordinator {
             const minAlive = isUnderdog ? 1 : 2;
             const minAmmo = isUnderdog ? 0.3 : 0.5;
             if (alive.length >= minAlive && this.objective.owner !== this.team) {
-                const avgAmmo = alive.reduce((s, c) => s + c.currentAmmo / c.magazineSize, 0) / alive.length;
-                if (avgAmmo > minAmmo) {
+                const worstAmmo = alive.reduce((m, c) => Math.min(m, c.currentAmmo / c.magazineSize), 1);
+                if (worstAmmo > minAmmo) {
                     this.requestRush(this.objective);
                 }
             }
@@ -405,6 +408,33 @@ export class SquadCoordinator {
             if (this.crossfireTimer <= 0) {
                 this.crossfireContact = null;
                 for (const ctrl of this.controllers) ctrl.crossfirePos = null;
+            }
+        }
+
+        // ── Proactive suppression: suppress nearest LOST contact when squad is idle ──
+        if (this._suppressCooldown > 0) {
+            this._suppressCooldown -= dt;
+        } else if (alive.length >= 2 && !this.rushTarget && !this.fallbackFlag && this.teamIntel) {
+            // Skip if anyone in squad is already suppressing
+            const alreadySuppressing = alive.some(c => c.suppressionTimer > 0);
+            if (!alreadySuppressing) {
+                // Find nearest LOST contact within any alive member's weapon range
+                let bestContact = null;
+                let bestDist = Infinity;
+                for (const contact of this.teamIntel.contacts.values()) {
+                    if (contact.status !== 'lost') continue;
+                    for (const ctrl of alive) {
+                        const d = ctrl.soldier.getPosition().distanceTo(contact.lastSeenPos);
+                        if (d < ctrl.weaponDef.maxRange && d < bestDist) {
+                            bestDist = d;
+                            bestContact = contact;
+                        }
+                    }
+                }
+                if (bestContact) {
+                    this.requestSuppression(bestContact);
+                    this._suppressCooldown = 8 + Math.random() * 4;
+                }
             }
         }
     }
