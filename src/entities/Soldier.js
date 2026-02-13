@@ -159,6 +159,7 @@ export class Soldier {
         // Gun — placeholder, replaced by setWeaponModel()
         this.gunMesh = null;
         this._gunParent = upperBody;
+        this._gunReloadTilt = 0;
         this._createGunMesh('AR15');
 
         group.add(upperBody);
@@ -490,6 +491,14 @@ export class Soldier {
         // Damage indicator fade
         if (this.damageIndicatorTimer > 0) {
             this.damageIndicatorTimer -= dt;
+        }
+
+        // Gun reload tilt animation
+        if (this.gunMesh && this.controller) {
+            const targetTilt = this.controller.isReloading ? 0.6 : 0;
+            const tiltSpeed = this.controller.isReloading ? 12 : 8;
+            this._gunReloadTilt += (targetTilt - this._gunReloadTilt) * Math.min(1, tiltSpeed * dt);
+            this.gunMesh.rotation.x = this._gunReloadTilt;
         }
 
         // Sync mesh to physics body position

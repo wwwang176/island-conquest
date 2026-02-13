@@ -61,44 +61,38 @@ export class Weapon {
         this.recoilRecoverySpeed = 8;
     }
 
-    _createGunMesh() {
-        // Both weapons anchor stock rear at z ≈ -0.15 (shoulder), difference extends forward
-        // All parts merged into a single geometry to minimize draw calls
+    /**
+     * Build a first-person gun mesh group for the given weapon ID.
+     * Static so spectator view can reuse it without a Weapon instance.
+     */
+    static buildFPGunMesh(weaponId) {
         const geos = [];
 
-        if (this.weaponId === 'LMG') {
-            // LMG: thick squared body + heavy barrel + drum magazine underneath
+        if (weaponId === 'LMG') {
             const stockGeo = new THREE.BoxGeometry(0.05, 0.06, 0.16);
             stockGeo.translate(0.25, -0.22, -0.05);
             geos.push(stockGeo);
-
             const bodyGeo = new THREE.BoxGeometry(0.08, 0.10, 0.55);
             bodyGeo.translate(0.25, -0.19, -0.40);
             geos.push(bodyGeo);
-
             const barrelGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.45, 6);
             barrelGeo.rotateX(Math.PI / 2);
             barrelGeo.translate(0.25, -0.16, -0.90);
             geos.push(barrelGeo);
-
-            // Drum magazine (cylinder underneath)
             const drumGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.08, 8);
             drumGeo.translate(0.25, -0.30, -0.38);
             geos.push(drumGeo);
-        } else if (this.weaponId === 'SMG') {
+        } else if (weaponId === 'SMG') {
             const stockGeo = new THREE.BoxGeometry(0.04, 0.05, 0.12);
             stockGeo.translate(0.25, -0.22, -0.09);
             geos.push(stockGeo);
-
             const bodyGeo = new THREE.BoxGeometry(0.06, 0.08, 0.30);
             bodyGeo.translate(0.25, -0.2, -0.30);
             geos.push(bodyGeo);
-
             const barrelGeo = new THREE.CylinderGeometry(0.013, 0.013, 0.18, 6);
             barrelGeo.rotateX(Math.PI / 2);
             barrelGeo.translate(0.25, -0.17, -0.54);
             geos.push(barrelGeo);
-
             const magGeo = new THREE.BoxGeometry(0.045, 0.17, 0.05);
             magGeo.rotateX(-0.15);
             magGeo.translate(0.25, -0.32, -0.28);
@@ -107,16 +101,13 @@ export class Weapon {
             const stockGeo = new THREE.BoxGeometry(0.05, 0.06, 0.18);
             stockGeo.translate(0.25, -0.22, -0.06);
             geos.push(stockGeo);
-
             const bodyGeo = new THREE.BoxGeometry(0.06, 0.08, 0.55);
             bodyGeo.translate(0.25, -0.2, -0.425);
             geos.push(bodyGeo);
-
             const barrelGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.525, 6);
             barrelGeo.rotateX(Math.PI / 2);
             barrelGeo.translate(0.25, -0.17, -0.9625);
             geos.push(barrelGeo);
-
             const magGeo = new THREE.BoxGeometry(0.04, 0.15, 0.06);
             magGeo.rotateX(-0.15);
             magGeo.translate(0.25, -0.32, -0.40);
@@ -125,11 +116,16 @@ export class Weapon {
 
         const merged = mergeGeometries(geos);
         for (const g of geos) g.dispose();
-
         const gun = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ color: 0x333333 }));
         const group = new THREE.Group();
         group.add(gun);
+        // Align with third-person gun position seen in spectator follow mode
+        group.position.set(-0.20, -0.10, 0);
         return group;
+    }
+
+    _createGunMesh() {
+        return Weapon.buildFPGunMesh(this.weaponId);
     }
 
     _createMuzzleFlash() {
@@ -142,7 +138,7 @@ export class Weapon {
         const flash = new THREE.Mesh(geo, mat);
         flash.visible = false;
         const muzzleZ = this.weaponId === 'LMG' ? -1.125 : (this.weaponId === 'SMG' ? -0.63 : -1.225);
-        flash.position.set(0.25, -0.17, muzzleZ);
+        flash.position.set(0.05, -0.27, muzzleZ);
         this.camera.add(flash);
         return flash;
     }
@@ -312,9 +308,15 @@ export class Weapon {
         if (this.recoilOffset > 0) {
             this.recoilOffset = Math.max(0, this.recoilOffset - this.recoilRecoverySpeed * dt);
         }
-        // Apply gun recoil animation
+        // Gun reload tilt: barrel points down, pivot at shoulder
+        const targetTilt = this.isReloading ? 0.8 : 0;
+        if (this._reloadTilt === undefined) this._reloadTilt = 0;
+        const tiltSpeed = this.isReloading ? 12 : 8; // faster going down, slower coming back
+        this._reloadTilt += (targetTilt - this._reloadTilt) * Math.min(1, tiltSpeed * dt);
+        // Apply gun recoil + reload tilt animation
         if (this.gunGroup) {
             this.gunGroup.position.z = -this.recoilOffset;
+            this.gunGroup.rotation.x = this._reloadTilt;
         }
 
         // Impact pool fade
