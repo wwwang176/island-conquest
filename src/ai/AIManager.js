@@ -104,7 +104,7 @@ export class AIManager {
      * Set navigation grid. If prebuilt heightGrid is provided (from Worker),
      * uses it directly instead of recomputing on main thread.
      */
-    setNavGrid(grid, heightGrid, collidables) {
+    setNavGrid(grid, heightGrid, obstacleBounds) {
         for (const ctrl of [...this.teamA.controllers, ...this.teamB.controllers]) {
             ctrl.navGrid = grid;
         }
@@ -112,8 +112,8 @@ export class AIManager {
         this.threatMapA.navGrid = grid;
         this.threatMapB.navGrid = grid;
         this._navGrid = grid;
-        // Build height grid with obstacle tops for accurate LOS
-        this.threatMapA.buildHeightGrid(this.getHeightAt, collidables);
+        // Build height grid with per-obstacle bounding boxes for accurate LOS
+        this.threatMapA.buildHeightGrid(this.getHeightAt, obstacleBounds);
         // Share the same height data but init a separate worker for team B
         this.threatMapB.heightGrid = this.threatMapA.heightGrid;
         this.threatMapB._initWorker();
@@ -269,7 +269,6 @@ export class AIManager {
                 hp: this.player.hp,
                 maxHP: this.player.maxHP,
                 mesh: this.player.mesh,
-                headMesh: null,
                 body: this.player.body,
                 getPosition: () => this.player.getPosition(),
                 takeDamage: (amt, from, hs) => this.player.takeDamage(amt, from, hs),

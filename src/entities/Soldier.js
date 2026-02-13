@@ -105,53 +105,56 @@ export class Soldier {
 
         group.add(lowerBody);
 
-        // ── Upper body ──
+        // ── Upper body (torso + head + arms merged into one mesh) ──
         const upperBody = new THREE.Group();
 
-        // Torso (bottom at 0.825 = hips top)
-        const torso = new THREE.Mesh(
-            new THREE.BoxGeometry(0.5, 0.6, 0.3),
-            new THREE.MeshLambertMaterial({ color: this.teamColor })
-        );
-        torso.position.y = 1.125;
-        torso.castShadow = true;
-        upperBody.add(torso);
+        // Build individual geometries, bake transforms, assign vertex colors
+        const skinColor = new THREE.Color(0xddbb99);
 
-        // Head (smaller, sits on torso top 1.425)
-        const head = new THREE.Mesh(
-            new THREE.BoxGeometry(0.3, 0.3, 0.3),
-            new THREE.MeshLambertMaterial({ color: 0xddbb99 })
-        );
-        head.position.y = 1.575;
-        head.castShadow = false;
-        upperBody.add(head);
-        this.headMesh = head;
+        // Torso
+        const torsoGeo = new THREE.BoxGeometry(0.5, 0.6, 0.3);
+        torsoGeo.translate(0, 1.125, 0);
+        this._setGeometryVertexColor(torsoGeo, tc);
 
-        // Right arm (trigger hand, short forward reach)
-        const rightArm = new THREE.Group();
-        rightArm.position.set(0.2, 1.35, 0);
-        rightArm.rotation.x = 1.1;
-        const rightArmMesh = new THREE.Mesh(
-            new THREE.BoxGeometry(0.15, 0.4, 0.15),
-            new THREE.MeshLambertMaterial({ color: limbColor })
-        );
-        rightArmMesh.position.y = -0.2;
-        rightArmMesh.castShadow = false;
-        rightArm.add(rightArmMesh);
-        upperBody.add(rightArm);
+        // Head
+        const headGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+        headGeo.translate(0, 1.575, 0);
+        this._setGeometryVertexColor(headGeo, skinColor);
 
-        // Left arm (support hand, reaching forward-right to grip barrel)
-        const leftArm = new THREE.Group();
-        leftArm.position.set(-0.2, 1.35, 0);
-        leftArm.rotation.set(1.2, 0, 0.5);
-        const leftArmMesh = new THREE.Mesh(
-            new THREE.BoxGeometry(0.15, 0.55, 0.15),
-            new THREE.MeshLambertMaterial({ color: limbColor })
+        // Right arm — bake group transform (position + rotation) into geometry
+        const rightArmGeo = new THREE.BoxGeometry(0.15, 0.4, 0.15);
+        rightArmGeo.translate(0, -0.2, 0); // local offset within group
+        const raMatrix = new THREE.Matrix4();
+        raMatrix.compose(
+            new THREE.Vector3(0.2, 1.35, 0),
+            new THREE.Quaternion().setFromEuler(new THREE.Euler(1.1, 0, 0)),
+            new THREE.Vector3(1, 1, 1)
         );
-        leftArmMesh.position.y = -0.275;
-        leftArmMesh.castShadow = false;
-        leftArm.add(leftArmMesh);
-        upperBody.add(leftArm);
+        rightArmGeo.applyMatrix4(raMatrix);
+        this._setGeometryVertexColor(rightArmGeo, limbColor);
+
+        // Left arm — bake group transform
+        const leftArmGeo = new THREE.BoxGeometry(0.15, 0.55, 0.15);
+        leftArmGeo.translate(0, -0.275, 0);
+        const laMatrix = new THREE.Matrix4();
+        laMatrix.compose(
+            new THREE.Vector3(-0.2, 1.35, 0),
+            new THREE.Quaternion().setFromEuler(new THREE.Euler(1.2, 0, 0.5)),
+            new THREE.Vector3(1, 1, 1)
+        );
+        leftArmGeo.applyMatrix4(laMatrix);
+        this._setGeometryVertexColor(leftArmGeo, limbColor);
+
+        // Merge all 4 into one geometry
+        const mergedUpperGeo = mergeGeometries([torsoGeo, headGeo, rightArmGeo, leftArmGeo]);
+        torsoGeo.dispose(); headGeo.dispose(); rightArmGeo.dispose(); leftArmGeo.dispose();
+
+        const upperMesh = new THREE.Mesh(
+            mergedUpperGeo,
+            new THREE.MeshLambertMaterial({ vertexColors: true })
+        );
+        upperMesh.castShadow = true;
+        upperBody.add(upperMesh);
 
         // Gun — placeholder, replaced by setWeaponModel()
         this.gunMesh = null;
@@ -165,11 +168,20 @@ export class Soldier {
         this.lowerBody = lowerBody;
         this.leftLeg = leftLeg;
         this.rightLeg = rightLeg;
-        this.leftArm = leftArm;
-        this.rightArm = rightArm;
         this._walkPhase = 0;
 
         return group;
+    }
+
+    _setGeometryVertexColor(geo, color) {
+        const count = geo.attributes.position.count;
+        const colors = new Float32Array(count * 3);
+        for (let i = 0; i < count; i++) {
+            colors[i * 3] = color.r;
+            colors[i * 3 + 1] = color.g;
+            colors[i * 3 + 2] = color.b;
+        }
+        geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     }
 
     _createGunMesh(weaponId) {
@@ -378,8 +390,6 @@ export class Soldier {
         if (this.lowerBody) this.lowerBody.rotation.set(0, 0, 0);
         if (this.leftLeg) this.leftLeg.rotation.set(0, 0, 0);
         if (this.rightLeg) this.rightLeg.rotation.set(0, 0, 0);
-        if (this.rightArm) this.rightArm.rotation.set(1.1, 0, 0);
-        if (this.leftArm) this.leftArm.rotation.set(1.2, 0, 0.5);
         this._walkPhase = 0;
 
         // Restore capsule collision shapes

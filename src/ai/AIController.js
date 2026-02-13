@@ -1491,7 +1491,7 @@ export class AIController {
                     if (this.impactVFX) {
                         this.impactVFX.spawn('blood', hitChar.point, _v1.copy(dir).negate());
                     }
-                    const headshot = hitChar.object === enemy.headMesh;
+                    const headshot = hitChar.point.y >= enemy.body.position.y + 1.45;
                     const result = enemy.takeDamage(dmg, myPos, headshot);
                     if (result.killed && this.eventBus) {
                         const vTeam = enemy.team || (this.team === 'teamA' ? 'teamB' : 'teamA');

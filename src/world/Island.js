@@ -31,6 +31,9 @@ export class Island {
         // Obstacle descriptors for Worker-based NavGrid building
         this._obstacleDescs = [];
 
+        // Per-obstacle bounding boxes for ThreatMap height grid
+        this.obstacleBounds = [];
+
         this._generateTerrain();
         this._generateWater();
         this._generateCovers();
@@ -278,6 +281,12 @@ export class Island {
     }
 
     _generateCovers() {
+        // Geometry collection arrays for batch merging
+        this._rockGeos = [];
+        this._crateGeos = [];
+        this._sandbagGeos = [];
+        this._wallGeos = [];
+
         // Place covers along the map, clustered around flag positions
         // Flag positions are at linear intervals along X axis
         const flagXPositions = this._getFlagXPositions();
@@ -306,6 +315,9 @@ export class Island {
                 this._placeRock(rx, h, rz);
             }
         }
+
+        // Merge all obstacle geometries into one mesh per type
+        this._mergeObstacles();
     }
 
     _getFlagXPositions() {
@@ -356,8 +368,6 @@ export class Island {
     _placeRock(x, h, z) {
         const scale = 1 + Math.abs(this.noise.noise2D(x, z)) * 2;
         const geo = new THREE.DodecahedronGeometry(scale, 0);
-        const mat = new THREE.MeshLambertMaterial({ color: 0x777777, flatShading: true });
-        const rock = new THREE.Mesh(geo, mat);
 
         // Deform vertices for organic look — also capture multipliers for Worker
         const pos = geo.attributes.position;
@@ -377,20 +387,25 @@ export class Island {
             deform[i * 3 + 1] = my;
             deform[i * 3 + 2] = mz;
         }
-        geo.computeVertexNormals();
 
         const rotY = this.noise.noise2D(x * 3, z * 3) * Math.PI;
-        rock.position.set(x, h + scale * 0.3, z);
-        rock.rotation.y = rotY;
-        rock.userData.surfaceType = 'rock';
+
+        // Bake world transform into geometry
+        const mat4 = new THREE.Matrix4();
+        mat4.compose(
+            new THREE.Vector3(x, h + scale * 0.3, z),
+            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotY),
+            new THREE.Vector3(1, 1, 1)
+        );
+        geo.applyMatrix4(mat4);
+        geo.computeVertexNormals();
+        geo.computeBoundingBox();
+        this.obstacleBounds.push(geo.boundingBox.clone());
+        this._rockGeos.push(geo);
 
         this._obstacleDescs.push({
             type: 'rock', x, y: h + scale * 0.3, z, scale, rotY, deform
         });
-        rock.castShadow = true;
-        rock.receiveShadow = true;
-        this.scene.add(rock);
-        this.collidables.push(rock);
 
         // Physics
         const body = new CANNON.Body({ mass: 0, material: this.physics.defaultMaterial });
@@ -416,32 +431,35 @@ export class Island {
         const size = 0.8 + Math.abs(this.noise.noise2D(x * 2, z * 2)) * 0.6;
         const w = size * 1.2, ch = size, d = size;
         const geo = new THREE.BoxGeometry(w, ch, d);
-        const mat = new THREE.MeshLambertMaterial({ color: 0x8B6914, flatShading: true });
-        const crate = new THREE.Mesh(geo, mat);
         const rotY = this.noise.noise2D(x, z) * Math.PI;
-        crate.position.set(x, h + size / 2, z);
-        crate.rotation.y = rotY;
-        crate.userData.surfaceType = 'wood';
+
+        // Bake world transform into geometry
+        const mat4 = new THREE.Matrix4();
+        mat4.compose(
+            new THREE.Vector3(x, h + size / 2, z),
+            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotY),
+            new THREE.Vector3(1, 1, 1)
+        );
+        geo.applyMatrix4(mat4);
+        geo.computeBoundingBox();
+        this.obstacleBounds.push(geo.boundingBox.clone());
+        this._crateGeos.push(geo);
 
         this._obstacleDescs.push({
             type: 'box', x, y: h + size / 2, z, w, h: ch, d, rotY
         });
-        crate.castShadow = true;
-        crate.receiveShadow = true;
-        this.scene.add(crate);
-        this.collidables.push(crate);
 
         // Physics
         const body = new CANNON.Body({ mass: 0, material: this.physics.defaultMaterial });
         body.addShape(new CANNON.Box(new CANNON.Vec3(size * 0.6, size / 2, size / 2)));
         body.position.set(x, h + size / 2, z);
-        body.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), this.noise.noise2D(x, z) * Math.PI);
+        body.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), rotY);
         this.physics.addBody(body);
 
         // Register cover (half cover)
         this.coverSystem.register(
             new THREE.Vector3(x, h, z),
-            new THREE.Vector3(Math.cos(crate.rotation.y), 0, Math.sin(crate.rotation.y)),
+            new THREE.Vector3(Math.cos(rotY), 0, Math.sin(rotY)),
             0.5,
             1
         );
@@ -449,20 +467,23 @@ export class Island {
 
     _placeSandbag(x, h, z) {
         const geo = new THREE.BoxGeometry(2.5, 0.8, 0.6);
-        const mat = new THREE.MeshLambertMaterial({ color: 0xA08050, flatShading: true });
-        const sandbag = new THREE.Mesh(geo, mat);
         const rotY = this.noise.noise2D(x * 2, z * 2) * Math.PI;
-        sandbag.position.set(x, h + 0.4, z);
-        sandbag.rotation.y = rotY;
-        sandbag.userData.surfaceType = 'dirt';
+
+        // Bake world transform into geometry
+        const mat4 = new THREE.Matrix4();
+        mat4.compose(
+            new THREE.Vector3(x, h + 0.4, z),
+            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotY),
+            new THREE.Vector3(1, 1, 1)
+        );
+        geo.applyMatrix4(mat4);
+        geo.computeBoundingBox();
+        this.obstacleBounds.push(geo.boundingBox.clone());
+        this._sandbagGeos.push(geo);
 
         this._obstacleDescs.push({
             type: 'box', x, y: h + 0.4, z, w: 2.5, h: 0.8, d: 0.6, rotY
         });
-        sandbag.castShadow = true;
-        sandbag.receiveShadow = true;
-        this.scene.add(sandbag);
-        this.collidables.push(sandbag);
 
         // Physics
         const body = new CANNON.Body({ mass: 0, material: this.physics.defaultMaterial });
@@ -484,20 +505,23 @@ export class Island {
         const wallH = 2.5 + Math.abs(this.noise.noise2D(x, z)) * 1.5;
         const wallW = 3 + Math.abs(this.noise.noise2D(x * 3, z * 3)) * 2;
         const geo = new THREE.BoxGeometry(wallW, wallH, 0.4);
-        const mat = new THREE.MeshLambertMaterial({ color: 0x999088, flatShading: true });
-        const wall = new THREE.Mesh(geo, mat);
         const rotY = this.noise.noise2D(x * 4, z * 4) * Math.PI;
-        wall.position.set(x, h + wallH / 2, z);
-        wall.rotation.y = rotY;
-        wall.userData.surfaceType = 'rock';
+
+        // Bake world transform into geometry
+        const mat4 = new THREE.Matrix4();
+        mat4.compose(
+            new THREE.Vector3(x, h + wallH / 2, z),
+            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotY),
+            new THREE.Vector3(1, 1, 1)
+        );
+        geo.applyMatrix4(mat4);
+        geo.computeBoundingBox();
+        this.obstacleBounds.push(geo.boundingBox.clone());
+        this._wallGeos.push(geo);
 
         this._obstacleDescs.push({
             type: 'box', x, y: h + wallH / 2, z, w: wallW, h: wallH, d: 0.4, rotY
         });
-        wall.castShadow = true;
-        wall.receiveShadow = true;
-        this.scene.add(wall);
-        this.collidables.push(wall);
 
         // Physics
         const body = new CANNON.Body({ mass: 0, material: this.physics.defaultMaterial });
@@ -511,6 +535,34 @@ export class Island {
         const nz = Math.sin(rotY + Math.PI / 2);
         this.coverSystem.register(new THREE.Vector3(x + nx, h, z + nz), new THREE.Vector3(nx, 0, nz), 1.0, 2);
         this.coverSystem.register(new THREE.Vector3(x - nx, h, z - nz), new THREE.Vector3(-nx, 0, -nz), 1.0, 2);
+    }
+
+    _mergeObstacles() {
+        const configs = [
+            { geos: this._rockGeos, color: 0x777777, surface: 'rock', shadow: true },
+            { geos: this._crateGeos, color: 0x8B6914, surface: 'wood', shadow: true },
+            { geos: this._sandbagGeos, color: 0xA08050, surface: 'dirt', shadow: true },
+            { geos: this._wallGeos, color: 0x999088, surface: 'rock', shadow: true },
+        ];
+        for (const cfg of configs) {
+            if (cfg.geos.length === 0) continue;
+            const merged = mergeGeometries(cfg.geos);
+            for (const g of cfg.geos) g.dispose();
+            const mesh = new THREE.Mesh(
+                merged,
+                new THREE.MeshLambertMaterial({ color: cfg.color, flatShading: true })
+            );
+            mesh.castShadow = cfg.shadow;
+            mesh.receiveShadow = cfg.shadow;
+            mesh.userData.surfaceType = cfg.surface;
+            this.scene.add(mesh);
+            this.collidables.push(mesh);
+        }
+        // Free temporary arrays
+        this._rockGeos = null;
+        this._crateGeos = null;
+        this._sandbagGeos = null;
+        this._wallGeos = null;
     }
 
     _generateVegetation() {

@@ -43,7 +43,7 @@ export class ThreatMap {
      * Uses bounding boxes instead of raycasting for speed.
      * After building, initializes the worker with the height data.
      */
-    buildHeightGrid(getHeightAt, collidables) {
+    buildHeightGrid(getHeightAt, obstacleBounds) {
         const { cols, rows, cellSize, originX, originZ, heightGrid } = this;
 
         // 1) Fill with terrain heights
@@ -55,25 +55,9 @@ export class ThreatMap {
             }
         }
 
-        // 2) Stamp obstacle bounding boxes onto the grid
-        //    Skip terrain and water — they span the entire map and would
-        //    overwrite all cells with their peak height.
-        if (collidables && collidables.length > 0) {
-            const box = new THREE.Box3();
-            const skipTypes = new Set(['terrain', 'water']);
-            const collectMeshes = (obj) => {
-                if (obj.isMesh && obj.geometry) meshes.push(obj);
-                if (obj.children) for (const child of obj.children) collectMeshes(child);
-            };
-            const meshes = [];
-            for (const obj of collidables) {
-                const st = obj.userData && obj.userData.surfaceType;
-                if (st && skipTypes.has(st)) continue;
-                collectMeshes(obj);
-            }
-
-            for (const mesh of meshes) {
-                box.setFromObject(mesh);
+        // 2) Stamp per-obstacle bounding boxes onto the grid
+        if (obstacleBounds && obstacleBounds.length > 0) {
+            for (const box of obstacleBounds) {
                 const topY = box.max.y;
 
                 const minCol = Math.max(0, Math.floor((box.min.x - originX) / cellSize));

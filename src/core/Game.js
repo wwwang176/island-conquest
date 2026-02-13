@@ -161,7 +161,7 @@ export class Game {
 
     async _initNavGrid() {
         const { navGrid, heightGrid } = await this.island.buildNavGridAsync();
-        this.aiManager.setNavGrid(navGrid, heightGrid, this.island.collidables);
+        this.aiManager.setNavGrid(navGrid, heightGrid, this.island.obstacleBounds);
         this.aiManager.spawnAll();
 
         // Threat map visualization (must be after heightGrid is set so mesh follows terrain)
@@ -605,7 +605,7 @@ export class Game {
                 if (this.impactVFX) {
                     this.impactVFX.spawn('blood', hit.point, null);
                 }
-                const headshot = hit.target === soldier.headMesh;
+                const headshot = hit.point.y >= soldier.body.position.y + 1.45;
                 const result = soldier.takeDamage(hit.damage, this.player.getPosition(), headshot);
                 if (result.killed) {
                     this.eventBus.emit('kill', {
