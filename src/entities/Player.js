@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { Weapon } from './Weapon.js';
+import { WeaponDefs } from './WeaponDefs.js';
 
 // Module-level reusable objects (avoid per-frame allocation)
 const _forward = new THREE.Vector3();
@@ -45,6 +46,12 @@ export class Player {
         this.respawnDelay = 5;
         this.team = null; // set when joining a team
         this.selectedWeaponId = 'AR15';
+
+        // Grenade state
+        this.grenadeCount = WeaponDefs.GRENADE.maxPerLife;
+        this.grenadeCooldown = 0;
+        this.grenadeManager = null; // set by Game
+        this._grenadePrevDown = false;
 
         // Damage direction indicator
         this.lastDamageDirection = null;
@@ -134,9 +141,13 @@ export class Player {
             this.damageIndicatorTimer -= dt;
         }
 
+        // Grenade cooldown
+        if (this.grenadeCooldown > 0) this.grenadeCooldown -= dt;
+
         this._handleMouseLook();
         this._handleMovement(dt);
         this._handleShooting(dt);
+        this._handleGrenade();
         this._syncMeshAndCamera();
         this.weapon.update(dt);
     }
@@ -262,6 +273,24 @@ export class Player {
         }
     }
 
+    _handleGrenade() {
+        if (!this.grenadeManager) return;
+        const pressed = this.input.isKeyDown('KeyG');
+        if (pressed === this._grenadePrevDown) return;
+        this._grenadePrevDown = pressed;
+        if (!pressed) return; // only act on key-down edge
+        if (this.grenadeCount <= 0 || this.grenadeCooldown > 0) return;
+
+        const def = WeaponDefs.GRENADE;
+        const origin = this.camera.position.clone();
+        const dir = this.getAimDirection();
+        const velocity = dir.multiplyScalar(def.throwSpeed);
+
+        this.grenadeManager.spawn(origin, velocity, def.fuseTime, this.team);
+        this.grenadeCount--;
+        this.grenadeCooldown = 1;
+    }
+
     _syncMeshAndCamera() {
         const pos = this.body.position;
         this.mesh.position.set(pos.x, pos.y, pos.z);
@@ -314,6 +343,8 @@ export class Player {
         this.body.velocity.set(0, 0, 0);
         this.isJumping = false;
         this.jumpVelY = 0;
+        this.grenadeCount = WeaponDefs.GRENADE.maxPerLife;
+        this.grenadeCooldown = 0;
         this.eventBus.emit('playerRespawned');
     }
 

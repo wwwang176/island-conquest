@@ -198,7 +198,7 @@ export class Game {
         }
 
         // Debug arc toggle
-        if (e.code === 'KeyG') {
+        if (e.code === 'KeyP') {
             AIController.debugArcs = !AIController.debugArcs;
         }
 
@@ -244,6 +244,7 @@ export class Game {
             this.player.navGrid = this.island.navGrid;
             this.player.weapon.tracerSystem = this.tracerSystem;
             this.player.weapon.impactVFX = this.impactVFX;
+            this.player.grenadeManager = this.grenadeManager;
         }
 
         this.player.team = team;
@@ -441,7 +442,8 @@ export class Game {
             '<b style="color:rgba(255,255,255,0.7)">Keys</b>',
             '<span style="color:#fff">T</span> Threat map',
             '<span style="color:#fff">B</span> NavGrid',
-            '<span style="color:#fff">G</span> A* paths',
+            '<span style="color:#fff">P</span> A* paths',
+            '<span style="color:#fff">G</span> Grenade',
             '<span style="color:#fff">N</span> Tactic labels',
             '<span style="color:#fff">Tab</span> Next COM',
             '<span style="color:#fff">V</span> Camera mode',

@@ -350,9 +350,9 @@ export class Soldier {
                 dir.z /= len;
             }
             // Impulse at top of cylinder (0.6 above center) for maximum torque
-            const force = 120;
+            const force = 60;
             this.body.applyImpulse(
-                new CANNON.Vec3(dir.x * force, 20, dir.z * force),
+                new CANNON.Vec3(dir.x * force, 10, dir.z * force),
                 new CANNON.Vec3(0, 0.6, 0)
             );
         }

@@ -61,11 +61,12 @@ export class GrenadeManager {
             this.impactVFX.spawn('explosion', pos, _up);
         }
 
-        // Damage living soldiers + push ragdolls (skip friendly team)
+        // Damage living enemies + push ALL ragdolls (both teams)
         for (const soldier of allSoldiers) {
-            if (soldier.team === throwerTeam) continue;
             if (soldier.alive) {
-                this._applyBlastDamage(pos, soldier, def);
+                if (soldier.team !== throwerTeam) {
+                    this._applyBlastDamage(pos, soldier, def);
+                }
             } else if (soldier.ragdollActive) {
                 this._applyBlastImpulse(pos, soldier, def);
             }
@@ -105,7 +106,7 @@ export class GrenadeManager {
         if (dist >= def.blastRadius) return;
 
         const falloff = 1 - dist / def.blastRadius;
-        const strength = 250 * falloff;
+        const strength = 600 * falloff;
         _diff.normalize();
         target.body.applyImpulse(
             new CANNON.Vec3(
