@@ -63,6 +63,7 @@ export class AIController {
 
     constructor(soldier, personality, team, flags, getHeightAt, coverSystem, teamIntel, eventBus) {
         this.soldier = soldier;
+        soldier.controller = this;
         this.personality = PersonalityTypes[personality] || PersonalityTypes.SUPPORT;
         this.team = team;
         this.flags = flags;
@@ -609,7 +610,7 @@ export class AIController {
             const distToFlag = myPos.distanceTo(flagPos);
             if (distToFlag >= 8 && distToFlag <= 45 && this.teamIntel) {
                 const threats = this.teamIntel.getKnownEnemies({
-                    minConfidence: 0.3,
+                    minConfidence: 0.15,
                     maxDist: 18,
                     fromPos: flagPos,
                 });
@@ -632,7 +633,7 @@ export class AIController {
         // Scenario 4: Multiple enemies clustered — 2+ enemies within blast radius
         if (this.teamIntel) {
             const nearby = this.teamIntel.getKnownEnemies({
-                minConfidence: 0.4,
+                minConfidence: 0.2,
                 maxDist: 40,
                 fromPos: myPos,
             });
@@ -655,6 +656,46 @@ export class AIController {
         return false;
     }
 
+    /**
+     * Solve ballistic launch for horizDist/dy at fixed speed v.
+     * Returns { vHoriz, vy, flightTime }.
+     */
+    _solveGrenadeBallistic(horizDist, dy, v, fuseTime) {
+        const g = 9.8;
+        const v2 = v * v;
+        const d2 = horizDist * horizDist;
+        const disc = v2 * v2 - g * (g * d2 + 2 * dy * v2);
+
+        let vHoriz, vy;
+        if (disc >= 0) {
+            const sqrtDisc = Math.sqrt(disc);
+            const gd = g * horizDist;
+
+            // High-angle solution (preferred — arcs over obstacles)
+            const tanHi = (v2 + sqrtDisc) / gd;
+            const cosHi = 1 / Math.sqrt(1 + tanHi * tanHi);
+            const vHorizHi = v * cosHi;
+            const flightTimeHi = horizDist / vHorizHi;
+
+            if (flightTimeHi <= fuseTime) {
+                const sinHi = tanHi * cosHi;
+                vHoriz = vHorizHi;
+                vy = v * sinHi;
+            } else {
+                const tanLo = (v2 - sqrtDisc) / gd;
+                const cosLo = 1 / Math.sqrt(1 + tanLo * tanLo);
+                const sinLo = tanLo * cosLo;
+                vHoriz = v * cosLo;
+                vy = v * sinLo;
+            }
+        } else {
+            // Out of range — throw at 45° (maximum range)
+            vHoriz = v * 0.707;
+            vy = v * 0.707;
+        }
+        return { vHoriz, vy, flightTime: horizDist / vHoriz };
+    }
+
     _actionThrowGrenade() {
         const myPos = this.soldier.getPosition();
         const def = WeaponDefs.GRENADE;
@@ -671,61 +712,56 @@ export class AIController {
         // Origin: shoulder height
         _grenadeOrigin.set(myPos.x, myPos.y + 1.5, myPos.z);
 
-        // Horizontal direction and distance
-        _grenadeDir.set(targetPos.x - _grenadeOrigin.x, 0, targetPos.z - _grenadeOrigin.z);
+        // Soldier's horizontal movement velocity
+        const vs = this.soldier.lastMoveVelocity;
+        const v = def.throwSpeed;
+        const dy = (targetPos.y != null ? targetPos.y : myPos.y) - _grenadeOrigin.y;
+
+        // Two-iteration correction for soldier movement velocity.
+        // effectiveTarget = realTarget - vs * flightTime
+        // Iteration 1: estimate flight time from real distance (45° guess)
+        // Iteration 2: re-estimate using actual flight time from ballistic solve
+        let effTargetX = targetPos.x;
+        let effTargetZ = targetPos.z;
+
+        const realDx = targetPos.x - _grenadeOrigin.x;
+        const realDz = targetPos.z - _grenadeOrigin.z;
+        const realHorizDist = Math.sqrt(realDx * realDx + realDz * realDz);
+
+        if (realHorizDist > 0.1) {
+            // Iteration 1: rough t from 45° assumption
+            let t = realHorizDist / (v * 0.707);
+            effTargetX = targetPos.x - vs.x * t;
+            effTargetZ = targetPos.z - vs.z * t;
+
+            let edx = effTargetX - _grenadeOrigin.x;
+            let edz = effTargetZ - _grenadeOrigin.z;
+            let effDist = Math.sqrt(edx * edx + edz * edz);
+            if (effDist > 0.1) {
+                // Iteration 2: solve ballistics for iteration-1 distance, get real flight time
+                const sol = this._solveGrenadeBallistic(effDist, dy, v, def.fuseTime);
+                t = sol.flightTime;
+                effTargetX = targetPos.x - vs.x * t;
+                effTargetZ = targetPos.z - vs.z * t;
+            }
+        }
+
+        // Horizontal direction and distance to effective target
+        _grenadeDir.set(effTargetX - _grenadeOrigin.x, 0, effTargetZ - _grenadeOrigin.z);
         const horizDist = _grenadeDir.length();
         if (horizDist < 0.1) {
             _grenadeDir.set(this.facingDir.x, 0, this.facingDir.z);
         }
         _grenadeDir.normalize();
 
-        // No linearDamping on grenade — use clean projectile formula.
-        // Solve for launch angle given fixed speed v to hit (horizDist, dy).
-        //   horizDist = v·cos(a)·t,  dy = v·sin(a)·t - ½g·t²
-        // Eliminate t → quadratic in tan(a). Pick the low-angle solution.
-        const v = def.throwSpeed;
-        const g = 9.8;
-        const dy = (targetPos.y != null ? targetPos.y : myPos.y) - _grenadeOrigin.y;
-        const v2 = v * v;
-        const d2 = horizDist * horizDist;
-        const disc = v2 * v2 - g * (g * d2 + 2 * dy * v2);
+        // Final ballistic solve for the corrected effective target
+        const { vHoriz, vy } = this._solveGrenadeBallistic(horizDist, dy, v, def.fuseTime);
 
-        let vHoriz, vy;
-        if (disc >= 0) {
-            const sqrtDisc = Math.sqrt(disc);
-            const gd = g * horizDist;
-
-            // High-angle solution (preferred — arcs over obstacles)
-            const tanHi = (v2 + sqrtDisc) / gd;
-            const cosHi = 1 / Math.sqrt(1 + tanHi * tanHi);
-            const vHorizHi = v * cosHi;
-            const flightTimeHi = horizDist / vHorizHi;
-
-            if (flightTimeHi <= def.fuseTime) {
-                // High angle fits within fuse — use it
-                const sinHi = tanHi * cosHi;
-                vHoriz = vHorizHi;
-                vy = v * sinHi;
-            } else {
-                // High angle too slow — fall back to low angle
-                const tanLo = (v2 - sqrtDisc) / gd;
-                const cosLo = 1 / Math.sqrt(1 + tanLo * tanLo);
-                const sinLo = tanLo * cosLo;
-                vHoriz = v * cosLo;
-                vy = v * sinLo;
-            }
-        } else {
-            // Out of range — throw at 45° (maximum range)
-            vHoriz = v * 0.707;
-            vy = v * 0.707;
-        }
-
-        const scale = 1; // already at throwSpeed
-
+        // Final world velocity = throw velocity + soldier movement velocity
         const velocity = new THREE.Vector3(
-            _grenadeDir.x * vHoriz * scale,
-            vy * scale,
-            _grenadeDir.z * vHoriz * scale
+            _grenadeDir.x * vHoriz + vs.x,
+            vy,
+            _grenadeDir.z * vHoriz + vs.z
         );
 
         this.grenadeManager.spawn(_grenadeOrigin, velocity, def.fuseTime, this.team);
@@ -1316,9 +1352,30 @@ export class AIController {
             }
         }
 
-        // Update facing toward movement direction (no enemy — enemy case handled above)
+        // Update facing: pre-aim nearest intel contact, or fall back to movement direction
         if (!this.targetEnemy || !this.targetEnemy.alive) {
-            this.facingDir.lerp(_v1, 0.1).normalize();
+            let preAimed = false;
+            if (this.teamIntel) {
+                let nearest = null;
+                let nearestDist = Infinity;
+                for (const contact of this.teamIntel.contacts.values()) {
+                    if (contact.status === 'visible') continue;
+                    const d = myPos.distanceTo(contact.lastSeenPos);
+                    if (d < this.weaponDef.maxRange && d < nearestDist) {
+                        nearestDist = d;
+                        nearest = contact;
+                    }
+                }
+                if (nearest) {
+                    _v2.subVectors(nearest.lastSeenPos, myPos).normalize();
+                    _v2.y = 0;
+                    this.facingDir.lerp(_v2, 0.12).normalize();
+                    preAimed = true;
+                }
+            }
+            if (!preAimed) {
+                this.facingDir.lerp(_v1, 0.1).normalize();
+            }
         }
 
         // Stuck detection
