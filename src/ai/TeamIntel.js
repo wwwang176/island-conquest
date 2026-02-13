@@ -5,6 +5,31 @@ import * as THREE from 'three';
  * Tracks enemy contacts with status decay: VISIBLE → LOST → SUSPECTED → CLEARED.
  */
 
+// ── Shared sprite texture (created once) ──
+let _sharedDotTexture = null;
+function getDotTexture() {
+    if (_sharedDotTexture) return _sharedDotTexture;
+    const size = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    _sharedDotTexture = new THREE.CanvasTexture(canvas);
+    return _sharedDotTexture;
+}
+
+const STATUS_COLORS = {
+    visible:   new THREE.Color(0xff3333),
+    lost:      new THREE.Color(0xff8800),
+    suspected: new THREE.Color(0x888888),
+};
+
+const POOL_SIZE = 24;
+
 const ContactStatus = {
     VISIBLE:   'visible',
     LOST:      'lost',
@@ -107,6 +132,12 @@ export class TeamIntel {
      */
     update(dt) {
         for (const [enemy, contact] of this.contacts) {
+            // Remove contacts for dead enemies immediately
+            if (!enemy.alive) {
+                this.contacts.delete(enemy);
+                continue;
+            }
+
             // Don't age visible contacts
             if (contact.status === ContactStatus.VISIBLE) continue;
 
@@ -133,5 +164,106 @@ export class TeamIntel {
                 this.contacts.delete(enemy);
             }
         }
+    }
+
+    // ───── 3D Visualization ─────
+
+    setVisualization(scene, visible) {
+        if (visible) {
+            if (!this._visGroup) {
+                this._visGroup = new THREE.Group();
+                this._visGroup.name = `intel-vis-${this.team}`;
+                this._visPool = [];
+                const dotTex = getDotTexture();
+                const ringGeo = new THREE.RingGeometry(1, 1.15, 32);
+                for (let i = 0; i < POOL_SIZE; i++) {
+                    // Dot sprite
+                    const spriteMat = new THREE.SpriteMaterial({
+                        map: dotTex,
+                        transparent: true,
+                        depthWrite: false,
+                        sizeAttenuation: true,
+                    });
+                    const sprite = new THREE.Sprite(spriteMat);
+                    sprite.scale.set(1.2, 1.2, 1);
+                    sprite.visible = false;
+                    this._visGroup.add(sprite);
+
+                    // Ground ring
+                    const ringMat = new THREE.MeshBasicMaterial({
+                        color: 0xffffff,
+                        transparent: true,
+                        opacity: 0.3,
+                        depthWrite: false,
+                        side: THREE.DoubleSide,
+                    });
+                    const ring = new THREE.Mesh(ringGeo, ringMat);
+                    ring.rotation.x = -Math.PI / 2;
+                    ring.visible = false;
+                    this._visGroup.add(ring);
+
+                    this._visPool.push({ sprite, ring });
+                }
+                this._visRingGeo = ringGeo;
+                scene.add(this._visGroup);
+            }
+            this._visGroup.visible = true;
+            this.updateVisualization();
+        } else {
+            if (this._visGroup) this._visGroup.visible = false;
+        }
+    }
+
+    updateVisualization() {
+        if (!this._visGroup || !this._visGroup.visible) return;
+        const pool = this._visPool;
+        let idx = 0;
+        for (const contact of this.contacts.values()) {
+            if (idx >= POOL_SIZE) break;
+            const { sprite, ring } = pool[idx];
+            const color = STATUS_COLORS[contact.status] || STATUS_COLORS.suspected;
+
+            // Dot sprite
+            sprite.visible = true;
+            sprite.position.set(
+                contact.lastSeenPos.x,
+                contact.lastSeenPos.y + 2.5,
+                contact.lastSeenPos.z
+            );
+            sprite.material.color.copy(color);
+            sprite.material.opacity = contact.confidence;
+
+            // Ground ring
+            ring.visible = true;
+            ring.position.set(
+                contact.lastSeenPos.x,
+                contact.lastSeenPos.y + 0.3,
+                contact.lastSeenPos.z
+            );
+            ring.material.color.copy(color);
+            ring.material.opacity = contact.confidence * 0.3;
+            const radius = contact.status === 'visible' ? 0 : contact.lastSeenTime * 4;
+            ring.scale.set(radius, radius, radius);
+            ring.visible = radius > 0;
+
+            idx++;
+        }
+        // Hide unused pool members
+        for (let i = idx; i < POOL_SIZE; i++) {
+            pool[i].sprite.visible = false;
+            pool[i].ring.visible = false;
+        }
+    }
+
+    disposeVisualization() {
+        if (!this._visGroup) return;
+        this._visGroup.parent?.remove(this._visGroup);
+        for (const { sprite, ring } of this._visPool) {
+            sprite.material.dispose();
+            ring.material.dispose();
+        }
+        this._visRingGeo.dispose();
+        this._visGroup = null;
+        this._visPool = null;
     }
 }

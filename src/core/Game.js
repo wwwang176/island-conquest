@@ -93,6 +93,7 @@ export class Game {
         this.aiManager.grenadeManager = this.grenadeManager;
 
         this._threatVisState = 0; // 0=off, 1=teamA, 2=teamB
+        this._intelVisState = 0; // 0=off, 1=teamA, 2=teamB
 
         // FPS stats panel
         this.stats = new Stats();
@@ -210,6 +211,13 @@ export class Game {
         // Debug arc toggle
         if (e.code === 'KeyP') {
             AIController.debugArcs = !AIController.debugArcs;
+        }
+
+        // Intel contacts visualization toggle
+        if (e.code === 'KeyI') {
+            this._intelVisState = (this._intelVisState + 1) % 3;
+            this.aiManager.intelA.setVisualization(this.scene, this._intelVisState === 1);
+            this.aiManager.intelB.setVisualization(this.scene, this._intelVisState === 2);
         }
 
         // NavGrid blocked-cell visualization toggle
@@ -634,7 +642,7 @@ export class Game {
             '<span style="color:#fff">T</span> Threat map',
             '<span style="color:#fff">B</span> NavGrid',
             '<span style="color:#fff">P</span> A* paths',
-            '<span style="color:#fff">G</span> Grenade',
+            '<span style="color:#fff">I</span> Intel contacts',
             '<span style="color:#fff">N</span> Tactic labels',
             '<span style="color:#fff">Tab</span> Next COM',
             '<span style="color:#fff">V</span> Camera mode',
@@ -962,6 +970,10 @@ export class Game {
 
         // Update AI
         this.aiManager.update(dt, this.island.collidables);
+
+        // Update intel visualization
+        if (this._intelVisState === 1) this.aiManager.intelA.updateVisualization();
+        else if (this._intelVisState === 2) this.aiManager.intelB.updateVisualization();
 
         // Update grenades
         if (!this._allSoldiersBuf) this._allSoldiersBuf = [];
