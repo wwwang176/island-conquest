@@ -193,7 +193,21 @@ export class Soldier {
 
         const geos = [];
 
-        if (weaponId === 'SMG') {
+        if (weaponId === 'LMG') {
+            // LMG: thick squared body + heavy barrel + drum magazine
+            const bodyGeo = new THREE.BoxGeometry(0.10, 0.10, 0.50);
+            geos.push(bodyGeo);
+
+            const barrelGeo = new THREE.CylinderGeometry(0.022, 0.022, 0.35, 6);
+            barrelGeo.rotateX(Math.PI / 2);
+            barrelGeo.translate(0, 0.01, -0.42);
+            geos.push(barrelGeo);
+
+            // Drum magazine (cylinder underneath)
+            const drumGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.08, 8);
+            drumGeo.translate(0, -0.10, 0.05);
+            geos.push(drumGeo);
+        } else if (weaponId === 'SMG') {
             // SMG: short body + stubby barrel
             const bodyGeo = new THREE.BoxGeometry(0.08, 0.08, 0.30);
             bodyGeo.translate(0, 0, 0.10);

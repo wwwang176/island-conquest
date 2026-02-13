@@ -339,6 +339,9 @@ export class Player {
         }
         this.weapon.currentAmmo = this.weapon.magazineSize;
         this.weapon.isReloading = false;
+        // Apply weapon move speed multiplier
+        const mult = WeaponDefs[this.selectedWeaponId].moveSpeedMult || 1.0;
+        this.moveSpeed = 6 * mult;
         this.body.position.set(position.x, position.y + 1, position.z);
         this.body.velocity.set(0, 0, 0);
         this.isJumping = false;

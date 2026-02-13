@@ -104,8 +104,8 @@ export class AIController {
         this.hasReacted = false;
         this.aimCorrectionSpeed = 2 + this.personality.aimSkill * 3;
 
-        // Weapon definition (random per soldier)
-        this.weaponId = Math.random() > 0.5 ? 'AR15' : 'SMG';
+        // Weapon definition — personality-weighted random
+        this.weaponId = this._pickWeapon();
         const def = WeaponDefs[this.weaponId];
         this.weaponDef = def;
         this.soldier.setWeaponModel(this.weaponId);
@@ -114,7 +114,9 @@ export class AIController {
         this.fireTimer = 0;
         this.fireInterval = 60 / def.fireRate;
         this.burstCount = 0;
-        this.burstMax = 8 + Math.floor(Math.random() * 8);
+        this.burstMax = this.weaponId === 'LMG'
+            ? 20 + Math.floor(Math.random() * 10)
+            : 8 + Math.floor(Math.random() * 8);
         this.burstCooldown = 0;
 
         // Magazine / reload
@@ -132,7 +134,7 @@ export class AIController {
         this.currentSpread = def.baseSpread;
 
         // Movement
-        this.moveSpeed = 4.125; // 5.5 * 0.75
+        this.moveSpeed = 4.125 * (def.moveSpeedMult || 1.0);
         this.moveDir = new THREE.Vector3();
         this.facingDir = new THREE.Vector3(0, 0, -1);
         this.avoidDir = new THREE.Vector3();
@@ -181,6 +183,24 @@ export class AIController {
 
         // Build behavior tree
         this.behaviorTree = this._buildBehaviorTree();
+    }
+
+    /**
+     * Pick weapon based on personality weights.
+     * Support/Defender: 60% LMG, 20% AR, 20% SMG.
+     * Others: 10% LMG, 45% AR, 45% SMG.
+     */
+    _pickWeapon() {
+        const role = this.personality.name;
+        const r = Math.random();
+        if (role === 'Support' || role === 'Defender') {
+            if (r < 0.6) return 'LMG';
+            if (r < 0.8) return 'AR15';
+            return 'SMG';
+        }
+        if (r < 0.10) return 'LMG';
+        if (r < 0.55) return 'AR15';
+        return 'SMG';
 
         // Debug: movement arc visualization (lazy-created)
         this._debugArc = null;
@@ -1368,8 +1388,13 @@ export class AIController {
         this.burstCooldown -= dt;
 
         // Spread recovery during burst cooldown or when not shooting
+        // Recovery moves toward baseSpread (up for LMG after sustained fire, down for others)
         if (this.burstCooldown > 0 || !this.targetEnemy) {
-            this.currentSpread = Math.max(this.baseSpread, this.currentSpread - this.spreadRecoveryRate * dt);
+            if (this.currentSpread > this.baseSpread) {
+                this.currentSpread = Math.max(this.baseSpread, this.currentSpread - this.spreadRecoveryRate * dt);
+            } else if (this.currentSpread < this.baseSpread) {
+                this.currentSpread = Math.min(this.baseSpread, this.currentSpread + this.spreadRecoveryRate * dt);
+            }
         }
 
         // Handle reload
@@ -1416,7 +1441,9 @@ export class AIController {
 
             if (this.burstCount >= this.burstMax) {
                 this.burstCount = 0;
-                this.burstMax = 6 + Math.floor(Math.random() * 8);
+                this.burstMax = this.weaponId === 'LMG'
+                    ? 20 + Math.floor(Math.random() * 10)
+                    : 6 + Math.floor(Math.random() * 8);
                 this.burstCooldown = 0.08 + Math.random() * 0.2;
             }
         }
@@ -1437,8 +1464,12 @@ export class AIController {
         dir.z += (Math.random() - 0.5) * 2 * this.currentSpread;
         dir.normalize();
 
-        // Increase spread per shot
-        this.currentSpread = Math.min(this.maxSpread, this.currentSpread + this.spreadIncreasePerShot);
+        // Increase spread per shot — negative means sustained fire tightens
+        if (this.spreadIncreasePerShot >= 0) {
+            this.currentSpread = Math.min(this.maxSpread, this.currentSpread + this.spreadIncreasePerShot);
+        } else {
+            this.currentSpread = Math.max(this.weaponDef.minSpread || 0.001, this.currentSpread + this.spreadIncreasePerShot);
+        }
 
         // Hitscan
         _raycaster.set(_origin, dir);
@@ -1579,8 +1610,8 @@ export class AIController {
         if (this._tacLabel) this._tacLabel.visible = false;
         this._tacLabelText = '';
         this._previouslyVisible.clear();
-        // Random weapon on respawn
-        this.weaponId = Math.random() > 0.5 ? 'AR15' : 'SMG';
+        // Personality-weighted weapon on respawn
+        this.weaponId = this._pickWeapon();
         const def = WeaponDefs[this.weaponId];
         this.weaponDef = def;
         this.soldier.setWeaponModel(this.weaponId);
@@ -1591,6 +1622,10 @@ export class AIController {
         this.maxSpread = def.maxSpread;
         this.spreadIncreasePerShot = def.spreadIncreasePerShot;
         this.spreadRecoveryRate = def.spreadRecoveryRate;
+        this.moveSpeed = 4.125 * (def.moveSpeedMult || 1.0);
+        this.burstMax = this.weaponId === 'LMG'
+            ? 20 + Math.floor(Math.random() * 10)
+            : 8 + Math.floor(Math.random() * 8);
         // Reset ammo and spread on respawn
         this.currentAmmo = this.magazineSize;
         this.isReloading = false;

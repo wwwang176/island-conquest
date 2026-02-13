@@ -211,8 +211,21 @@ export class SquadCoordinator {
      * Captain and Support will suppress while Flanker repositions.
      */
     requestSuppression(contact) {
+        // Prioritize LMG holders for suppression
+        let hasLMG = false;
         for (const ctrl of this.controllers) {
             if (!ctrl.soldier.alive) continue;
+            if (ctrl.weaponId === 'LMG') {
+                ctrl.suppressionTarget = contact;
+                const baseDuration = ctrl.personality.suppressDuration || 3;
+                ctrl.suppressionTimer = baseDuration * 1.5; // LMG ×1.5 suppression duration
+                hasLMG = true;
+            }
+        }
+        // Fallback: Captain/Support/Defender if no LMG holders
+        for (const ctrl of this.controllers) {
+            if (!ctrl.soldier.alive) continue;
+            if (ctrl.weaponId === 'LMG') continue; // already assigned
             const role = ctrl.personality.name;
             if (role === 'Captain' || role === 'Support' || role === 'Defender') {
                 ctrl.suppressionTarget = contact;

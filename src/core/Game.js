@@ -407,6 +407,11 @@ export class Game {
                             <div style="font-size:16px;font-weight:bold;">[2] SMG</div>
                             <div style="font-size:12px;color:#aaa;margin-top:4px;">900 RPM &middot; 35 rds</div>
                         </div>
+                        <div id="weapon-lmg" style="border:2px solid #888;border-radius:8px;padding:10px 18px;
+                            background:transparent;cursor:default;min-width:120px;">
+                            <div style="font-size:16px;font-weight:bold;">[3] LMG</div>
+                            <div style="font-size:12px;color:#aaa;margin-top:4px;">450 RPM &middot; 120 rds</div>
+                        </div>
                     </div>
                 </div>
                 <div id="respawn-prompt" style="font-size:16px;color:#aaa;margin-top:10px;display:none;">
@@ -454,25 +459,66 @@ export class Game {
     }
 
     _updateHUD() {
-        if (this.gameMode !== 'playing' || !this.player) return;
+        // ── Spectator follow mode: show observed soldier's ammo HUD ──
+        if (this.gameMode === 'spectator') {
+            const isFollow = this.spectator && this.spectator.mode === 'follow';
+            if (isFollow) {
+                const target = this.spectator.getCurrentTarget();
+                if (target) {
+                    this.ammoHUD.style.display = 'block';
+                    const ctrl = target.controller;
+                    const curAmmo = ctrl.currentAmmo;
+                    const curReloading = ctrl.isReloading;
+                    const curWeaponId = ctrl.weaponId;
+                    const curGrenades = ctrl.grenadeCount;
+                    if (curAmmo !== this._lastAmmo || curReloading !== this._lastReloading
+                        || curWeaponId !== this._lastWeaponId || curGrenades !== this._lastGrenades) {
+                        this._lastAmmo = curAmmo;
+                        this._lastReloading = curReloading;
+                        this._lastWeaponId = curWeaponId;
+                        this._lastGrenades = curGrenades;
+                        const reloadText = curReloading ? `<span style="color:#ffaa00">RELOADING...</span>` : '';
+                        const grenadeText = `<div style="font-size:13px;color:#aaa;margin-top:6px">&#x1F4A3; ${curGrenades}</div>`;
+                        this.ammoHUD.innerHTML = `
+                            <div style="font-size:12px;color:#aaa;margin-bottom:4px">${ctrl.weaponDef.name}</div>
+                            <div style="font-size:28px;font-weight:bold">
+                                ${curAmmo}<span style="font-size:16px;color:#888"> / ${ctrl.magazineSize}</span>
+                            </div>${reloadText}${grenadeText}`;
+                    }
+                } else {
+                    this.ammoHUD.style.display = 'none';
+                }
+            } else {
+                this.ammoHUD.style.display = 'none';
+            }
+            // Clear cached values when switching away
+            this._lastAmmo = undefined;
+            return;
+        }
+
+        if (!this.player) return;
 
         const p = this.player;
         const w = p.weapon;
 
-        // Ammo — only update DOM when values change
+        // Ammo + grenade — only update DOM when values change
         const curAmmo = w.currentAmmo;
         const curReloading = w.isReloading;
         const curWeaponId = w.weaponId;
-        if (curAmmo !== this._lastAmmo || curReloading !== this._lastReloading || curWeaponId !== this._lastWeaponId) {
+        const curGrenades = p.grenadeCount;
+        if (curAmmo !== this._lastAmmo || curReloading !== this._lastReloading
+            || curWeaponId !== this._lastWeaponId || curGrenades !== this._lastGrenades) {
             this._lastAmmo = curAmmo;
             this._lastReloading = curReloading;
             this._lastWeaponId = curWeaponId;
+            this._lastGrenades = curGrenades;
             const reloadText = curReloading ? `<span style="color:#ffaa00">RELOADING...</span>` : '';
+            const grenadeText = `<div style="font-size:13px;color:#aaa;margin-top:6px">&#x1F4A3; ${curGrenades}</div>`;
             this.ammoHUD.innerHTML = `
                 <div style="font-size:12px;color:#aaa;margin-bottom:4px">${w.def.name}</div>
                 <div style="font-size:28px;font-weight:bold">
                     ${curAmmo}<span style="font-size:16px;color:#888"> / ${w.magazineSize}</span>
-                </div>${reloadText}`;
+                </div>${reloadText}${grenadeText}`;
         }
 
         // Health — only update DOM when value changes
@@ -549,6 +595,7 @@ export class Game {
             const weaponSelect = document.getElementById('weapon-select');
             const weaponAR = document.getElementById('weapon-ar');
             const weaponSMG = document.getElementById('weapon-smg');
+            const weaponLMG = document.getElementById('weapon-lmg');
 
             if (p.canRespawn()) {
                 timer.textContent = '';
@@ -562,13 +609,18 @@ export class Game {
                 if (this.input.isKeyDown('Digit2')) {
                     p.selectedWeaponId = 'SMG';
                 }
+                if (this.input.isKeyDown('Digit3')) {
+                    p.selectedWeaponId = 'LMG';
+                }
 
                 // Highlight selected weapon
-                const isAR = p.selectedWeaponId === 'AR15';
-                weaponAR.style.borderColor = isAR ? '#4488ff' : '#888';
-                weaponAR.style.background = isAR ? 'rgba(68,136,255,0.15)' : 'transparent';
-                weaponSMG.style.borderColor = isAR ? '#888' : '#4488ff';
-                weaponSMG.style.background = isAR ? 'transparent' : 'rgba(68,136,255,0.15)';
+                const sel = p.selectedWeaponId;
+                weaponAR.style.borderColor = sel === 'AR15' ? '#4488ff' : '#888';
+                weaponAR.style.background = sel === 'AR15' ? 'rgba(68,136,255,0.15)' : 'transparent';
+                weaponSMG.style.borderColor = sel === 'SMG' ? '#4488ff' : '#888';
+                weaponSMG.style.background = sel === 'SMG' ? 'rgba(68,136,255,0.15)' : 'transparent';
+                weaponLMG.style.borderColor = sel === 'LMG' ? '#4488ff' : '#888';
+                weaponLMG.style.background = sel === 'LMG' ? 'rgba(68,136,255,0.15)' : 'transparent';
 
                 if (this.input.isKeyDown('Space')) {
                     const spawnPoints = this.spawnSystem.getSpawnPoints(

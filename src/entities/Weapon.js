@@ -66,7 +66,26 @@ export class Weapon {
         // All parts merged into a single geometry to minimize draw calls
         const geos = [];
 
-        if (this.weaponId === 'SMG') {
+        if (this.weaponId === 'LMG') {
+            // LMG: thick squared body + heavy barrel + drum magazine underneath
+            const stockGeo = new THREE.BoxGeometry(0.05, 0.06, 0.16);
+            stockGeo.translate(0.25, -0.22, -0.05);
+            geos.push(stockGeo);
+
+            const bodyGeo = new THREE.BoxGeometry(0.08, 0.10, 0.55);
+            bodyGeo.translate(0.25, -0.19, -0.40);
+            geos.push(bodyGeo);
+
+            const barrelGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.45, 6);
+            barrelGeo.rotateX(Math.PI / 2);
+            barrelGeo.translate(0.25, -0.16, -0.90);
+            geos.push(barrelGeo);
+
+            // Drum magazine (cylinder underneath)
+            const drumGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.08, 8);
+            drumGeo.translate(0.25, -0.30, -0.38);
+            geos.push(drumGeo);
+        } else if (this.weaponId === 'SMG') {
             const stockGeo = new THREE.BoxGeometry(0.04, 0.05, 0.12);
             stockGeo.translate(0.25, -0.22, -0.09);
             geos.push(stockGeo);
@@ -122,7 +141,8 @@ export class Weapon {
         });
         const flash = new THREE.Mesh(geo, mat);
         flash.visible = false;
-        flash.position.set(0.25, -0.17, this.weaponId === 'SMG' ? -0.63 : -1.225);
+        const muzzleZ = this.weaponId === 'LMG' ? -1.125 : (this.weaponId === 'SMG' ? -0.63 : -1.225);
+        flash.position.set(0.25, -0.17, muzzleZ);
         this.camera.add(flash);
         return flash;
     }
@@ -162,8 +182,12 @@ export class Weapon {
         const euler = new THREE.Euler(spreadAngleY, spreadAngleX, 0, 'YXZ');
         spreadDir.applyEuler(euler);
 
-        // Increase spread (recoil)
-        this.currentSpread = Math.min(this.maxSpread, this.currentSpread + this.spreadIncreasePerShot);
+        // Increase spread (recoil) — negative spreadIncreasePerShot means sustained fire tightens
+        if (this.spreadIncreasePerShot >= 0) {
+            this.currentSpread = Math.min(this.maxSpread, this.currentSpread + this.spreadIncreasePerShot);
+        } else {
+            this.currentSpread = Math.max(this.def.minSpread || 0.001, this.currentSpread + this.spreadIncreasePerShot);
+        }
 
         // Visual recoil kick
         this.recoilOffset = 0.015;
@@ -267,8 +291,13 @@ export class Weapon {
         }
 
         // Spread recovery: only recover when trigger is fully released
+        // Recovery always moves toward baseSpread (up for LMG after sustained fire, down for others)
         if (!this.triggerHeld) {
-            this.currentSpread = Math.max(this.baseSpread, this.currentSpread - this.spreadRecoveryRate * dt);
+            if (this.currentSpread > this.baseSpread) {
+                this.currentSpread = Math.max(this.baseSpread, this.currentSpread - this.spreadRecoveryRate * dt);
+            } else if (this.currentSpread < this.baseSpread) {
+                this.currentSpread = Math.min(this.baseSpread, this.currentSpread + this.spreadRecoveryRate * dt);
+            }
         }
 
         // Muzzle flash timer

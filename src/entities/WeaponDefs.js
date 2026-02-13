@@ -20,6 +20,7 @@ export const WeaponDefs = {
         maxSpread: 0.075,
         spreadIncreasePerShot: 0.004,
         spreadRecoveryRate: 0.4,
+        moveSpeedMult: 1.0,
     },
     GRENADE: {
         name: 'Grenade',
@@ -45,5 +46,24 @@ export const WeaponDefs = {
         maxSpread: 0.10,
         spreadIncreasePerShot: 0.003,
         spreadRecoveryRate: 0.6,
+        moveSpeedMult: 1.0,
+    },
+    LMG: {
+        name: 'LMG',
+        magazineSize: 120,
+        fireRate: 450,
+        reloadTime: 5.0,
+        damage: 20,
+        headshotMultiplier: 2,
+        maxRange: 180,
+        falloffStart: 40,
+        falloffEnd: 130,
+        falloffMinScale: 0.25,
+        baseSpread: 0.016,
+        maxSpread: 0.065,
+        spreadIncreasePerShot: -0.0002,  // negative: sustained fire tightens spread
+        spreadRecoveryRate: 0.15,
+        moveSpeedMult: 0.7,
+        minSpread: 0.008,                // floor for sustained fire tightening
     },
 };
