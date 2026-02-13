@@ -26,7 +26,7 @@ export class Game {
         this.input = new InputManager();
         this.clock = new THREE.Clock();
         this.paused = false;
-        this.gameMode = 'spectator'; // 'spectator' | 'joining' | 'playing'
+        this.gameMode = 'spectator'; // 'spectator' | 'joining' | 'playing' | 'dead'
         this._pendingTeam = null;    // team chosen during 'joining' phase
         this._pendingWeapon = 'AR15';
 
@@ -43,8 +43,9 @@ export class Game {
         this.scene = new THREE.Scene();
         this.scene.fog = new THREE.Fog(0x87CEEB, 100, 300);
 
-        // Camera
+        // Camera (must be in scene so children like gun meshes and muzzle flash are rendered)
         this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 500);
+        this.scene.add(this.camera);
 
         // Lighting
         this._setupLighting();
@@ -100,7 +101,10 @@ export class Game {
 
         // HUD elements
         this._createAllHUD();
-        this._setPlayerHUDVisible(false);
+        // Hide player-specific HUD until game starts (spectator not ready yet)
+        this.ammoHUD.style.display = 'none';
+        this.healthHUD.style.display = 'none';
+        this.crosshair.style.display = 'none';
         this.minimap = new Minimap(this.island.width, this.island.depth);
         this.killFeed = new KillFeed();
 
@@ -122,8 +126,8 @@ export class Game {
             if (document.pointerLockElement) {
                 this.blocker.classList.add('hidden');
             } else {
-                // Don't show blocker during joining screen or when paused
-                if (!this.paused && this.gameMode !== 'joining') {
+                // Only show blocker in spectator/playing modes (not joining/dead/paused)
+                if (!this.paused && (this.gameMode === 'spectator' || this.gameMode === 'playing')) {
                     this.blocker.classList.remove('hidden');
                 }
             }
@@ -249,6 +253,11 @@ export class Game {
                     this._leaveTeam();
                 }
             }
+        } else if (this.gameMode === 'dead') {
+            if (e.code === 'Escape') {
+                e.preventDefault();
+                this._leaveTeam();
+            }
         }
     }
 
@@ -256,11 +265,7 @@ export class Game {
         this._pendingTeam = team;
         this._pendingWeapon = 'AR15';
         this.gameMode = 'joining';
-        // Hide all other overlays
-        this.blocker.classList.add('hidden');
-        this.deathScreen.style.display = 'none';
-        // Show join screen
-        this.joinScreen.style.display = 'flex';
+        this._applyUIState('joining');
         const label = document.getElementById('join-team-label');
         const color = team === 'teamA' ? '#4488ff' : '#ff4444';
         const name = team === 'teamA' ? 'TEAM A' : 'TEAM B';
@@ -269,10 +274,8 @@ export class Game {
 
     _cancelJoin() {
         this.gameMode = 'spectator';
-        this.joinScreen.style.display = 'none';
         this._pendingTeam = null;
-        // Restore blocker
-        this.blocker.classList.remove('hidden');
+        this._applyUIState('spectator');
         this._updateBlockerText();
     }
 
@@ -291,9 +294,6 @@ export class Game {
     }
 
     _joinTeam(team, weaponId) {
-        // Hide join screen
-        this.joinScreen.style.display = 'none';
-
         // Create player if first time
         if (!this.player) {
             this.player = new Player(this.scene, this.camera, this.physics, this.input, this.eventBus);
@@ -336,7 +336,7 @@ export class Game {
         // Switch mode
         this.gameMode = 'playing';
         this.spectator.deactivate();
-        this._setPlayerHUDVisible(true);
+        this._applyUIState('playing');
         this._updateBlockerText();
 
         // Request pointer lock
@@ -359,12 +359,8 @@ export class Game {
         // Switch mode
         this.gameMode = 'spectator';
         this.spectator.activate();
-        this._setPlayerHUDVisible(false);
+        this._applyUIState('spectator');
         this._updateBlockerText();
-        // Hide all overlays
-        this.deathScreen.style.display = 'none';
-        this.joinScreen.style.display = 'none';
-        this.damageIndicator.style.background = 'none';
     }
 
     _updateBlockerText() {
@@ -379,18 +375,85 @@ export class Game {
         }
     }
 
-    _setPlayerHUDVisible(visible) {
-        const display = visible ? 'block' : 'none';
-        if (this.ammoHUD) this.ammoHUD.style.display = display;
-        if (this.healthHUD) this.healthHUD.style.display = display;
-        const crosshair = document.getElementById('crosshair');
-        if (crosshair) crosshair.style.display = display;
+    _applyUIState(state) {
+        // state: 'spectator' | 'joining' | 'playing' | 'dead'
+        const hide = el => { if (el) el.style.display = 'none'; };
+        const show = (el, display = 'block') => { if (el) el.style.display = display; };
+
+        switch (state) {
+            case 'spectator':
+                hide(this.joinScreen);
+                hide(this.deathScreen);
+                hide(this.healthHUD);
+                this.damageIndicator.style.background = 'none';
+                if (this.spectator) this.spectator.hud.show();
+                show(this.keyHints);
+                // blocker depends on pointer lock
+                if (!this.input.isPointerLocked) this.blocker.classList.remove('hidden');
+                // ammoHUD/crosshair managed dynamically in _updateHUD/_updateReloadIndicator
+                // gun model hidden
+                if (this.player && this.player.weapon) {
+                    this.player.weapon.gunGroup.visible = false;
+                    this.player.weapon.muzzleFlash.visible = false;
+                }
+                break;
+
+            case 'joining':
+                this.blocker.classList.add('hidden');
+                hide(this.deathScreen);
+                if (this.spectator) this.spectator.hud.hide();
+                hide(this.ammoHUD);
+                hide(this.healthHUD);
+                hide(this.crosshair);
+                hide(this.reloadIndicator);
+                this.damageIndicator.style.background = 'none';
+                hide(this.keyHints);
+                show(this.joinScreen, 'flex');
+                if (this.player && this.player.weapon) {
+                    this.player.weapon.gunGroup.visible = false;
+                    this.player.weapon.muzzleFlash.visible = false;
+                }
+                break;
+
+            case 'playing':
+                this.blocker.classList.add('hidden');
+                hide(this.joinScreen);
+                hide(this.deathScreen);
+                if (this.spectator) this.spectator.hud.hide();
+                hide(this.keyHints);
+                show(this.ammoHUD);
+                show(this.healthHUD);
+                // crosshair managed by _updateReloadIndicator
+                // gun model visible
+                if (this.player && this.player.weapon) {
+                    this.player.weapon.gunGroup.visible = true;
+                }
+                break;
+
+            case 'dead':
+                this.blocker.classList.add('hidden');
+                hide(this.joinScreen);
+                if (this.spectator) this.spectator.hud.hide();
+                hide(this.ammoHUD);
+                hide(this.healthHUD);
+                hide(this.crosshair);
+                hide(this.reloadIndicator);
+                hide(this.keyHints);
+                this.damageIndicator.style.background = 'none';
+                show(this.deathScreen, 'flex');
+                if (this.player && this.player.weapon) {
+                    this.player.weapon.gunGroup.visible = false;
+                    this.player.weapon.muzzleFlash.visible = false;
+                }
+                break;
+        }
     }
 
     // ───── HUD ─────
 
     _createAllHUD() {
         this._createCrosshair();
+        this._createReloadIndicator();
         this._createAmmoHUD();
         this._createHealthHUD();
         this._createScoreHUD();
@@ -413,6 +476,23 @@ export class Game {
             <line x1="12" y1="10" x2="17" y2="10" stroke="white" stroke-width="2" opacity="0.8"/>
             <circle cx="10" cy="10" r="1" fill="white" opacity="0.6"/></svg>`;
         document.body.appendChild(el);
+        this.crosshair = el;
+    }
+
+    _createReloadIndicator() {
+        const el = document.createElement('div');
+        el.id = 'reload-indicator';
+        el.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+            width:40px;height:40px;pointer-events:none;z-index:100;display:none;`;
+        // SVG circle: radius=16, circumference=2*PI*16≈100.53
+        el.innerHTML = `<svg width="40" height="40" viewBox="0 0 40 40" style="transform:rotate(-90deg)">
+            <circle cx="20" cy="20" r="16" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="3"/>
+            <circle id="reload-arc" cx="20" cy="20" r="16" fill="none" stroke="white" stroke-width="3"
+                stroke-dasharray="100.53" stroke-dashoffset="100.53" stroke-linecap="round" opacity="0.85"/>
+        </svg>`;
+        document.body.appendChild(el);
+        this.reloadIndicator = el;
+        this.reloadArc = null; // lazy-cached
     }
 
     _createAmmoHUD() {
@@ -562,6 +642,44 @@ export class Game {
             '<span style="color:#fff">Esc</span> Leave team',
         ].join('<br>');
         document.body.appendChild(el);
+        this.keyHints = el;
+    }
+
+
+    _updateReloadIndicator() {
+        let isReloading = false;
+        let progress = 0;
+
+        if (this.gameMode === 'playing' && this.player && this.player.alive) {
+            const w = this.player.weapon;
+            if (w.isReloading) {
+                isReloading = true;
+                progress = 1 - w.reloadTimer / w.reloadTime;
+            }
+        } else if (this.gameMode === 'spectator' && this.spectator && this.spectator.mode === 'follow') {
+            const target = this.spectator.getCurrentTarget();
+            if (target && target.controller.isReloading) {
+                isReloading = true;
+                const ctrl = target.controller;
+                progress = 1 - ctrl.reloadTimer / ctrl.reloadTime;
+            }
+        }
+
+        if (isReloading) {
+            // Hide normal crosshair, show reload ring
+            this.crosshair.style.display = 'none';
+            this.reloadIndicator.style.display = 'block';
+            if (!this.reloadArc) this.reloadArc = document.getElementById('reload-arc');
+            // circumference = 2 * PI * 16 ≈ 100.53
+            const circ = 100.53;
+            this.reloadArc.setAttribute('stroke-dashoffset', circ * (1 - progress));
+        } else {
+            this.reloadIndicator.style.display = 'none';
+            // Restore crosshair in playing mode, or spectator follow mode
+            const showCrosshair = this.gameMode === 'playing'
+                || (this.gameMode === 'spectator' && this.spectator && this.spectator.mode === 'follow');
+            this.crosshair.style.display = showCrosshair ? 'block' : 'none';
+        }
     }
 
     _updateHUD() {
@@ -604,6 +722,12 @@ export class Game {
 
         if (!this.player) return;
 
+        // Death screen check (works in both 'playing' and 'dead' states)
+        this._updateDeathScreen();
+
+        // Skip ammo/health updates when dead
+        if (this.gameMode === 'dead') return;
+
         const p = this.player;
         const w = p.weapon;
 
@@ -643,9 +767,6 @@ export class Game {
 
         // Damage direction indicator
         this._updateDamageIndicator();
-
-        // Death screen
-        this._updateDeathScreen();
     }
 
     _updateScoreHUD() {
@@ -667,7 +788,7 @@ export class Game {
     }
 
     _updateDamageIndicator() {
-        if (!this.player) return;
+        if (!this.player || this.gameMode !== 'playing') return;
         const p = this.player;
         if (p.damageIndicatorTimer > 0 && p.lastDamageDirection) {
             const opacity = Math.min(1, p.damageIndicatorTimer) * 0.6;
@@ -692,10 +813,14 @@ export class Game {
     }
 
     _updateDeathScreen() {
-        if (!this.player) return;
+        if (!this.player || (this.gameMode !== 'playing' && this.gameMode !== 'dead')) return;
         const p = this.player;
         if (!p.alive) {
-            this.deathScreen.style.display = 'flex';
+            // Transition to dead state once
+            if (this.gameMode !== 'dead') {
+                this.gameMode = 'dead';
+                this._applyUIState('dead');
+            }
             const timer = document.getElementById('respawn-timer');
             const prompt = document.getElementById('respawn-prompt');
             const weaponSelect = document.getElementById('weapon-select');
@@ -734,6 +859,9 @@ export class Game {
                     );
                     if (spawnPoints.length > 0) {
                         p.respawn(spawnPoints[0].position);
+                        // Transition back to playing
+                        this.gameMode = 'playing';
+                        this._applyUIState('playing');
                     }
                 }
             } else {
@@ -741,8 +869,6 @@ export class Game {
                 prompt.style.display = 'none';
                 weaponSelect.style.display = 'none';
             }
-        } else {
-            this.deathScreen.style.display = 'none';
         }
     }
 
@@ -845,14 +971,12 @@ export class Game {
         for (const s of this.aiManager.teamB.soldiers) allSoldiersBuf.push(s);
         this.grenadeManager.update(dt, allSoldiersBuf, this.player);
 
-        if (this.gameMode === 'spectator') {
+        if (this.gameMode === 'spectator' || this.gameMode === 'joining') {
             // Spectator camera
             this.spectator.update(dt);
-        } else if (this.gameMode === 'playing' && this.player) {
-            // Player update
-            if (this.input.isPointerLocked) {
-                this.player.update(dt);
-            }
+        } else if ((this.gameMode === 'playing' || this.gameMode === 'dead') && this.player) {
+            // Player update — always run (ESC only releases pointer, game continues)
+            this.player.update(dt);
             // Refresh shoot targets
             this._updateShootTargets();
         }
@@ -875,6 +999,7 @@ export class Game {
         // Update HUD
         this._updateScoreHUD();
         this._updateHUD();
+        this._updateReloadIndicator();
         this._updateJoinScreen();
 
         // Update minimap
