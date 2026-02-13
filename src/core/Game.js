@@ -4,6 +4,7 @@ import { PhysicsWorld } from '../systems/PhysicsWorld.js';
 import { InputManager } from './InputManager.js';
 import { EventBus } from './EventBus.js';
 import { Player } from '../entities/Player.js';
+import { WeaponDefs } from '../entities/WeaponDefs.js';
 import { Island } from '../world/Island.js';
 import { CoverSystem } from '../world/CoverSystem.js';
 import { FlagPoint } from '../world/FlagPoint.js';
@@ -25,7 +26,9 @@ export class Game {
         this.input = new InputManager();
         this.clock = new THREE.Clock();
         this.paused = false;
-        this.gameMode = 'spectator'; // 'spectator' | 'playing'
+        this.gameMode = 'spectator'; // 'spectator' | 'joining' | 'playing'
+        this._pendingTeam = null;    // team chosen during 'joining' phase
+        this._pendingWeapon = 'AR15';
 
         // Renderer
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -119,7 +122,10 @@ export class Game {
             if (document.pointerLockElement) {
                 this.blocker.classList.add('hidden');
             } else {
-                if (!this.paused) this.blocker.classList.remove('hidden');
+                // Don't show blocker during joining screen or when paused
+                if (!this.paused && this.gameMode !== 'joining') {
+                    this.blocker.classList.remove('hidden');
+                }
             }
         });
 
@@ -220,9 +226,19 @@ export class Game {
             } else if (e.code === 'KeyV') {
                 this.spectator.toggleView();
             } else if (e.code === 'Digit1') {
-                this._joinTeam('teamA');
+                this._showJoinScreen('teamA');
             } else if (e.code === 'Digit2') {
-                this._joinTeam('teamB');
+                this._showJoinScreen('teamB');
+            }
+        } else if (this.gameMode === 'joining') {
+            // Weapon selection
+            if (e.code === 'Digit1') this._pendingWeapon = 'AR15';
+            else if (e.code === 'Digit2') this._pendingWeapon = 'SMG';
+            else if (e.code === 'Digit3') this._pendingWeapon = 'LMG';
+            else if (e.code === 'Space') {
+                this._joinTeam(this._pendingTeam, this._pendingWeapon);
+            } else if (e.code === 'Escape') {
+                this._cancelJoin();
             }
         } else if (this.gameMode === 'playing') {
             if (e.code === 'Escape') {
@@ -236,7 +252,48 @@ export class Game {
         }
     }
 
-    _joinTeam(team) {
+    _showJoinScreen(team) {
+        this._pendingTeam = team;
+        this._pendingWeapon = 'AR15';
+        this.gameMode = 'joining';
+        // Hide all other overlays
+        this.blocker.classList.add('hidden');
+        this.deathScreen.style.display = 'none';
+        // Show join screen
+        this.joinScreen.style.display = 'flex';
+        const label = document.getElementById('join-team-label');
+        const color = team === 'teamA' ? '#4488ff' : '#ff4444';
+        const name = team === 'teamA' ? 'TEAM A' : 'TEAM B';
+        label.innerHTML = `Joining <span style="color:${color}">${name}</span>`;
+    }
+
+    _cancelJoin() {
+        this.gameMode = 'spectator';
+        this.joinScreen.style.display = 'none';
+        this._pendingTeam = null;
+        // Restore blocker
+        this.blocker.classList.remove('hidden');
+        this._updateBlockerText();
+    }
+
+    _updateJoinScreen() {
+        if (this.gameMode !== 'joining') return;
+        const sel = this._pendingWeapon;
+        const ar = document.getElementById('join-wp-ar');
+        const smg = document.getElementById('join-wp-smg');
+        const lmg = document.getElementById('join-wp-lmg');
+        ar.style.borderColor = sel === 'AR15' ? '#4488ff' : '#888';
+        ar.style.background = sel === 'AR15' ? 'rgba(68,136,255,0.15)' : 'transparent';
+        smg.style.borderColor = sel === 'SMG' ? '#4488ff' : '#888';
+        smg.style.background = sel === 'SMG' ? 'rgba(68,136,255,0.15)' : 'transparent';
+        lmg.style.borderColor = sel === 'LMG' ? '#4488ff' : '#888';
+        lmg.style.background = sel === 'LMG' ? 'rgba(68,136,255,0.15)' : 'transparent';
+    }
+
+    _joinTeam(team, weaponId) {
+        // Hide join screen
+        this.joinScreen.style.display = 'none';
+
         // Create player if first time
         if (!this.player) {
             this.player = new Player(this.scene, this.camera, this.physics, this.input, this.eventBus);
@@ -247,10 +304,21 @@ export class Game {
             this.player.grenadeManager = this.grenadeManager;
         }
 
+        this.player.selectedWeaponId = weaponId || 'AR15';
         this.player.team = team;
         this.player.alive = true;
         this.player.hp = this.player.maxHP;
         this.player.mesh.visible = false; // FPS: own mesh hidden
+
+        // Switch weapon if needed
+        if (this.player.weapon.weaponId !== this.player.selectedWeaponId) {
+            this.player.switchWeapon(this.player.selectedWeaponId);
+        }
+        this.player.weapon.currentAmmo = this.player.weapon.magazineSize;
+        this.player.weapon.isReloading = false;
+        // Apply move speed
+        const mult = WeaponDefs[this.player.selectedWeaponId].moveSpeedMult || 1.0;
+        this.player.moveSpeed = 6 * mult;
 
         // Spawn at team flag
         const spawnFlag = team === 'teamA' ? this.flags[0] : this.flags[this.flags.length - 1];
@@ -293,7 +361,9 @@ export class Game {
         this.spectator.activate();
         this._setPlayerHUDVisible(false);
         this._updateBlockerText();
+        // Hide all overlays
         this.deathScreen.style.display = 'none';
+        this.joinScreen.style.display = 'none';
         this.damageIndicator.style.background = 'none';
     }
 
@@ -325,6 +395,7 @@ export class Game {
         this._createHealthHUD();
         this._createScoreHUD();
         this._createDamageIndicator();
+        this._createJoinScreen();
         this._createDeathScreen();
         this._createGameOverScreen();
         this._createKeyHints();
@@ -382,6 +453,41 @@ export class Game {
             pointer-events:none;z-index:99;`;
         document.body.appendChild(el);
         this.damageIndicator = el;
+    }
+
+    _createJoinScreen() {
+        const el = document.createElement('div');
+        el.id = 'join-screen';
+        el.style.cssText = `position:fixed;top:0;left:0;width:100%;height:100%;
+            background:rgba(0,0,0,0.5);display:none;align-items:center;justify-content:center;
+            flex-direction:column;pointer-events:none;z-index:101;`;
+        el.innerHTML = `
+            <div style="color:white;font-family:Arial,sans-serif;text-align:center;">
+                <div id="join-team-label" style="font-size:28px;font-weight:bold;margin-bottom:16px;"></div>
+                <div style="font-size:14px;color:#aaa;margin-bottom:8px;">Select weapon:</div>
+                <div style="display:flex;gap:16px;justify-content:center;">
+                    <div id="join-wp-ar" style="border:2px solid #4488ff;border-radius:8px;padding:10px 18px;
+                        background:rgba(68,136,255,0.15);cursor:default;min-width:120px;">
+                        <div style="font-size:16px;font-weight:bold;">[1] AR-15</div>
+                        <div style="font-size:12px;color:#aaa;margin-top:4px;">600 RPM &middot; 30 rds</div>
+                    </div>
+                    <div id="join-wp-smg" style="border:2px solid #888;border-radius:8px;padding:10px 18px;
+                        background:transparent;cursor:default;min-width:120px;">
+                        <div style="font-size:16px;font-weight:bold;">[2] SMG</div>
+                        <div style="font-size:12px;color:#aaa;margin-top:4px;">900 RPM &middot; 35 rds</div>
+                    </div>
+                    <div id="join-wp-lmg" style="border:2px solid #888;border-radius:8px;padding:10px 18px;
+                        background:transparent;cursor:default;min-width:120px;">
+                        <div style="font-size:16px;font-weight:bold;">[3] LMG</div>
+                        <div style="font-size:12px;color:#aaa;margin-top:4px;">450 RPM &middot; 120 rds</div>
+                    </div>
+                </div>
+                <div style="font-size:16px;color:#aaa;margin-top:14px;">
+                    Press <b>SPACE</b> to deploy &nbsp; | &nbsp; <b>ESC</b> to cancel
+                </div>
+            </div>`;
+        document.body.appendChild(el);
+        this.joinScreen = el;
     }
 
     _createDeathScreen() {
@@ -769,6 +875,7 @@ export class Game {
         // Update HUD
         this._updateScoreHUD();
         this._updateHUD();
+        this._updateJoinScreen();
 
         // Update minimap
         const playerPos = this.player && this.player.alive ? this.player.getPosition() : null;
