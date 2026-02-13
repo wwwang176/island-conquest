@@ -53,6 +53,9 @@ export class Player {
         this.grenadeManager = null; // set by Game
         this._grenadePrevDown = false;
 
+        // Movement velocity (for grenade velocity inheritance)
+        this.lastMoveVelocity = new THREE.Vector3();
+
         // Damage direction indicator
         this.lastDamageDirection = null;
         this.damageIndicatorTimer = 0;
@@ -144,10 +147,24 @@ export class Player {
         // Grenade cooldown
         if (this.grenadeCooldown > 0) this.grenadeCooldown -= dt;
 
-        this._handleMouseLook();
-        this._handleMovement(dt);
-        this._handleShooting(dt);
-        this._handleGrenade();
+        if (this.input.isPointerLocked) {
+            this._handleMouseLook();
+            const prevX = this.body.position.x;
+            const prevZ = this.body.position.z;
+            this._handleMovement(dt);
+            if (dt > 0.001) {
+                const invDt = 1 / dt;
+                this.lastMoveVelocity.set(
+                    (this.body.position.x - prevX) * invDt,
+                    0,
+                    (this.body.position.z - prevZ) * invDt
+                );
+            } else {
+                this.lastMoveVelocity.set(0, 0, 0);
+            }
+            this._handleShooting(dt);
+            this._handleGrenade();
+        }
         this._syncMeshAndCamera();
         this.weapon.update(dt);
     }
@@ -285,6 +302,7 @@ export class Player {
         const origin = this.camera.position.clone();
         const dir = this.getAimDirection();
         const velocity = dir.multiplyScalar(def.throwSpeed);
+        velocity.add(this.lastMoveVelocity);
 
         this.grenadeManager.spawn(origin, velocity, def.fuseTime, this.team);
         this.grenadeCount--;
