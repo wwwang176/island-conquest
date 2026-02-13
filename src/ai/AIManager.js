@@ -333,15 +333,30 @@ export class AIManager {
      * Search outward from a grid cell for a safe spawn cell.
      * Returns {x, y, z} or null if nothing found within radius.
      */
-    _findSafeCell(centerX, centerZ, threatMap, searchRadius = 30) {
+    _findSafeCell(centerX, centerZ, threatMap, searchRadius = 30, teamIntel = null) {
         if (!this._navGrid) return null;
         const nav = this._navGrid;
         const g = nav.worldToGrid(centerX, centerZ);
         const maxThreat = 0.3;
+        const intelMinDist = 30; // reject cells within 30m of any intel contact
+
+        const _isSafe = (wx, wz, h) => {
+            if (h < 0.3) return false;
+            if (threatMap.getThreat(wx, wz) >= maxThreat) return false;
+            if (teamIntel) {
+                for (const contact of teamIntel.contacts.values()) {
+                    const dx = wx - contact.lastSeenPos.x;
+                    const dz = wz - contact.lastSeenPos.z;
+                    if (dx * dx + dz * dz < intelMinDist * intelMinDist) return false;
+                }
+            }
+            return true;
+        };
+
         // Check center first
         if (nav.isWalkable(g.col, g.row)) {
             const h = this.getHeightAt(centerX, centerZ);
-            if (h >= 0.3 && threatMap.getThreat(centerX, centerZ) < maxThreat) {
+            if (_isSafe(centerX, centerZ, h)) {
                 return { x: centerX, y: h, z: centerZ };
             }
         }
@@ -354,7 +369,7 @@ export class AIManager {
                     if (!nav.isWalkable(nc, nr)) continue;
                     const w = nav.gridToWorld(nc, nr);
                     const h = this.getHeightAt(w.x, w.z);
-                    if (h >= 0.3 && threatMap.getThreat(w.x, w.z) < maxThreat) {
+                    if (_isSafe(w.x, w.z, h)) {
                         return { x: w.x, y: h, z: w.z };
                     }
                 }
@@ -366,6 +381,7 @@ export class AIManager {
     _handleRespawns(soldiers, team) {
         const spawnFlag = team === 'teamA' ? this.flags[0] : this.flags[this.flags.length - 1];
         const threatMap = team === 'teamA' ? this.threatMapA : this.threatMapB;
+        const intel = team === 'teamA' ? this.intelA : this.intelB;
         const teamData = team === 'teamA' ? this.teamA : this.teamB;
 
         for (const soldier of soldiers) {
@@ -401,7 +417,7 @@ export class AIManager {
                 const dist = 5 + Math.random() * 5; // 5-10m offset
                 const cx = anchor.x + Math.cos(angle) * dist;
                 const cz = anchor.z + Math.sin(angle) * dist;
-                const safe = this._findSafeCell(cx, cz, threatMap, 20);
+                const safe = this._findSafeCell(cx, cz, threatMap, 20, intel);
                 if (safe) {
                     spawnPoint = new THREE.Vector3(safe.x, safe.y, safe.z);
                     break;
@@ -413,7 +429,7 @@ export class AIManager {
                 for (let attempt = 0; attempt < 10; attempt++) {
                     const rx = (Math.random() - 0.5) * this._navGrid.width;
                     const rz = (Math.random() - 0.5) * this._navGrid.depth;
-                    const safe = this._findSafeCell(rx, rz, threatMap, 15);
+                    const safe = this._findSafeCell(rx, rz, threatMap, 15, intel);
                     if (safe) {
                         spawnPoint = new THREE.Vector3(safe.x, safe.y, safe.z);
                         break;
