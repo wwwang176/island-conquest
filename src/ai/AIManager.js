@@ -290,10 +290,6 @@ export class AIManager {
             teamAEnemies.push(playerAsEnemy);
         }
 
-        // Update all soldiers base (health regen, mesh sync)
-        for (const s of allA) s.update(dt);
-        for (const s of allB) s.update(dt);
-
         // Staggered AI controller updates: update 8 AIs per frame (BT + movement)
         const updatesPerFrame = 8;
         for (let i = 0; i < updatesPerFrame; i++) {
@@ -319,6 +315,11 @@ export class AIManager {
         // Continuous updates for ALL AIs every frame (aiming + shooting)
         for (const ctrl of this.teamA.controllers) ctrl.updateContinuous(dt);
         for (const ctrl of this.teamB.controllers) ctrl.updateContinuous(dt);
+
+        // Update all soldiers base (health regen, mesh sync) — AFTER movement
+        // so mesh position matches body position for spectator camera
+        for (const s of allA) s.update(dt);
+        for (const s of allB) s.update(dt);
 
         // Respawn dead soldiers
         this._handleRespawns(allA, 'teamA');

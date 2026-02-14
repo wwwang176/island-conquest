@@ -634,7 +634,7 @@ export class Island {
 
             if (h > 0.5 && h < 5) {
                 // Trunk (tapered cylinder, slightly curved via segments)
-                const trunkH = 4 + Math.abs(this.noise.noise2D(x, z)) * 3;
+                const trunkH = 6 + Math.abs(this.noise.noise2D(x, z)) * 4.5;
                 const trunkGeo = new THREE.CylinderGeometry(0.08, 0.18, trunkH, 5, 4);
                 const trunkPos = trunkGeo.attributes.position;
                 const bendX = this.noise.noise2D(x * 10, z * 10) * 0.8;
