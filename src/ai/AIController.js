@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { BTState, Selector, Sequence, Condition, Action } from './BehaviorTree.js';
 import { PersonalityTypes } from './Personality.js';
-import { findFlankPosition, computePreAimPoint, computeSuppressionTarget } from './TacticalActions.js';
+import { findFlankPosition, computePreAimPoint, computeSuppressionTarget, findRidgelineAimPoint } from './TacticalActions.js';
 import { WeaponDefs } from '../entities/WeaponDefs.js';
 
 const _grenadeOrigin = new THREE.Vector3();
@@ -101,6 +101,7 @@ export class AIController {
         // Aim state
         this.aimPoint = new THREE.Vector3();
         this.aimOffset = new THREE.Vector3();
+        this._preAimActive = false;
         this.reactionTimer = 0;
         this.hasReacted = false;
         this.aimCorrectionSpeed = 2 + this.personality.aimSkill * 3;
@@ -874,8 +875,18 @@ export class AIController {
             }
         }
 
-        // Fire at predicted cover edge / last known position
+        // Fire at ridgeline or last known position (with scatter)
         computeSuppressionTarget(contact, this.aimPoint);
+        // Adjust to ridgeline if hill blocks view
+        const myPos2 = this.soldier.getPosition();
+        _v2.set(myPos2.x, myPos2.y + 1.5, myPos2.z);
+        findRidgelineAimPoint(_v2, contact.lastSeenPos, this.getHeightAt, _v1);
+        // If ridgeline is closer than target, aim at ridge + scatter
+        if (_v1.distanceTo(_v2) < this.aimPoint.distanceTo(_v2)) {
+            this.aimPoint.copy(_v1);
+            this.aimPoint.x += (Math.random() - 0.5) * 3;
+            this.aimPoint.z += (Math.random() - 0.5) * 3;
+        }
         this.aimOffset.set(0, 0, 0);
         this.hasReacted = true; // allow shooting
 
@@ -1385,6 +1396,7 @@ export class AIController {
         }
 
         // Update facing: pre-aim nearest intel contact, or fall back to movement direction
+        this._preAimActive = false;
         if (!this.targetEnemy || !this.targetEnemy.alive) {
             let preAimed = false;
             if (this.teamIntel) {
@@ -1402,6 +1414,11 @@ export class AIController {
                     _v2.subVectors(nearest.lastSeenPos, myPos).normalize();
                     _v2.y = 0;
                     this.facingDir.lerp(_v2, 0.12).normalize();
+                    // Set aimPoint — aim at ridgeline if hill blocks view
+                    const eyeY = myPos.y + 1.5;
+                    _v2.set(myPos.x, eyeY, myPos.z);
+                    findRidgelineAimPoint(_v2, nearest.lastSeenPos, this.getHeightAt, this.aimPoint);
+                    this._preAimActive = true;
                     preAimed = true;
                 }
             }
@@ -1625,6 +1642,9 @@ export class AIController {
                     }
                     const headshot = hitChar.point.y >= enemy.body.position.y + 1.45;
                     const result = enemy.takeDamage(dmg, myPos, headshot);
+                    if (this.eventBus) {
+                        this.eventBus.emit('aiHit', { soldier: this.soldier, killed: result.killed });
+                    }
                     if (result.killed && this.eventBus) {
                         const vTeam = enemy.team || (this.team === 'teamA' ? 'teamB' : 'teamA');
                         this.eventBus.emit('kill', {
@@ -1912,10 +1932,20 @@ export class AIController {
         const soldier = this.soldier;
         const myPos = soldier.getPosition();
 
-        // Upper body faces aiming direction (facingDir)
+        // Upper body faces aiming direction (facingDir) + pitch
         const aimAngle = Math.atan2(-this.facingDir.x, -this.facingDir.z);
         if (soldier.upperBody) {
             soldier.upperBody.rotation.y = aimAngle;
+            // Compute pitch toward aimPoint when engaging or pre-aiming
+            let targetPitch = 0;
+            if ((this.targetEnemy && this.targetEnemy.alive && this.hasReacted) || this._preAimActive) {
+                const dx = this.aimPoint.x - myPos.x;
+                const dy = this.aimPoint.y - (myPos.y + 1.5);
+                const dz = this.aimPoint.z - myPos.z;
+                const hDist = Math.sqrt(dx * dx + dz * dz);
+                if (hDist > 0.1) targetPitch = -Math.atan2(dy, hDist);
+            }
+            soldier.upperBody.rotation.x += (targetPitch - soldier.upperBody.rotation.x) * 0.15;
         }
 
         // Lower body faces movement direction

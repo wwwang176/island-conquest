@@ -78,6 +78,71 @@ export function computePreAimPoint(contact, out) {
 }
 
 /**
+ * Find the ridgeline aim point between eyePos and targetPos.
+ * Scans terrain along the XZ line and returns the point with the highest
+ * elevation angle from the eye — i.e. the hilltop where an enemy would appear.
+ * If no terrain blocks the view, returns the target position + bodyHeight.
+ * @param {THREE.Vector3} eyePos - COM eye position (world)
+ * @param {THREE.Vector3} targetPos - contact last seen position (world)
+ * @param {Function} getHeightAt - terrain height lookup (x, z) → y
+ * @param {THREE.Vector3} out - output vector (mutated in place)
+ * @returns {THREE.Vector3} out
+ */
+export function findRidgelineAimPoint(eyePos, targetPos, getHeightAt, out) {
+    const dx = targetPos.x - eyePos.x;
+    const dz = targetPos.z - eyePos.z;
+    const hDist = Math.sqrt(dx * dx + dz * dz);
+
+    if (hDist < 3) {
+        // Too close — just aim at target chest height
+        out.copy(targetPos);
+        out.y += 1.2;
+        return out;
+    }
+
+    const step = 5; // sample every 5m
+    const steps = Math.min(Math.floor(hDist / step), 30);
+    const invDist = 1 / hDist;
+    const dirX = dx * invDist;
+    const dirZ = dz * invDist;
+
+    // Find terrain point that protrudes most above the eye→target line of sight
+    const eyeY = eyePos.y;
+    const targetY = targetPos.y + 1.2;
+    let bestExcess = 0; // how far terrain pokes above line of sight
+    let bestX = 0;
+    let bestZ = 0;
+    let bestH = 0;
+
+    for (let i = 1; i <= steps; i++) {
+        const t = i * step;
+        const sx = eyePos.x + dirX * t;
+        const sz = eyePos.z + dirZ * t;
+        const h = getHeightAt(sx, sz);
+        // Line of sight height at this distance
+        const losY = eyeY + (targetY - eyeY) * (t / hDist);
+        const excess = h - losY;
+        if (excess > bestExcess) {
+            bestExcess = excess;
+            bestX = sx;
+            bestZ = sz;
+            bestH = h;
+        }
+    }
+
+    if (bestExcess > 0.3) {
+        // Ridge blocks line of sight — aim at terrain crest (no body height)
+        out.set(bestX, bestH, bestZ);
+    } else {
+        // Clear line of sight — aim at target chest height
+        out.copy(targetPos);
+        out.y += 1.2;
+    }
+
+    return out;
+}
+
+/**
  * Compute suppression target: last known position + random scatter.
  * @param {object} contact - TeamIntel contact
  * @param {THREE.Vector3} out - output vector (mutated in place)

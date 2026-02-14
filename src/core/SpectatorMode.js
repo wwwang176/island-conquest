@@ -143,9 +143,9 @@ export class SpectatorMode {
         // Yaw from facing direction (camera faces -Z, so negate)
         const yaw = Math.atan2(-controller.facingDir.x, -controller.facingDir.z);
 
-        // Pitch from aim point (if aiming at enemy)
+        // Pitch from aim point (if aiming at enemy or pre-aiming intel contact)
         let pitch = 0;
-        if (controller.targetEnemy && controller.hasReacted) {
+        if ((controller.targetEnemy && controller.hasReacted) || controller._preAimActive) {
             const aimTarget = controller.aimPoint;
             const dx = aimTarget.x - headPos.x;
             const dy = aimTarget.y - headPos.y;
