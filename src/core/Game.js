@@ -878,11 +878,9 @@ export class Game {
                 weaponLMG.style.background = sel === 'LMG' ? 'rgba(68,136,255,0.15)' : 'transparent';
 
                 if (this.input.isKeyDown('Space')) {
-                    const spawnPoints = this.spawnSystem.getSpawnPoints(
-                        p.team, [], (x, z) => this.island.getHeightAt(x, z)
-                    );
-                    if (spawnPoints.length > 0) {
-                        p.respawn(spawnPoints[0].position);
+                    const spawnPos = this.aiManager.findSafeSpawn(p.team);
+                    if (spawnPos) {
+                        p.respawn(spawnPos);
                         // Transition back to playing
                         this.gameMode = 'playing';
                         this._applyUIState('playing');

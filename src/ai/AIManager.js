@@ -379,6 +379,66 @@ export class AIManager {
         return null;
     }
 
+    /**
+     * Find a safe spawn point for a given team (used by player respawn).
+     * Same logic as COM respawn: anchors → safe cell → random fallback.
+     * @param {string} team
+     * @returns {THREE.Vector3|null}
+     */
+    findSafeSpawn(team) {
+        const spawnFlag = team === 'teamA' ? this.flags[0] : this.flags[this.flags.length - 1];
+        const threatMap = team === 'teamA' ? this.threatMapA : this.threatMapB;
+        const intel = team === 'teamA' ? this.intelA : this.intelB;
+        const teamData = team === 'teamA' ? this.teamA : this.teamB;
+
+        const anchors = [];
+        const basePos = spawnFlag.position;
+        const now = performance.now();
+
+        // Owned flags (most forward first)
+        const ownedFlags = this.flags
+            .filter(f => f.owner === team)
+            .sort((a, b) => b.position.distanceTo(basePos) - a.position.distanceTo(basePos));
+        for (const flag of ownedFlags) anchors.push(flag.position);
+
+        // Safe allies
+        for (const ally of teamData.soldiers) {
+            if (!ally.alive) continue;
+            const allyPos = ally.getPosition();
+            if (threatMap.getThreat(allyPos.x, allyPos.z) >= 0.3) continue;
+            if (now - ally.lastDamagedTime < 10000) continue;
+            anchors.push(allyPos);
+        }
+
+        // Try each anchor
+        for (const anchor of anchors) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist = 5 + Math.random() * 5;
+            const cx = anchor.x + Math.cos(angle) * dist;
+            const cz = anchor.z + Math.sin(angle) * dist;
+            const safe = this._findSafeCell(cx, cz, threatMap, 20, intel);
+            if (safe) return new THREE.Vector3(safe.x, safe.y, safe.z);
+        }
+
+        // Random safe spot
+        if (this._navGrid) {
+            for (let attempt = 0; attempt < 10; attempt++) {
+                const rx = (Math.random() - 0.5) * this._navGrid.width;
+                const rz = (Math.random() - 0.5) * this._navGrid.depth;
+                const safe = this._findSafeCell(rx, rz, threatMap, 15, intel);
+                if (safe) return new THREE.Vector3(safe.x, safe.y, safe.z);
+            }
+        }
+
+        // Last resort: base flag area
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 10 + Math.random() * 5;
+        const x = spawnFlag.position.x + Math.cos(angle) * dist;
+        const z = spawnFlag.position.z + Math.sin(angle) * dist;
+        const y = this.getHeightAt(x, z);
+        return new THREE.Vector3(x, Math.max(y, 1), z);
+    }
+
     _handleRespawns(soldiers, team) {
         const spawnFlag = team === 'teamA' ? this.flags[0] : this.flags[this.flags.length - 1];
         const threatMap = team === 'teamA' ? this.threatMapA : this.threatMapB;
