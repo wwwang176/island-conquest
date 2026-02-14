@@ -1636,6 +1636,7 @@ export class AIController {
 
             for (const enemy of this.enemies) {
                 if (!enemy.alive) continue;
+                if (this._playerMesh && enemy.mesh === this._playerMesh) continue;
                 if (this._isChildOf(hitChar.object, enemy.mesh)) {
                     if (this.impactVFX) {
                         this.impactVFX.spawn('blood', hitChar.point, _v1.copy(dir).negate());

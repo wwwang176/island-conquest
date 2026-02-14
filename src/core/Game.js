@@ -95,6 +95,9 @@ export class Game {
         this._threatVisState = 0; // 0=off, 1=teamA, 2=teamB
         this._intelVisState = 0; // 0=off, 1=teamA, 2=teamB
 
+        // KD stats for scoreboard
+        this._kdStats = new Map(); // key: name ("A-0","B-5","You"), value: {kills,deaths,team,weapon}
+
         // FPS stats panel
         this.stats = new Stats();
         this.stats.showPanel(0); // 0 = FPS
@@ -138,6 +141,11 @@ export class Game {
 
         // Key listeners for mode switching
         document.addEventListener('keydown', (e) => this._onGlobalKey(e));
+        document.addEventListener('keyup', (e) => {
+            if (e.code === 'Tab' && this.scoreboard) {
+                this.scoreboard.style.display = 'none';
+            }
+        });
 
         // Resize
         window.addEventListener('resize', () => this._onResize());
@@ -203,6 +211,16 @@ export class Game {
     _onGlobalKey(e) {
         if (this.paused || !this._ready) return;
 
+        // Scoreboard (hold TAB) — works in any mode
+        if (e.code === 'Tab') {
+            e.preventDefault();
+            if (this.scoreboard) {
+                this._updateScoreboard();
+                this.scoreboard.style.display = 'flex';
+            }
+            return;
+        }
+
         // Threat map visualization toggle (works in any mode)
         if (e.code === 'KeyT') {
             this._threatVisState = (this._threatVisState + 1) % 3;
@@ -234,8 +252,7 @@ export class Game {
         }
 
         if (this.gameMode === 'spectator') {
-            if (e.code === 'Tab') {
-                e.preventDefault();
+            if (e.code === 'KeyQ') {
                 this.spectator.nextTarget();
             } else if (e.code === 'KeyV') {
                 this.spectator.toggleView();
@@ -394,6 +411,7 @@ export class Game {
             case 'spectator':
                 hide(this.joinScreen);
                 hide(this.deathScreen);
+                hide(this.scoreboard);
                 hide(this.healthHUD);
                 this.damageIndicator.style.background = 'none';
                 if (this.spectator) this.spectator.hud.show();
@@ -411,6 +429,7 @@ export class Game {
             case 'joining':
                 this.blocker.classList.add('hidden');
                 hide(this.deathScreen);
+                hide(this.scoreboard);
                 if (this.spectator) this.spectator.hud.hide();
                 hide(this.ammoHUD);
                 hide(this.healthHUD);
@@ -429,6 +448,7 @@ export class Game {
                 this.blocker.classList.add('hidden');
                 hide(this.joinScreen);
                 hide(this.deathScreen);
+                hide(this.scoreboard);
                 if (this.spectator) this.spectator.hud.hide();
                 hide(this.keyHints);
                 show(this.ammoHUD);
@@ -443,6 +463,7 @@ export class Game {
             case 'dead':
                 this.blocker.classList.add('hidden');
                 hide(this.joinScreen);
+                hide(this.scoreboard);
                 if (this.spectator) this.spectator.hud.hide();
                 hide(this.ammoHUD);
                 hide(this.healthHUD);
@@ -472,6 +493,7 @@ export class Game {
         this._createDeathScreen();
         this._createGameOverScreen();
         this._createKeyHints();
+        this._createScoreboard();
     }
 
     _createCrosshair() {
@@ -660,7 +682,7 @@ export class Game {
             '<span style="color:#fff">P</span> A* paths',
             '<span style="color:#fff">I</span> Intel contacts',
             '<span style="color:#fff">N</span> Tactic labels',
-            '<span style="color:#fff">Tab</span> Next COM',
+            '<span style="color:#fff">Q</span> Next COM',
             '<span style="color:#fff">V</span> Camera mode',
             '<span style="color:#fff">1/2</span> Join team',
             '<span style="color:#fff">Esc</span> Leave team',
@@ -669,6 +691,93 @@ export class Game {
         this.keyHints = el;
     }
 
+
+    _createScoreboard() {
+        const el = document.createElement('div');
+        el.id = 'scoreboard';
+        el.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+            background:rgba(0,0,0,0.8);border-radius:10px;padding:20px 28px;
+            display:none;align-items:flex-start;gap:32px;
+            pointer-events:none;z-index:150;font-family:Consolas,monospace;
+            min-width:600px;backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,0.1);`;
+        el.innerHTML = `
+            <div id="sb-teamA" style="flex:1;min-width:260px;"></div>
+            <div style="width:1px;background:rgba(255,255,255,0.15);align-self:stretch;"></div>
+            <div id="sb-teamB" style="flex:1;min-width:260px;"></div>`;
+        document.body.appendChild(el);
+        this.scoreboard = el;
+    }
+
+    _updateScoreboard() {
+        // Ensure every soldier has an entry
+        const ensureEntry = (name, team) => {
+            if (!this._kdStats.has(name))
+                this._kdStats.set(name, { kills: 0, deaths: 0, team, weapon: '' });
+        };
+
+        // Register all AI soldiers
+        if (this.aiManager.teamA) {
+            for (const s of this.aiManager.teamA.soldiers) {
+                const name = `A-${s.id}`;
+                ensureEntry(name, 'teamA');
+                // Update weapon from controller
+                if (s.controller) this._kdStats.get(name).weapon = s.controller.weaponId || '';
+            }
+        }
+        if (this.aiManager.teamB) {
+            for (const s of this.aiManager.teamB.soldiers) {
+                const name = `B-${s.id}`;
+                ensureEntry(name, 'teamB');
+                if (s.controller) this._kdStats.get(name).weapon = s.controller.weaponId || '';
+            }
+        }
+        // Register player
+        if (this.player && this.player.team) {
+            ensureEntry('You', this.player.team);
+            this._kdStats.get('You').team = this.player.team;
+            this._kdStats.get('You').weapon = this.player.weapon ? this.player.weapon.weaponId : '';
+        }
+
+        // Split into teams and sort by kills desc
+        const teamA = [];
+        const teamB = [];
+        for (const [name, stat] of this._kdStats) {
+            const entry = { name, ...stat };
+            if (stat.team === 'teamA') teamA.push(entry);
+            else teamB.push(entry);
+        }
+        teamA.sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+        teamB.sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+
+        const renderTeam = (entries, teamColor, teamLabel) => {
+            let totalK = 0, totalD = 0;
+            for (const e of entries) { totalK += e.kills; totalD += e.deaths; }
+            let html = `<div style="color:${teamColor};font-weight:bold;font-size:16px;margin-bottom:8px;text-align:center;">${teamLabel}</div>`;
+            html += `<div style="display:flex;color:#888;font-size:11px;padding:2px 6px;border-bottom:1px solid rgba(255,255,255,0.1);margin-bottom:2px;">
+                <span style="flex:1">Name</span><span style="width:30px;text-align:center">K</span>
+                <span style="width:30px;text-align:center">D</span><span style="width:50px;text-align:right">Wpn</span></div>`;
+            for (const e of entries) {
+                const isPlayer = e.name === 'You';
+                const bg = isPlayer ? 'rgba(255,255,255,0.1)' : 'transparent';
+                const nameColor = isPlayer ? '#fff' : 'rgba(255,255,255,0.75)';
+                const wpn = e.weapon || '-';
+                html += `<div style="display:flex;font-size:12px;padding:2px 6px;background:${bg};border-radius:2px;">
+                    <span style="flex:1;color:${nameColor};font-weight:${isPlayer ? 'bold' : 'normal'}">${e.name}</span>
+                    <span style="width:30px;text-align:center;color:#ccc">${e.kills}</span>
+                    <span style="width:30px;text-align:center;color:#ccc">${e.deaths}</span>
+                    <span style="width:50px;text-align:right;color:#888;font-size:11px">${wpn}</span></div>`;
+            }
+            html += `<div style="display:flex;font-size:12px;padding:4px 6px;margin-top:4px;border-top:1px solid rgba(255,255,255,0.1);color:#aaa;">
+                <span style="flex:1;font-weight:bold">Total</span>
+                <span style="width:30px;text-align:center">${totalK}</span>
+                <span style="width:30px;text-align:center">${totalD}</span>
+                <span style="width:50px"></span></div>`;
+            return html;
+        };
+
+        document.getElementById('sb-teamA').innerHTML = renderTeam(teamA, '#4488ff', 'TEAM A');
+        document.getElementById('sb-teamB').innerHTML = renderTeam(teamB, '#ff4444', 'TEAM B');
+    }
 
     _updateReloadIndicator() {
         let isReloading = false;
@@ -948,6 +1057,14 @@ export class Game {
 
     _onKill(data) {
         this.killFeed.addKill(data.killerName, data.killerTeam, data.victimName, data.victimTeam, data.headshot, data.weapon);
+        // Track KD stats
+        if (!this._kdStats.has(data.killerName))
+            this._kdStats.set(data.killerName, { kills: 0, deaths: 0, team: data.killerTeam, weapon: data.weapon });
+        if (!this._kdStats.has(data.victimName))
+            this._kdStats.set(data.victimName, { kills: 0, deaths: 0, team: data.victimTeam, weapon: '' });
+        this._kdStats.get(data.killerName).kills++;
+        this._kdStats.get(data.killerName).weapon = data.weapon;
+        this._kdStats.get(data.victimName).deaths++;
     }
 
     _onAIHit(data) {

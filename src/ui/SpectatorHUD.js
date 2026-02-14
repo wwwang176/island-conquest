@@ -34,7 +34,7 @@ export class SpectatorHUD {
         const hints = document.createElement('div');
         hints.style.cssText = `position:absolute;bottom:40px;left:50%;transform:translateX(-50%);
             color:rgba(255,255,255,0.5);font-size:12px;text-align:center;`;
-        hints.innerHTML = '[Tab] Next &nbsp; [V] View &nbsp; [1] Team A &nbsp; [2] Team B';
+        hints.innerHTML = '[Q] Next &nbsp; [V] View &nbsp; [1] Team A &nbsp; [2] Team B';
         wrap.appendChild(hints);
 
         document.body.appendChild(wrap);
