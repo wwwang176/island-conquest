@@ -231,6 +231,11 @@ export class Game {
         // Debug arc toggle
         if (e.code === 'KeyP') {
             AIController.debugArcs = !AIController.debugArcs;
+            if (!AIController.debugArcs) {
+                for (const ctrl of [...this.aiManager.teamA.controllers, ...this.aiManager.teamB.controllers]) {
+                    if (ctrl._debugArc) ctrl._debugArc.visible = false;
+                }
+            }
         }
 
         // Intel contacts visualization toggle
