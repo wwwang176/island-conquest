@@ -84,21 +84,23 @@ export class FlagPoint {
         this.label.position.y = 7;
         this.group.add(this.label);
 
-        // Progress bar background
+        // Progress bar container (billboarded as a unit)
+        this.progressBarContainer = new THREE.Group();
+        this.progressBarContainer.position.y = 6.5;
+        this.group.add(this.progressBarContainer);
+
+        // Progress bar background (shrinks from right as capture progresses)
         const barBgGeo = new THREE.PlaneGeometry(2.5, 0.25);
         const barBgMat = new THREE.MeshBasicMaterial({ color: 0x333333, transparent: true, opacity: 0.7, side: THREE.DoubleSide });
         this.progressBarBg = new THREE.Mesh(barBgGeo, barBgMat);
-        this.progressBarBg.position.y = 6.5;
-        this.group.add(this.progressBarBg);
+        this.progressBarContainer.add(this.progressBarBg);
 
-        // Progress bar fill
+        // Progress bar fill (grows from left as capture progresses)
         const barFillGeo = new THREE.PlaneGeometry(2.5, 0.25);
         this.progressBarFillMat = new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
         this.progressBarFill = new THREE.Mesh(barFillGeo, this.progressBarFillMat);
-        this.progressBarFill.position.y = 6.5;
-        this.progressBarFill.position.z = 0.01;
         this.progressBarFill.scale.x = 0;
-        this.group.add(this.progressBarFill);
+        this.progressBarContainer.add(this.progressBarFill);
     }
 
     /** Build a ring geometry that conforms to terrain height. */
@@ -215,7 +217,8 @@ export class FlagPoint {
      * @param {Array} teamBSoldiers - positions of team B soldiers
      * @param {number} dt - delta time
      */
-    update(teamASoldiers, teamBSoldiers, dt) {
+    update(teamASoldiers, teamBSoldiers, dt, camera) {
+        this._camera = camera;
         // Count soldiers in capture radius
         const aCount = this._countInRadius(teamASoldiers);
         const bCount = this._countInRadius(teamBSoldiers);
@@ -282,25 +285,40 @@ export class FlagPoint {
         this.fillMat.color.setHex(ownerColor);
         this.fillMat.opacity = this.owner !== 'neutral' ? 0.15 : 0.08;
 
-        // Progress bar
-        if (this.captureProgress > 0 && this.captureProgress < 1 && this.owner !== this.capturingTeam) {
-            this.progressBarBg.visible = true;
-            this.progressBarFill.visible = true;
-            this.progressBarFill.scale.x = this.captureProgress;
-            this.progressBarFill.position.x = -(1 - this.captureProgress) * 1.25;
+        // Progress bar: fill grows from left, bg shrinks from right
+        const p = this.captureProgress;
+        if (p > 0 && p < 1 && this.owner !== this.capturingTeam) {
+            this.progressBarContainer.visible = true;
+            // Fill (team color): scale = progress, shift left so it grows rightward
+            this.progressBarFill.scale.x = p;
+            this.progressBarFill.position.x = -(1 - p) * 1.25;
             this.progressBarFillMat.color.setHex(capColor);
+            // Bg (dark): scale = remaining, shift right
+            this.progressBarBg.scale.x = 1 - p;
+            this.progressBarBg.position.x = p * 1.25;
         } else {
-            this.progressBarBg.visible = false;
-            this.progressBarFill.visible = false;
+            this.progressBarContainer.visible = false;
         }
 
-        // Make label and progress bar face camera (billboarding handled by Sprite for label)
-        // Progress bar needs manual billboarding
-        this.progressBarBg.lookAt(
-            this.progressBarBg.getWorldPosition(_flagWorldPos).add(
-                _flagLookDir.set(0, 0, 1).applyQuaternion(this.scene.children[0]?.quaternion || _defaultQuat)
-            )
-        );
+        // Billboard: orbit container toward camera
+        if (this._camera) {
+            const cam = this._camera;
+            const dx = cam.position.x - this.group.position.x;
+            const dz = cam.position.z - this.group.position.z;
+            const len = Math.sqrt(dx * dx + dz * dz);
+            if (len > 0.01) {
+                const nx = dx / len;
+                const nz = dz / len;
+                this.progressBarContainer.position.x = nx * 0.15;
+                this.progressBarContainer.position.z = nz * 0.15;
+            }
+            // Ensure parent world matrix is current before lookAt
+            this.group.updateWorldMatrix(true, false);
+            const cWX = this.group.position.x + this.progressBarContainer.position.x;
+            const cWZ = this.group.position.z + this.progressBarContainer.position.z;
+            const cWY = this.group.position.y + this.progressBarContainer.position.y;
+            this.progressBarContainer.lookAt(2 * cWX - cam.position.x, cWY, 2 * cWZ - cam.position.z);
+        }
     }
 
     getOwner() {

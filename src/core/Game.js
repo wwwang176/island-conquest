@@ -1063,7 +1063,7 @@ export class Game {
             else teamBPositions.push(playerPos);
         }
         for (const flag of this.flags) {
-            flag.update(teamAPositions, teamBPositions, dt);
+            flag.update(teamAPositions, teamBPositions, dt, this.camera);
         }
 
         // Update scores
