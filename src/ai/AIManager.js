@@ -9,7 +9,7 @@ import { ThreatMap } from './ThreatMap.js';
 
 /**
  * Manages all AI soldiers for both teams.
- * Creates 12 COMs per team (4 squads × 3), assigns personalities.
+ * Creates 15 COMs per team (5 squads × 3), assigns personalities.
  */
 export class AIManager {
     constructor(scene, physicsWorld, flags, coverSystem, getHeightAt, eventBus) {
@@ -290,8 +290,8 @@ export class AIManager {
             teamAEnemies.push(playerAsEnemy);
         }
 
-        // Staggered AI controller updates: update 8 AIs per frame (BT + movement)
-        const updatesPerFrame = 8;
+        // Staggered AI controller updates: update 10 AIs per frame (BT + movement)
+        const updatesPerFrame = 10;
         for (let i = 0; i < updatesPerFrame; i++) {
             const idx = (this.updateIndex + i) % this.totalAI;
 

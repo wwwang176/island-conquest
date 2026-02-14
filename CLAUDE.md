@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Island Conquest** — a single-player 3D FPS flag-capture game running entirely in the browser. Two AI teams (12 soldiers each, 4 squads × 3) fight over 5 flag points on a procedurally generated tropical island. The player can spectate or join either team.
+**Island Conquest** — a single-player 3D FPS flag-capture game running entirely in the browser. Two AI teams (15 soldiers each, 5 squads × 3) fight over 5 flag points on a procedurally generated tropical island. The player can spectate or join either team.
 
 ## Development
 
@@ -36,7 +36,7 @@ Then open `http://localhost:8080`.
 ### Key Patterns
 
 - **EventBus** for decoupled communication (`kill`, `gameOver`, `playerDied`, `playerHit`, `aiFired`). Systems subscribe in constructors.
-- **Staggered AI updates**: AI soldiers update in round-robin batches across frames to stay within per-frame budget (not all 24 each frame).
+- **Staggered AI updates**: AI soldiers update in round-robin batches across frames to stay within per-frame budget (not all 30 each frame).
 - **NavGrid built in Web Worker** at startup (`Island.buildNavGridAsync()` → `navgrid-worker.js`), then handed to `AIManager`.
 - **Hitscan shooting**: both player and AI use `THREE.Raycaster` against `island.collidables` + soldier meshes. No projectile simulation.
 - **Soldier is the shared base** for both Player and AI COMs. Player adds FPS camera control; AI adds AIController with behavior tree.

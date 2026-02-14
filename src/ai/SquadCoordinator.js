@@ -5,7 +5,7 @@ const _formationPos = new THREE.Vector3();
 
 /**
  * Coordinates a squad of AI controllers toward shared objectives.
- * One per squad (8 total across 2 teams).
+ * One per squad (10 total across 2 teams).
  */
 export class SquadCoordinator {
     constructor(name, controllers, teamIntel, flags, team, strategy = 'secure') {
@@ -14,14 +14,16 @@ export class SquadCoordinator {
         this.teamIntel = teamIntel;
         this.flags = flags;
         this.team = team;
-        this.strategy = strategy; // 'push' = far enemy flags, 'secure' = nearest flags
+        this.strategy = strategy; // 'push' = far enemy flags, 'secure' = nearest flags, 'raid' = hunt undefended
 
         this.objective = null; // target flag
         this.evalTimer = 0;
-        // Secure squads re-evaluate faster to respond to threats
-        this.evalInterval = strategy === 'secure'
-            ? 3 + Math.random() * 2    // 3-5s
-            : 8 + Math.random() * 4;   // 8-12s
+        // Raid squads re-evaluate fastest; secure squads faster than push
+        this.evalInterval = strategy === 'raid'
+            ? 2 + Math.random() * 2    // 2-4s
+            : strategy === 'secure'
+                ? 3 + Math.random() * 2    // 3-5s
+                : 8 + Math.random() * 4;   // 8-12s
 
         // Fallback state
         this.fallbackFlag = null;
@@ -246,7 +248,11 @@ export class SquadCoordinator {
 
         const captainPos = captain.soldier.getPosition();
 
-        if (this.strategy === 'push') {
+        if (this.strategy === 'raid') {
+            // ── Raid: hunt undefended flags, fallback to push ──
+            const undefended = this._pickUndefendedFlag(captainPos);
+            this.objective = undefended || this._pickNearestNonOwned(captainPos);
+        } else if (this.strategy === 'push') {
             // ── Push: always rush the nearest non-owned flag ──
             this.objective = this._pickNearestNonOwned(captainPos);
         } else {
@@ -259,6 +265,31 @@ export class SquadCoordinator {
                 this.objective = this._pickNearestNonOwned(captainPos);
             }
         }
+    }
+
+    /**
+     * Pick the nearest non-owned flag that has no known enemies nearby.
+     * Returns null if every non-owned flag is defended.
+     */
+    _pickUndefendedFlag(fromPos) {
+        let bestFlag = null;
+        let bestDist = Infinity;
+        for (const flag of this.flags) {
+            if (flag.owner === this.team) continue;
+            // Check for enemies within 30m of the flag
+            const enemies = this.teamIntel.getKnownEnemies({
+                minConfidence: 0.3,
+                maxDist: 30,
+                fromPos: flag.position,
+            });
+            if (enemies.length > 0) continue; // defended — skip
+            const d = fromPos.distanceTo(flag.position);
+            if (d < bestDist) {
+                bestDist = d;
+                bestFlag = flag;
+            }
+        }
+        return bestFlag;
     }
 
     /**
@@ -329,9 +360,11 @@ export class SquadCoordinator {
         this.evalTimer += dt;
         if (this.evalTimer >= this.evalInterval) {
             this.evalTimer = 0;
-            this.evalInterval = this.strategy === 'secure'
-                ? 3 + Math.random() * 2
-                : 8 + Math.random() * 4;
+            this.evalInterval = this.strategy === 'raid'
+                ? 2 + Math.random() * 2
+                : this.strategy === 'secure'
+                    ? 3 + Math.random() * 2
+                    : 8 + Math.random() * 4;
             this._evaluateObjective();
         }
 
@@ -359,7 +392,7 @@ export class SquadCoordinator {
         // ── Rush trigger ──
         // Underdog (flagDeficit >= 2): secure squads also rush, 1 alive enough, lower ammo threshold
         const isUnderdog = flagDeficit >= 2;
-        const canRush = this.strategy === 'push' || isUnderdog;
+        const canRush = this.strategy === 'push' || this.strategy === 'raid' || isUnderdog;
         if (canRush && !this.rushTarget && !this.fallbackFlag && this.objective) {
             const minAlive = isUnderdog ? 1 : 2;
             const minAmmo = isUnderdog ? 0.3 : 0.5;

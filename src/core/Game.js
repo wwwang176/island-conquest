@@ -79,7 +79,7 @@ export class Game {
         // Impact particle VFX
         this.impactVFX = new ImpactVFX(this.scene, (x, z) => this.island.getHeightAt(x, z));
 
-        // AI Manager (24 COMs total: 12 per team)
+        // AI Manager (30 COMs total: 15 per team)
         this.aiManager = new AIManager(
             this.scene, this.physics, this.flags, this.coverSystem,
             (x, z) => this.island.getHeightAt(x, z),

@@ -12,11 +12,13 @@ export const PersonalityTypes = {
     CAPTAIN:  { name: 'Captain',  attack: 0.6, defend: 0.4, riskThreshold: 0.60, spatialCaution: 0.5,  aimSkill: 0.8, reactionTime: 180, suppressDuration: 3, tacticalReloadThreshold: 0.40 },
 };
 
-/** Squad templates: 4 squads × 3 members per team.
- *  strategy: 'push' = prefer distant enemy flags, 'secure' = prefer nearest uncaptured flags. */
+/** Squad templates: 5 squads × 3 members per team.
+ *  strategy: 'push' = prefer distant enemy flags, 'secure' = prefer nearest uncaptured flags,
+ *            'raid' = hunt undefended flags, fallback to push. */
 export const SquadTemplates = [
     { name: 'Alpha',   roles: ['CAPTAIN', 'SUPPORT', 'RUSHER'],  strategy: 'push' },
     { name: 'Bravo',   roles: ['CAPTAIN', 'FLANKER', 'SUPPORT'], strategy: 'secure' },
     { name: 'Charlie', roles: ['CAPTAIN', 'DEFENDER', 'SNIPER'], strategy: 'secure' },
     { name: 'Delta',   roles: ['CAPTAIN', 'RUSHER', 'FLANKER'],  strategy: 'push' },
+    { name: 'Echo',    roles: ['RUSHER', 'FLANKER', 'RUSHER'],   strategy: 'raid' },
 ];
