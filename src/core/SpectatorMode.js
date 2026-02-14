@@ -32,6 +32,9 @@ export class SpectatorMode {
         this._lerpPitch = 0;
         this._initialized = false;
 
+        // Death freeze: hold camera still before switching
+        this._deathFreezeTimer = 0;
+
         this.hud = new SpectatorHUD();
         this.active = false;
     }
@@ -75,10 +78,9 @@ export class SpectatorMode {
             const idx = this.targets.findIndex(t => t.soldier === this._trackedSoldier);
             if (idx >= 0) {
                 this.targetIndex = idx;
-            } else {
-                // Tracked soldier died — stay at clamped index
-                this._trackedSoldier = null;
-                if (this.targetIndex >= this.targets.length) this.targetIndex = 0;
+            } else if (this._deathFreezeTimer <= 0) {
+                // Tracked soldier died — freeze camera, then switch after delay
+                this._deathFreezeTimer = 1.0;
             }
         }
     }
@@ -131,6 +133,17 @@ export class SpectatorMode {
     }
 
     _updateFollow(dt) {
+        // Death freeze: hold camera still, then switch target
+        if (this._deathFreezeTimer > 0) {
+            this._deathFreezeTimer -= dt;
+            if (this._deathFreezeTimer <= 0) {
+                this._trackedSoldier = null;
+                if (this.targetIndex >= this.targets.length) this.targetIndex = 0;
+                this._initialized = false;
+            }
+            return;
+        }
+
         const target = this.getCurrentTarget();
         if (!target) return;
 
