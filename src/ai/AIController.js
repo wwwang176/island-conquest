@@ -1760,6 +1760,8 @@ export class AIController {
         this._engageTimer = 0;
         this._lastEngageEnemy = null;
         this._grenadeTargetPos = null;
+        // Reset visual state
+        this._smoothAimPitch = 0;
         // Reset jump state
         this.isJumping = false;
         this.jumpVelY = 0;
@@ -1937,15 +1939,21 @@ export class AIController {
         if (soldier.upperBody) {
             soldier.upperBody.rotation.y = aimAngle;
             // Compute pitch toward aimPoint when engaging or pre-aiming
-            let targetPitch = 0;
-            if ((this.targetEnemy && this.targetEnemy.alive && this.hasReacted) || this._preAimActive) {
-                const dx = this.aimPoint.x - myPos.x;
-                const dy = this.aimPoint.y - (myPos.y + 1.5);
-                const dz = this.aimPoint.z - myPos.z;
-                const hDist = Math.sqrt(dx * dx + dz * dz);
-                if (hDist > 0.1) targetPitch = -Math.atan2(dy, hDist);
+            // Pitch only the shoulder pivot (arms + gun), torso stays upright
+            if (soldier.shoulderPivot) {
+                let targetPitch = 0;
+                if ((this.targetEnemy && this.targetEnemy.alive && this.hasReacted) || this._preAimActive) {
+                    const dx = this.aimPoint.x - myPos.x;
+                    const dy = this.aimPoint.y - (myPos.y + 1.35);
+                    const dz = this.aimPoint.z - myPos.z;
+                    const hDist = Math.sqrt(dx * dx + dz * dz);
+                    if (hDist > 0.1) targetPitch = Math.atan2(dy, hDist);
+                }
+                // Smooth aim pitch independently, then add reload tilt
+                if (this._smoothAimPitch === undefined) this._smoothAimPitch = 0;
+                this._smoothAimPitch += (targetPitch - this._smoothAimPitch) * 0.15;
+                soldier.shoulderPivot.rotation.x = this._smoothAimPitch + (soldier._gunReloadTilt || 0);
             }
-            soldier.upperBody.rotation.x += (targetPitch - soldier.upperBody.rotation.x) * 0.15;
         }
 
         // Lower body faces movement direction

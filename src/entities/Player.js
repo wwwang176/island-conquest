@@ -25,7 +25,7 @@ export class Player {
 
         // Settings
         this.moveSpeed = 6;
-        this.jumpSpeed = 5;
+        this.jumpSpeed = 4;
         this.mouseSensitivity = 0.002;
         this.cameraHeight = 1.6;
 
@@ -104,9 +104,6 @@ export class Player {
         // Remove old weapon visuals
         this.camera.remove(this.weapon.gunGroup);
         this.camera.remove(this.weapon.muzzleFlash);
-        for (const impact of this.weapon.impactPool) {
-            this.scene.remove(impact);
-        }
 
         // Create new weapon
         const tracerSystem = this.weapon.tracerSystem;

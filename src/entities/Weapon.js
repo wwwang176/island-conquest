@@ -47,11 +47,6 @@ export class Weapon {
         this.muzzleFlash = this._createMuzzleFlash();
         this.muzzleFlashTimer = 0;
 
-        // Visual: bullet impacts pool
-        this.impactPool = [];
-        this.maxImpacts = 20;
-        this._initImpactPool();
-
         // Gun mesh (simple low-poly representation)
         this.gunGroup = this._createGunMesh();
         this.camera.add(this.gunGroup);
@@ -143,18 +138,6 @@ export class Weapon {
         return flash;
     }
 
-    _initImpactPool() {
-        const geo = new THREE.SphereGeometry(0.06, 4, 4);
-        const mat = new THREE.MeshBasicMaterial({ color: 0xffff44, transparent: true });
-        for (let i = 0; i < this.maxImpacts; i++) {
-            const mesh = new THREE.Mesh(geo, mat.clone());
-            mesh.visible = false;
-            mesh.userData.life = 0;
-            this.scene.add(mesh);
-            this.impactPool.push(mesh);
-        }
-        this.impactIndex = 0;
-    }
 
     /**
      * Fire the weapon. Returns hit info or null.
@@ -199,8 +182,6 @@ export class Weapon {
 
         if (intersections.length > 0) {
             const hit = intersections[0];
-            this._showImpact(hit.point);
-
             // Impact particles
             if (this.impactVFX) {
                 const surfaceType = this._getSurfaceType(hit.object);
@@ -262,15 +243,6 @@ export class Weapon {
         return 'terrain';
     }
 
-    _showImpact(point) {
-        const impact = this.impactPool[this.impactIndex];
-        this.impactIndex = (this.impactIndex + 1) % this.maxImpacts;
-        impact.position.copy(point);
-        impact.visible = true;
-        impact.material.opacity = 1.0;
-        impact.userData.life = 0.5; // seconds
-    }
-
     update(dt) {
         // Fire cooldown
         if (this.fireCooldown > 0) {
@@ -308,8 +280,8 @@ export class Weapon {
         if (this.recoilOffset > 0) {
             this.recoilOffset = Math.max(0, this.recoilOffset - this.recoilRecoverySpeed * dt);
         }
-        // Gun reload tilt: barrel points down, pivot at shoulder
-        const targetTilt = this.isReloading ? 0.8 : 0;
+        // Gun reload tilt: arms raise up 45° during reload
+        const targetTilt = this.isReloading ? 0.785 : 0;
         if (this._reloadTilt === undefined) this._reloadTilt = 0;
         const tiltSpeed = this.isReloading ? 12 : 8; // faster going down, slower coming back
         this._reloadTilt += (targetTilt - this._reloadTilt) * Math.min(1, tiltSpeed * dt);
@@ -317,17 +289,6 @@ export class Weapon {
         if (this.gunGroup) {
             this.gunGroup.position.z = -this.recoilOffset;
             this.gunGroup.rotation.x = this._reloadTilt;
-        }
-
-        // Impact pool fade
-        for (const impact of this.impactPool) {
-            if (impact.visible && impact.userData.life > 0) {
-                impact.userData.life -= dt;
-                impact.material.opacity = Math.max(0, impact.userData.life / 0.5);
-                if (impact.userData.life <= 0) {
-                    impact.visible = false;
-                }
-            }
         }
 
         // Auto-reload when empty

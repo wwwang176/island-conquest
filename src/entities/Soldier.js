@@ -105,7 +105,7 @@ export class Soldier {
 
         group.add(lowerBody);
 
-        // ── Upper body (torso + head + arms merged into one mesh) ──
+        // ── Upper body (torso + head merged, arms separate for pitch) ──
         const upperBody = new THREE.Group();
 
         // Build individual geometries, bake transforms, assign vertex colors
@@ -121,44 +121,60 @@ export class Soldier {
         headGeo.translate(0, 1.575, 0);
         this._setGeometryVertexColor(headGeo, skinColor);
 
-        // Right arm — bake group transform (position + rotation) into geometry
+        // Merge torso + head
+        const torsoHeadGeo = mergeGeometries([torsoGeo, headGeo]);
+        torsoGeo.dispose(); headGeo.dispose();
+
+        const torsoHeadMesh = new THREE.Mesh(
+            torsoHeadGeo,
+            new THREE.MeshLambertMaterial({ vertexColors: true })
+        );
+        torsoHeadMesh.castShadow = true;
+        upperBody.add(torsoHeadMesh);
+
+        // ── Shoulder pivot (arms + gun pitch here) ──
+        const shoulderPivot = new THREE.Group();
+        shoulderPivot.position.y = 1.35; // shoulder height
+        upperBody.add(shoulderPivot);
+
+        // Right arm — positions relative to shoulder pivot (subtract pivot Y)
         const rightArmGeo = new THREE.BoxGeometry(0.15, 0.4, 0.15);
-        rightArmGeo.translate(0, -0.2, 0); // local offset within group
+        rightArmGeo.translate(0, -0.2, 0);
         const raMatrix = new THREE.Matrix4();
         raMatrix.compose(
-            new THREE.Vector3(0.2, 1.35, 0),
+            new THREE.Vector3(0.2, 0, 0), // y=0 relative to pivot
             new THREE.Quaternion().setFromEuler(new THREE.Euler(1.1, 0, 0)),
             new THREE.Vector3(1, 1, 1)
         );
         rightArmGeo.applyMatrix4(raMatrix);
         this._setGeometryVertexColor(rightArmGeo, limbColor);
 
-        // Left arm — bake group transform
+        // Left arm
         const leftArmGeo = new THREE.BoxGeometry(0.15, 0.55, 0.15);
         leftArmGeo.translate(0, -0.275, 0);
         const laMatrix = new THREE.Matrix4();
         laMatrix.compose(
-            new THREE.Vector3(-0.2, 1.35, 0),
+            new THREE.Vector3(-0.2, 0, 0), // y=0 relative to pivot
             new THREE.Quaternion().setFromEuler(new THREE.Euler(1.2, 0, 0.5)),
             new THREE.Vector3(1, 1, 1)
         );
         leftArmGeo.applyMatrix4(laMatrix);
         this._setGeometryVertexColor(leftArmGeo, limbColor);
 
-        // Merge all 4 into one geometry
-        const mergedUpperGeo = mergeGeometries([torsoGeo, headGeo, rightArmGeo, leftArmGeo]);
-        torsoGeo.dispose(); headGeo.dispose(); rightArmGeo.dispose(); leftArmGeo.dispose();
+        // Merge arms
+        const armsGeo = mergeGeometries([rightArmGeo, leftArmGeo]);
+        rightArmGeo.dispose(); leftArmGeo.dispose();
 
-        const upperMesh = new THREE.Mesh(
-            mergedUpperGeo,
+        const armsMesh = new THREE.Mesh(
+            armsGeo,
             new THREE.MeshLambertMaterial({ vertexColors: true })
         );
-        upperMesh.castShadow = true;
-        upperBody.add(upperMesh);
+        armsMesh.castShadow = true;
+        shoulderPivot.add(armsMesh);
 
         // Gun — placeholder, replaced by setWeaponModel()
         this.gunMesh = null;
-        this._gunParent = upperBody;
+        this._gunParent = shoulderPivot;
         this._gunReloadTilt = 0;
         this._createGunMesh('AR15');
 
@@ -166,6 +182,7 @@ export class Soldier {
 
         // Store references for animation
         this.upperBody = upperBody;
+        this.shoulderPivot = shoulderPivot;
         this.lowerBody = lowerBody;
         this.leftLeg = leftLeg;
         this.rightLeg = rightLeg;
@@ -233,7 +250,7 @@ export class Soldier {
         for (const g of geos) g.dispose();
 
         const gun = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ color: 0x333333 }));
-        gun.position.set(0.05, 1.3, -0.45);
+        gun.position.set(0.05, -0.05, -0.45);
         gun.castShadow = false;
 
         this._gunParent.add(gun);
@@ -402,6 +419,7 @@ export class Soldier {
 
         // Reset body part rotations
         if (this.upperBody) this.upperBody.rotation.set(0, 0, 0);
+        if (this.shoulderPivot) this.shoulderPivot.rotation.set(0, 0, 0);
         if (this.lowerBody) this.lowerBody.rotation.set(0, 0, 0);
         if (this.leftLeg) this.leftLeg.rotation.set(0, 0, 0);
         if (this.rightLeg) this.rightLeg.rotation.set(0, 0, 0);
@@ -493,12 +511,11 @@ export class Soldier {
             this.damageIndicatorTimer -= dt;
         }
 
-        // Gun reload tilt animation
-        if (this.gunMesh && this.controller) {
-            const targetTilt = this.controller.isReloading ? 0.6 : 0;
+        // Reload tilt animation (tracked here, applied to shoulderPivot in AIController)
+        if (this.controller) {
+            const targetTilt = this.controller.isReloading ? 0.785 : 0;
             const tiltSpeed = this.controller.isReloading ? 12 : 8;
             this._gunReloadTilt += (targetTilt - this._gunReloadTilt) * Math.min(1, tiltSpeed * dt);
-            this.gunMesh.rotation.x = this._gunReloadTilt;
         }
 
         // Sync mesh to physics body position

@@ -36,7 +36,7 @@ export const WeaponDefs = {
         magazineSize: 35,
         fireRate: 900,
         reloadTime: 2.0,
-        damage: 15,
+        damage: 18,
         headshotMultiplier: 2,
         maxRange: 120,
         falloffStart: 25,
@@ -46,7 +46,7 @@ export const WeaponDefs = {
         maxSpread: 0.10,
         spreadIncreasePerShot: 0.003,
         spreadRecoveryRate: 0.6,
-        moveSpeedMult: 1.0,
+        moveSpeedMult: 1.15,
     },
     LMG: {
         name: 'LMG',
@@ -59,11 +59,11 @@ export const WeaponDefs = {
         falloffStart: 40,
         falloffEnd: 130,
         falloffMinScale: 0.25,
-        baseSpread: 0.016,
-        maxSpread: 0.065,
-        spreadIncreasePerShot: -0.0002,  // negative: sustained fire tightens spread
-        spreadRecoveryRate: 0.15,
+        baseSpread: 0.024,
+        maxSpread: 0.0975,
+        spreadIncreasePerShot: -0.0003,  // negative: sustained fire tightens spread
+        spreadRecoveryRate: 0.225,
         moveSpeedMult: 0.7,
-        minSpread: 0.008,                // floor for sustained fire tightening
+        minSpread: 0.012,                // floor for sustained fire tightening
     },
 };
