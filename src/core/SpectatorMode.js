@@ -104,6 +104,7 @@ export class SpectatorMode {
         } else {
             this.mode = 'follow';
             this._initialized = false;
+            this._deathFreezeTimer = 0;
             this.hud.setFollowMode();
         }
     }
