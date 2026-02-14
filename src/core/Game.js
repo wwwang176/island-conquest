@@ -741,6 +741,7 @@ export class Game {
             }
             // Clear cached values when switching away
             this._lastAmmo = undefined;
+            this._updateDamageIndicator();
             return;
         }
 
@@ -812,16 +813,31 @@ export class Game {
     }
 
     _updateDamageIndicator() {
-        if (!this.player || this.gameMode !== 'playing') return;
-        const p = this.player;
-        if (p.damageIndicatorTimer > 0 && p.lastDamageDirection) {
-            const opacity = Math.min(1, p.damageIndicatorTimer) * 0.6;
+        let timer = 0;
+        let dmgDir = null;
+        let camYaw = 0;
+
+        if (this.gameMode === 'playing' && this.player) {
+            timer = this.player.damageIndicatorTimer;
+            dmgDir = this.player.lastDamageDirection;
+            camYaw = this.player.yaw;
+        } else if ((this.gameMode === 'spectator' || this.gameMode === 'joining') &&
+                   this.spectator.mode === 'follow') {
+            const target = this.spectator.getCurrentTarget();
+            if (target) {
+                timer = target.soldier.damageIndicatorTimer;
+                dmgDir = target.soldier.lastDamageDirection;
+                camYaw = this.spectator._lerpYaw;
+            }
+        }
+
+        if (timer > 0 && dmgDir) {
+            const opacity = Math.min(1, timer) * 0.6;
 
             const forward = new THREE.Vector3(0, 0, -1);
-            const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.yaw);
+            const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), camYaw);
             forward.applyQuaternion(yawQuat);
 
-            const dmgDir = p.lastDamageDirection;
             const angle = Math.atan2(dmgDir.x, dmgDir.z) - Math.atan2(forward.x, forward.z);
 
             const gradAngle = (-angle * 180 / Math.PI + 90);
