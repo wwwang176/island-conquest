@@ -15,7 +15,10 @@ export class Island {
         this.coverSystem = coverSystem;
         this.noise = new Noise(seed);
 
-        // Island dimensions
+        // Decide flag layout before setting dimensions
+        this._flagLayout = Math.random() < 0.33 ? '1-3-1' : 'linear';
+
+        // Island dimensions (fixed regardless of layout)
         this.width = 300;
         this.depth = 120;
         this.segW = 150;    // terrain mesh resolution
@@ -36,6 +39,8 @@ export class Island {
 
         this._generateTerrain();
         this._generateWater();
+        // Cache flag positions early so cover generation can use them
+        this._flagPositionsCache = this.getFlagPositions();
         this._generateCovers();
         this._generateVegetation();
     }
@@ -118,8 +123,11 @@ export class Island {
         const nz = z / this.depth;
 
         // Island mask: ellipse falloff so edges go underwater
-        const ex = (x / (this.width * 0.45));
-        const ez = (z / (this.depth * 0.40));
+        // 1-3-1 layout uses wider Z falloff to create more land for spread flags
+        const exScale = this._flagLayout === '1-3-1' ? 0.35 : 0.45;
+        const ex = (x / (this.width * exScale));
+        const ezScale = this._flagLayout === '1-3-1' ? 0.48 : 0.40;
+        const ez = (z / (this.depth * ezScale));
         const distFromCenter = ex * ex + ez * ez;
         const islandMask = Math.max(0, 1 - distFromCenter);
         const smoothMask = islandMask * islandMask * (3 - 2 * islandMask); // smoothstep
@@ -127,8 +135,9 @@ export class Island {
         // Base terrain noise
         const base = this.noise.fbm(nx * 3, nz * 3, 4, 2, 0.5);
 
-        // Ridge in the center (higher elevation)
-        const centerRidge = Math.exp(-ez * ez * 2) * 0.4;
+        // Ridge in the center (higher elevation) — wider for 1-3-1
+        const ridgeWidth = 2.0;
+        const centerRidge = Math.exp(-ez * ez * ridgeWidth) * 0.4;
 
         // Detail noise
         const detail = this.noise.fbm(nx * 8 + 100, nz * 8 + 100, 3, 2, 0.4) * 0.3;
@@ -288,22 +297,43 @@ export class Island {
         this._wallGeos = [];
 
         // Place covers along the map, clustered around flag positions
-        // Flag positions are at linear intervals along X axis
-        const flagXPositions = this._getFlagXPositions();
+        const flagPositions = this._flagPositionsCache;
 
         // Generate cover clusters near each flag area
-        for (let fi = 0; fi < flagXPositions.length; fi++) {
-            const fx = flagXPositions[fi];
-            this._placeCoverCluster(fx, 0, 14 + Math.floor(this.noise.noise2D(fx * 0.1, fi) * 4 + 4));
+        for (let fi = 0; fi < flagPositions.length; fi++) {
+            const fp = flagPositions[fi];
+            this._placeCoverCluster(fp.x, fp.z, 14 + Math.floor(this.noise.noise2D(fp.x * 0.1, fi) * 4 + 4));
         }
 
         // Additional covers between flags
-        for (let fi = 0; fi < flagXPositions.length - 1; fi++) {
-            const midX = (flagXPositions[fi] + flagXPositions[fi + 1]) / 2;
-            this._placeCoverCluster(midX, 0, 10 + Math.floor(this.noise.noise2D(midX * 0.1, 50) * 4));
-            // Extra clusters offset in Z for wider coverage
-            this._placeCoverCluster(midX, 15, 5 + Math.floor(this.noise.noise2D(midX * 0.1, 70) * 3));
-            this._placeCoverCluster(midX, -15, 5 + Math.floor(this.noise.noise2D(midX * 0.1, 90) * 3));
+        if (this._flagLayout === '1-3-1') {
+            // Cover corridors from each base to all 3 center flags
+            const bases = [flagPositions[0], flagPositions[4]];
+            const centers = [flagPositions[1], flagPositions[2], flagPositions[3]];
+            for (const base of bases) {
+                for (const center of centers) {
+                    const midX = (base.x + center.x) / 2;
+                    const midZ = (base.z + center.z) / 2;
+                    this._placeCoverCluster(midX, midZ, 8 + Math.floor(this.noise.noise2D(midX * 0.1, midZ * 0.1) * 4));
+                }
+            }
+            // Cover between the 3 center flags
+            for (let i = 0; i < centers.length - 1; i++) {
+                const a = centers[i], b = centers[i + 1];
+                const midX = (a.x + b.x) / 2;
+                const midZ = (a.z + b.z) / 2;
+                this._placeCoverCluster(midX, midZ, 8 + Math.floor(this.noise.noise2D(midX * 0.1, 50) * 3));
+            }
+        } else {
+            for (let fi = 0; fi < flagPositions.length - 1; fi++) {
+                const a = flagPositions[fi], b = flagPositions[fi + 1];
+                const midX = (a.x + b.x) / 2;
+                const midZ = (a.z + b.z) / 2;
+                this._placeCoverCluster(midX, midZ, 10 + Math.floor(this.noise.noise2D(midX * 0.1, 50) * 4));
+                // Extra clusters offset in Z for wider coverage
+                this._placeCoverCluster(midX, midZ + 15, 5 + Math.floor(this.noise.noise2D(midX * 0.1, 70) * 3));
+                this._placeCoverCluster(midX, midZ - 15, 5 + Math.floor(this.noise.noise2D(midX * 0.1, 90) * 3));
+            }
         }
 
         // Scatter some random covers across the map
@@ -326,20 +356,48 @@ export class Island {
         return Array.from({ length: 5 }, (_, i) => startX + i * spacing);
     }
 
-    getFlagPositions() {
-        return this._getFlagXPositions().map(fx => {
-            // Find a suitable Z near center, on land
-            let bestZ = 0;
-            let bestH = -Infinity;
-            for (let z = -10; z <= 10; z += 2) {
-                const h = this.getHeightAt(fx, z);
-                if (h > bestH && h > 0.5) {
-                    bestH = h;
-                    bestZ = z;
-                }
+    /**
+     * Find highest land point near (targetX, targetZ).
+     * scanAxis: 'z' scans Z ±10m (linear flags), 'x' scans X ±10m (1-3-1 center flags).
+     */
+    _findFlagPos(targetX, targetZ, scanAxis = 'z') {
+        let bestX = targetX, bestZ = targetZ;
+        let bestH = -Infinity;
+        for (let offset = -10; offset <= 10; offset += 2) {
+            const x = scanAxis === 'x' ? targetX + offset : targetX;
+            const z = scanAxis === 'z' ? targetZ + offset : targetZ;
+            const h = this.getHeightAt(x, z);
+            if (h > bestH && h > 0.5) {
+                bestH = h;
+                bestX = x;
+                bestZ = z;
             }
-            return new THREE.Vector3(fx, Math.max(bestH, 1), bestZ);
-        });
+        }
+        return new THREE.Vector3(bestX, Math.max(bestH, 1), bestZ);
+    }
+
+    getFlagPositions() {
+        // Return cached positions if already generated
+        if (this._flagPositionsCache) return this._flagPositionsCache;
+
+        const xPositions = this._getFlagXPositions();
+
+        if (this._flagLayout === '1-3-1') {
+            const midX = xPositions[2]; // center X for the 3 vertical flags
+            const zSpread = 40;
+            const baseLeft = (xPositions[0] + xPositions[1]) / 2;   // -78.75
+            const baseRight = (xPositions[3] + xPositions[4]) / 2; // +78.75
+            return [
+                this._findFlagPos(baseLeft, 0),                      // A — left base (scan Z)
+                this._findFlagPos(midX, -zSpread, 'x'),             // B — center-north (scan X)
+                this._findFlagPos(midX, 0, 'x'),                    // C — center-mid (scan X)
+                this._findFlagPos(midX, zSpread, 'x'),              // D — center-south (scan X)
+                this._findFlagPos(baseRight, 0),                     // E — right base (scan Z)
+            ];
+        }
+
+        // Default: 5 linear flags
+        return xPositions.map(fx => this._findFlagPos(fx, 0));
     }
 
     _placeCoverCluster(cx, cz, count) {

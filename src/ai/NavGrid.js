@@ -260,7 +260,7 @@ export class NavGrid {
         fCost[startIdx] = this._heuristic(sc, sr, gc, gr);
 
         let iterations = 0;
-        const maxIter = 60000;
+        const maxIter = 120000;
 
         while (heap.length > 0 && iterations < maxIter) {
             iterations++;
