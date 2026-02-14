@@ -250,7 +250,7 @@ export class Soldier {
      * @param {number} speed — current movement speed (0 = idle)
      */
     animateWalk(dt, speed) {
-        const swingFreq = 8;       // radians per second
+        const swingFreq = 10.4;    // radians per second (8 * 1.3)
         const legSwingMax = 0.6;   // max leg rotation (radians)
 
         if (speed > 0.3) {
