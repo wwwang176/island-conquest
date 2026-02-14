@@ -59,7 +59,7 @@ function _lerpAngle(a, b, t) {
  */
 export class AIController {
     static debugArcs = false;
-    static showTacLabels = true;
+    static showTacLabels = false;
 
     constructor(soldier, personality, team, flags, getHeightAt, coverSystem, teamIntel, eventBus) {
         this.soldier = soldier;
