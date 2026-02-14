@@ -115,6 +115,8 @@ export class Game {
         this.eventBus.on('playerHit', (hit) => this._onPlayerHit(hit));
         this.eventBus.on('kill', (data) => this._onKill(data));
         this.eventBus.on('aiFired', (data) => this._onAIFired(data));
+        this.eventBus.on('aiHit', (data) => this._onAIHit(data));
+        this.eventBus.on('grenadeDamage', (data) => this._onGrenadeDamage(data));
 
         // Blocker / pointer lock — show loading state
         this.blocker = document.getElementById('blocker');
@@ -476,15 +478,29 @@ export class Game {
         const el = document.createElement('div');
         el.id = 'crosshair';
         el.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
-            width:20px;height:20px;pointer-events:none;z-index:100;`;
-        el.innerHTML = `<svg width="20" height="20" viewBox="0 0 20 20">
-            <line x1="10" y1="3" x2="10" y2="8" stroke="white" stroke-width="2" opacity="0.8"/>
-            <line x1="10" y1="12" x2="10" y2="17" stroke="white" stroke-width="2" opacity="0.8"/>
-            <line x1="3" y1="10" x2="8" y2="10" stroke="white" stroke-width="2" opacity="0.8"/>
-            <line x1="12" y1="10" x2="17" y2="10" stroke="white" stroke-width="2" opacity="0.8"/>
-            <circle cx="10" cy="10" r="1" fill="white" opacity="0.6"/></svg>`;
+            width:30px;height:30px;pointer-events:none;z-index:100;`;
+        el.innerHTML = `<svg width="30" height="30" viewBox="0 0 20 20">
+            <line x1="10" y1="3" x2="10" y2="8" stroke="white" stroke-width="1.2" opacity="0.8"/>
+            <line x1="10" y1="12" x2="10" y2="17" stroke="white" stroke-width="1.2" opacity="0.8"/>
+            <line x1="3" y1="10" x2="8" y2="10" stroke="white" stroke-width="1.2" opacity="0.8"/>
+            <line x1="12" y1="10" x2="17" y2="10" stroke="white" stroke-width="1.2" opacity="0.8"/>
+            <circle cx="10" cy="10" r="0.8" fill="white" opacity="0.6"/></svg>`;
         document.body.appendChild(el);
         this.crosshair = el;
+
+        // Hit marker (X shape, 45° rotated crosshair)
+        const hm = document.createElement('div');
+        hm.id = 'hit-marker';
+        hm.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(45deg);
+            width:30px;height:30px;pointer-events:none;z-index:101;display:none;`;
+        hm.innerHTML = `<svg width="30" height="30" viewBox="0 0 20 20">
+            <line x1="10" y1="2" x2="10" y2="7" stroke="white" stroke-width="1.5"/>
+            <line x1="10" y1="13" x2="10" y2="18" stroke="white" stroke-width="1.5"/>
+            <line x1="2" y1="10" x2="7" y2="10" stroke="white" stroke-width="1.5"/>
+            <line x1="13" y1="10" x2="18" y2="10" stroke="white" stroke-width="1.5"/></svg>`;
+        document.body.appendChild(hm);
+        this.hitMarker = hm;
+        this._hitMarkerTimer = 0;
     }
 
     _createReloadIndicator() {
@@ -899,6 +915,7 @@ export class Game {
                 }
                 const headshot = hit.point.y >= soldier.body.position.y + 1.45;
                 const result = soldier.takeDamage(hit.damage, this.player.getPosition(), headshot);
+                this._showHitMarker();
                 if (result.killed) {
                     this.eventBus.emit('kill', {
                         killerName: 'You',
@@ -917,6 +934,51 @@ export class Game {
 
     _onKill(data) {
         this.killFeed.addKill(data.killerName, data.killerTeam, data.victimName, data.victimTeam, data.headshot, data.weapon);
+    }
+
+    _onAIHit(data) {
+        // Show hit marker when spectating the COM that scored the hit
+        if (this.gameMode === 'spectator' && this.spectator && this.spectator.mode === 'follow') {
+            const target = this.spectator.getCurrentTarget();
+            if (target && target.soldier === data.soldier) {
+                this._showHitMarker();
+            }
+        }
+    }
+
+    _onGrenadeDamage(data) {
+        // Player's grenade hit
+        if (this.gameMode === 'playing' && data.throwerName === 'You') {
+            this._showHitMarker();
+            return;
+        }
+        // Spectated COM's grenade hit
+        if (this.gameMode === 'spectator' && this.spectator && this.spectator.mode === 'follow') {
+            const target = this.spectator.getCurrentTarget();
+            if (target) {
+                const comName = `${target.soldier.team === 'teamA' ? 'A' : 'B'}-${target.soldier.id}`;
+                if (data.throwerName === comName) {
+                    this._showHitMarker();
+                }
+            }
+        }
+    }
+
+    _showHitMarker() {
+        this._hitMarkerTimer = 0.15;
+        this.hitMarker.style.display = 'block';
+        this.hitMarker.style.opacity = '1';
+    }
+
+    _updateHitMarker(dt) {
+        if (this._hitMarkerTimer > 0) {
+            this._hitMarkerTimer -= dt;
+            if (this._hitMarkerTimer <= 0) {
+                this.hitMarker.style.display = 'none';
+            } else {
+                this.hitMarker.style.opacity = String(Math.min(1, this._hitMarkerTimer / 0.08));
+            }
+        }
     }
 
     _onAIFired(data) {
@@ -1013,6 +1075,7 @@ export class Game {
         this._updateScoreHUD();
         this._updateHUD();
         this._updateReloadIndicator();
+        this._updateHitMarker(dt);
         this._updateJoinScreen();
 
         // Update minimap

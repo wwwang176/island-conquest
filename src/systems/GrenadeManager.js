@@ -63,11 +63,14 @@ export class GrenadeManager {
         }
 
         // Damage living enemies + push ALL ragdolls (both teams)
+        let enemyHitCount = 0;
         for (const soldier of allSoldiers) {
             if (soldier.alive) {
                 if (soldier.team !== throwerTeam) {
+                    const hpBefore = soldier.hp;
                     const wasAlive = soldier.alive;
                     this._applyBlastDamage(pos, soldier, def);
+                    if (soldier.hp < hpBefore) enemyHitCount++;
                     if (wasAlive && !soldier.alive && this.eventBus) {
                         const vTeam = soldier.team;
                         this.eventBus.emit('kill', {
@@ -103,6 +106,9 @@ export class GrenadeManager {
 
         if (this.eventBus) {
             this.eventBus.emit('grenadeExploded', { position: pos, team: throwerTeam });
+            if (enemyHitCount > 0) {
+                this.eventBus.emit('grenadeDamage', { throwerName, throwerTeam, hitCount: enemyHitCount });
+            }
         }
     }
 
