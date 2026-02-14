@@ -875,7 +875,13 @@ export class AIController {
             }
         }
 
-        // Fire at ridgeline or last known position (with scatter)
+        // If a live enemy is visible, let _updateAiming handle aimPoint (engage)
+        if (this.targetEnemy && this.targetEnemy.alive) {
+            // hasReacted is managed by _updateThreatScan / _updateAiming
+            return BTState.RUNNING;
+        }
+
+        // No visible enemy — fire at ridgeline or last known position (with scatter)
         computeSuppressionTarget(contact, this.aimPoint);
         // Adjust to ridgeline if hill blocks view
         const myPos2 = this.soldier.getPosition();
@@ -1458,8 +1464,10 @@ export class AIController {
     // ───── Aiming ─────
 
     _updateAiming(dt) {
-        // For suppression, aim point is already set by _actionSuppress
-        if (this.suppressionTarget && this.suppressionTimer > 0) return;
+        // For suppression with no visible enemy, aim point is set by _actionSuppress
+        const isSuppressingBlind = this.suppressionTarget && this.suppressionTimer > 0
+            && (!this.targetEnemy || !this.targetEnemy.alive);
+        if (isSuppressingBlind) return;
 
         if (!this.targetEnemy || !this.targetEnemy.alive || !this.hasReacted) {
             // Reaction delay

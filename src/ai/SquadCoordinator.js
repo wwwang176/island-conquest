@@ -249,9 +249,11 @@ export class SquadCoordinator {
         const captainPos = captain.soldier.getPosition();
 
         if (this.strategy === 'raid') {
-            // ── Raid: hunt undefended flags, fallback to push ──
+            // ── Raid: hunt undefended flags, fallback to 2nd-nearest, then nearest ──
             const undefended = this._pickUndefendedFlag(captainPos);
-            this.objective = undefended || this._pickNearestNonOwned(captainPos);
+            this.objective = undefended
+                || this._pickSecondNearestNonOwned(captainPos)
+                || this._pickNearestNonOwned(captainPos);
         } else if (this.strategy === 'push') {
             // ── Push: always rush the nearest non-owned flag ──
             this.objective = this._pickNearestNonOwned(captainPos);
@@ -290,6 +292,25 @@ export class SquadCoordinator {
             }
         }
         return bestFlag;
+    }
+
+    /**
+     * Pick the second-nearest non-owned flag. Returns null if fewer than 2 non-owned flags exist.
+     */
+    _pickSecondNearestNonOwned(fromPos) {
+        let first = null, firstDist = Infinity;
+        let second = null, secondDist = Infinity;
+        for (const flag of this.flags) {
+            if (flag.owner === this.team) continue;
+            const d = fromPos.distanceTo(flag.position);
+            if (d < firstDist) {
+                second = first; secondDist = firstDist;
+                first = flag; firstDist = d;
+            } else if (d < secondDist) {
+                second = flag; secondDist = d;
+            }
+        }
+        return second;
     }
 
     /**

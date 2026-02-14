@@ -290,8 +290,8 @@ export class AIManager {
             teamAEnemies.push(playerAsEnemy);
         }
 
-        // Staggered AI controller updates: update 10 AIs per frame (BT + movement)
-        const updatesPerFrame = 10;
+        // Staggered AI controller updates: update 8 AIs per frame (BT + movement)
+        const updatesPerFrame = 8;
         for (let i = 0; i < updatesPerFrame; i++) {
             const idx = (this.updateIndex + i) % this.totalAI;
 
