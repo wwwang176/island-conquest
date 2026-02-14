@@ -87,6 +87,7 @@ export class SpectatorMode {
 
     nextTarget() {
         if (this.targets.length === 0) return;
+        this._deathFreezeTimer = 0;
         this.targetIndex = (this.targetIndex + 1) % this.targets.length;
         this._trackedSoldier = this.targets[this.targetIndex].soldier;
         this._initialized = false; // trigger smooth transition
