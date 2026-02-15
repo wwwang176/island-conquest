@@ -66,4 +66,24 @@ export const WeaponDefs = {
         moveSpeedMult: 0.7,
         minSpread: 0.012,                // floor for sustained fire tightening
     },
+    BOLT: {
+        name: 'Bolt-Action',
+        magazineSize: 5,
+        fireRate: 40,              // ~40 RPM (actual rate limited by bolt cycling)
+        reloadTime: 3.5,           // magazine reload
+        boltTime: 1.2,             // bolt cycle time between shots
+        damage: 110,
+        headshotMultiplier: 2.5,   // headshot 275 → guaranteed one-shot kill
+        maxRange: 300,
+        falloffStart: 150,
+        falloffEnd: 280,
+        falloffMinScale: 0.6,      // high damage even at range
+        baseSpread: 0.001,         // extremely accurate
+        maxSpread: 0.04,
+        spreadIncreasePerShot: 0.015,
+        spreadRecoveryRate: 0.5,
+        moveSpeedMult: 0.85,
+        scopeFOV: 20,              // FOV when scoped (normal ~75)
+        aiAimDelay: 0.5,           // AI must aim for 0.5s before firing
+    },
 };

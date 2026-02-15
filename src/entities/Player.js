@@ -53,6 +53,9 @@ export class Player {
         this.grenadeManager = null; // set by Game
         this._grenadePrevDown = false;
 
+        // Scope state
+        this._prevRightMouse = false;
+
         // Movement velocity (for grenade velocity inheritance)
         this.lastMoveVelocity = new THREE.Vector3();
 
@@ -97,6 +100,9 @@ export class Player {
     }
 
     switchWeapon(weaponId) {
+        // Unscope before switching
+        if (this.weapon.isScoped) this.weapon.setScoped(false);
+
         // Dispose old merged geometry + material
         const oldGun = this.weapon.gunGroup.children[0];
         if (oldGun) { oldGun.geometry.dispose(); oldGun.material.dispose(); }
@@ -273,6 +279,20 @@ export class Player {
     _handleShooting(dt) {
         this.weapon.triggerHeld = this.input.mouseDown;
 
+        // Right-click scope toggle (BOLT only, edge-triggered)
+        // Block scope during bolt cycling or reloading
+        const rmb = this.input.rightMouseDown;
+        if (rmb && !this._prevRightMouse && this.weapon.def.scopeFOV
+            && !this.weapon.isBolting && !this.weapon.isReloading) {
+            this.weapon.setScoped(!this.weapon.isScoped);
+        }
+        this._prevRightMouse = rmb;
+
+        // Force unscope during bolt cycling or reloading
+        if (this.weapon.isScoped && (this.weapon.isBolting || this.weapon.isReloading)) {
+            this.weapon.setScoped(false);
+        }
+
         if (this.input.mouseDown) {
             const origin = this.camera.position.clone();
             const dir = this.getAimDirection();
@@ -341,6 +361,8 @@ export class Player {
         this.alive = false;
         this.hp = 0;
         this.deathTimer = this.respawnDelay;
+        // Unscope on death
+        if (this.weapon.isScoped) this.weapon.setScoped(false);
         this.eventBus.emit('playerDied');
     }
 
@@ -354,6 +376,9 @@ export class Player {
         }
         this.weapon.currentAmmo = this.weapon.magazineSize;
         this.weapon.isReloading = false;
+        this.weapon.isBolting = false;
+        this.weapon.boltTimer = 0;
+        if (this.weapon.isScoped) this.weapon.setScoped(false);
         // Apply weapon move speed multiplier
         const mult = WeaponDefs[this.selectedWeaponId].moveSpeedMult || 1.0;
         this.moveSpeed = 6 * mult;

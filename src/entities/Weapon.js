@@ -43,6 +43,14 @@ export class Weapon {
         this.fireCooldown = 0;
         this.triggerHeld = false; // true while fire button is held down
 
+        // Bolt-action state
+        this.isBolting = false;
+        this.boltTimer = 0;
+
+        // Scope state (BOLT only)
+        this.isScoped = false;
+        this._defaultFOV = camera.fov;
+
         // Visual: muzzle flash
         this.muzzleFlash = this._createMuzzleFlash();
         this.muzzleFlashTimer = 0;
@@ -63,7 +71,34 @@ export class Weapon {
     static buildFPGunMesh(weaponId) {
         const geos = [];
 
-        if (weaponId === 'LMG') {
+        if (weaponId === 'BOLT') {
+            // Long stock
+            const stockGeo = new THREE.BoxGeometry(0.05, 0.06, 0.22);
+            stockGeo.translate(0.25, -0.22, -0.04);
+            geos.push(stockGeo);
+            // Body / receiver
+            const bodyGeo = new THREE.BoxGeometry(0.055, 0.07, 0.50);
+            bodyGeo.translate(0.25, -0.20, -0.40);
+            geos.push(bodyGeo);
+            // Extra-long barrel
+            const barrelGeo = new THREE.CylinderGeometry(0.012, 0.012, 0.90, 6);
+            barrelGeo.rotateX(Math.PI / 2);
+            barrelGeo.translate(0.25, -0.17, -1.10);
+            geos.push(barrelGeo);
+            // Scope — single tube raised above body
+            const scopeGeo = new THREE.CylinderGeometry(0.028, 0.028, 0.36, 8);
+            scopeGeo.rotateX(Math.PI / 2);
+            scopeGeo.translate(0.25, -0.04, -0.38);
+            geos.push(scopeGeo);
+            // Scope mount (single rail bridging body to scope)
+            const mountGeo = new THREE.BoxGeometry(0.025, 0.10, 0.06);
+            mountGeo.translate(0.25, -0.11, -0.38);
+            geos.push(mountGeo);
+            // Short magazine
+            const magGeo = new THREE.BoxGeometry(0.035, 0.08, 0.05);
+            magGeo.translate(0.25, -0.28, -0.38);
+            geos.push(magGeo);
+        } else if (weaponId === 'LMG') {
             const stockGeo = new THREE.BoxGeometry(0.05, 0.06, 0.16);
             stockGeo.translate(0.25, -0.22, -0.05);
             geos.push(stockGeo);
@@ -132,7 +167,9 @@ export class Weapon {
         });
         const flash = new THREE.Mesh(geo, mat);
         flash.visible = false;
-        const muzzleZ = this.weaponId === 'LMG' ? -1.125 : (this.weaponId === 'SMG' ? -0.63 : -1.225);
+        const muzzleZ = this.weaponId === 'BOLT' ? -1.55
+            : this.weaponId === 'LMG' ? -1.125
+            : (this.weaponId === 'SMG' ? -0.63 : -1.225);
         flash.position.set(0.05, -0.27, muzzleZ);
         this.camera.add(flash);
         return flash;
@@ -147,7 +184,7 @@ export class Weapon {
      * @returns {object|null} { target, point, distance } or null
      */
     fire(origin, direction, targets = []) {
-        if (this.isReloading || this.fireCooldown > 0 || this.currentAmmo <= 0) {
+        if (this.isBolting || this.isReloading || this.fireCooldown > 0 || this.currentAmmo <= 0) {
             return null;
         }
 
@@ -175,6 +212,12 @@ export class Weapon {
         this.muzzleFlash.visible = true;
         this.muzzleFlash.scale.setScalar(0.5 + Math.random() * 1.0);
         this.muzzleFlashTimer = 0.04;
+
+        // Bolt cycling (BOLT weapon only)
+        if (this.def.boltTime) {
+            this.isBolting = true;
+            this.boltTimer = this.def.boltTime;
+        }
 
         // Hitscan raycast
         const raycaster = new THREE.Raycaster(origin, spreadDir, 0, this.maxRange);
@@ -223,6 +266,18 @@ export class Weapon {
         if (this.isReloading || this.currentAmmo === this.magazineSize) return;
         this.isReloading = true;
         this.reloadTimer = this.reloadTime;
+        // Unscope on reload
+        if (this.isScoped) this.setScoped(false);
+    }
+
+    /** Toggle scope (BOLT weapon only). */
+    setScoped(scoped) {
+        if (!this.def.scopeFOV) return;
+        this.isScoped = scoped;
+        this.camera.fov = scoped ? this.def.scopeFOV : this._defaultFOV;
+        this.camera.updateProjectionMatrix();
+        // Hide gun model when scoped
+        if (this.gunGroup) this.gunGroup.visible = !scoped;
     }
 
     _getWorldNormal(hit) {
@@ -247,6 +302,15 @@ export class Weapon {
         // Fire cooldown
         if (this.fireCooldown > 0) {
             this.fireCooldown -= dt;
+        }
+
+        // Bolt cycling
+        if (this.isBolting) {
+            this.boltTimer -= dt;
+            if (this.boltTimer <= 0) {
+                this.isBolting = false;
+                this.boltTimer = 0;
+            }
         }
 
         // Reload
@@ -280,8 +344,8 @@ export class Weapon {
         if (this.recoilOffset > 0) {
             this.recoilOffset = Math.max(0, this.recoilOffset - this.recoilRecoverySpeed * dt);
         }
-        // Gun reload tilt: arms raise up 45° during reload
-        const targetTilt = this.isReloading ? 0.785 : 0;
+        // Gun tilt: bolt cycling ~20° (0.35 rad), reload ~45° (0.785 rad)
+        const targetTilt = this.isReloading ? 0.785 : (this.isBolting ? 0.35 : 0);
         if (this._reloadTilt === undefined) this._reloadTilt = 0;
         const tiltSpeed = this.isReloading ? 12 : 8; // faster going down, slower coming back
         this._reloadTilt += (targetTilt - this._reloadTilt) * Math.min(1, tiltSpeed * dt);

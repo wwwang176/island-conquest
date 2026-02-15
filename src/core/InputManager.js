@@ -6,6 +6,7 @@ export class InputManager {
     constructor() {
         this.keys = {};
         this.mouseDown = false;
+        this.rightMouseDown = false;
         this.mouseDeltaX = 0;
         this.mouseDeltaY = 0;
         this.scrollDelta = 0;
@@ -26,6 +27,7 @@ export class InputManager {
         document.addEventListener('mousemove', this._onMouseMove);
         document.addEventListener('wheel', this._onWheel, { passive: false });
         document.addEventListener('pointerlockchange', this._onPointerLockChange);
+        document.addEventListener('contextmenu', (e) => e.preventDefault());
     }
 
     _onKeyDown(e) {
@@ -38,10 +40,12 @@ export class InputManager {
 
     _onMouseDown(e) {
         if (e.button === 0) this.mouseDown = true;
+        if (e.button === 2) this.rightMouseDown = true;
     }
 
     _onMouseUp(e) {
         if (e.button === 0) this.mouseDown = false;
+        if (e.button === 2) this.rightMouseDown = false;
     }
 
     _onMouseMove(e) {
