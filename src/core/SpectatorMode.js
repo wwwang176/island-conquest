@@ -100,7 +100,6 @@ export class SpectatorMode {
             const pos = this.camera.position;
             this.overheadPos.set(pos.x, this.overheadZoom, pos.z);
             this.hud.setOverheadMode();
-            this.input.exitPointerLock();
         } else {
             this.mode = 'follow';
             this._initialized = false;

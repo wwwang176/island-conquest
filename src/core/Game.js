@@ -132,8 +132,8 @@ export class Game {
             if (document.pointerLockElement) {
                 this.blocker.classList.add('hidden');
             } else {
-                // Only show blocker in spectator/playing modes (not joining/dead/paused)
-                if (!this.paused && (this.gameMode === 'spectator' || this.gameMode === 'playing')) {
+                // Only show blocker in playing mode (spectator doesn't need pointer lock)
+                if (!this.paused && this.gameMode === 'playing') {
                     this.blocker.classList.remove('hidden');
                 }
             }
@@ -384,6 +384,10 @@ export class Game {
             this.player.weapon.setScoped(false);
         }
 
+        // Save position before removing
+        const lastX = this.player.body.position.x;
+        const lastZ = this.player.body.position.z;
+
         // Remove player from game world
         this.player.alive = false;
         this.player.mesh.visible = false;
@@ -394,11 +398,15 @@ export class Game {
         // Unregister from AI
         this.aiManager.removePlayer();
 
-        // Switch mode
+        // Switch mode — always start in overhead view at player's last position
         this.gameMode = 'spectator';
+        this.spectator.mode = 'overhead';
+        this.spectator.overheadPos.set(lastX, this.spectator.overheadZoom, lastZ);
+        this.spectator.hud.setOverheadMode();
         this.spectator.activate();
         this._applyUIState('spectator');
         this._updateBlockerText();
+        this.blocker.classList.add('hidden');
     }
 
     _updateBlockerText() {
@@ -431,8 +439,7 @@ export class Game {
                 this.damageIndicator.style.background = 'none';
                 if (this.spectator) this.spectator.hud.show();
                 show(this.keyHints);
-                // blocker depends on pointer lock
-                if (!this.input.isPointerLocked) this.blocker.classList.remove('hidden');
+                // blocker managed by callers (_cancelJoin, _leaveTeam)
                 // ammoHUD/crosshair managed dynamically in _updateHUD/_updateReloadIndicator
                 // gun model hidden
                 if (this.player && this.player.weapon) {
@@ -1103,6 +1110,7 @@ export class Game {
                         // Transition back to playing
                         this.gameMode = 'playing';
                         this._applyUIState('playing');
+                        this.input.requestPointerLock();
                     }
                 }
             } else {
