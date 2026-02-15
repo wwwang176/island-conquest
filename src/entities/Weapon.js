@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { WeaponDefs } from './WeaponDefs.js';
+import { WeaponDefs, GunAnim } from './WeaponDefs.js';
 
 /**
  * Assault Rifle weapon system.
@@ -62,7 +62,7 @@ export class Weapon {
 
         // Recoil visual (camera kick)
         this.recoilOffset = 0;
-        this.recoilRecoverySpeed = 8;
+        this.recoilRecoverySpeed = GunAnim.recoilRecovery;
     }
 
     /**
@@ -230,7 +230,7 @@ export class Weapon {
         }
 
         // Visual recoil kick
-        this.recoilOffset = 0.015;
+        this.recoilOffset = GunAnim.recoilOffset;
 
         // Muzzle flash
         this.muzzleFlash.visible = true;
@@ -369,7 +369,7 @@ export class Weapon {
             this.recoilOffset = Math.max(0, this.recoilOffset - this.recoilRecoverySpeed * dt);
         }
         // Gun tilt: bolt cycling / reload
-        const targetTilt = this.isReloading ? 0.5 : (this.isBolting ? 0.25 : 0);
+        const targetTilt = this.isReloading ? GunAnim.reloadTilt : (this.isBolting ? GunAnim.boltTilt : 0);
         if (this._reloadTilt === undefined) this._reloadTilt = 0;
         const tiltSpeed = this.isReloading ? 12 : 8; // faster going down, slower coming back
         this._reloadTilt += (targetTilt - this._reloadTilt) * Math.min(1, tiltSpeed * dt);

@@ -96,3 +96,11 @@ export const WeaponDefs = {
         tpLeftArmRotX: 1.35,
     },
 };
+
+/** Shared visual animation constants (used by Weapon.js, Soldier.js & AIController.js) */
+export const GunAnim = {
+    reloadTilt: 0.5,        // ~29° reload tilt
+    boltTilt: 0.25,         // ~14° bolt-cycling tilt
+    recoilOffset: 0.06,     // Z kick on fire
+    recoilRecovery: 2,      // recovery speed (units/s)
+};

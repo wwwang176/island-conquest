@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { WeaponDefs } from './WeaponDefs.js';
+import { WeaponDefs, GunAnim } from './WeaponDefs.js';
 
 /**
  * Base soldier entity with health, damage, death, and regen.
@@ -161,6 +161,7 @@ export class Soldier {
         this.gunMesh = null;
         this._gunParent = shoulderPivot;
         this._gunReloadTilt = 0;
+        this._gunRecoilZ = 0;
         this._createGunMesh('AR15');
 
         group.add(upperBody);
@@ -522,9 +523,17 @@ export class Soldier {
         // Reload / bolt-cycling tilt animation (tracked here, applied to shoulderPivot in AIController)
         if (this.controller) {
             const bolting = this.controller.boltTimer > 0;
-            const targetTilt = this.controller.isReloading ? 0.5 : (bolting ? 0.25 : 0);
+            const targetTilt = this.controller.isReloading ? GunAnim.reloadTilt : (bolting ? GunAnim.boltTilt : 0);
             const tiltSpeed = this.controller.isReloading ? 12 : 8;
             this._gunReloadTilt += (targetTilt - this._gunReloadTilt) * Math.min(1, tiltSpeed * dt);
+        }
+
+        // Gun recoil Z recovery + apply
+        if (this._gunRecoilZ > 0) {
+            this._gunRecoilZ = Math.max(0, this._gunRecoilZ - GunAnim.recoilRecovery * dt);
+        }
+        if (this.gunMesh) {
+            this.gunMesh.position.z = -0.45 + this._gunRecoilZ;
         }
 
         // Sync mesh to physics body position

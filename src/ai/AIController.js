@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { BTState, Selector, Sequence, Condition, Action } from './BehaviorTree.js';
 import { PersonalityTypes } from './Personality.js';
 import { findFlankPosition, computePreAimPoint, computeSuppressionTarget, findRidgelineAimPoint } from './TacticalActions.js';
-import { WeaponDefs } from '../entities/WeaponDefs.js';
+import { WeaponDefs, GunAnim } from '../entities/WeaponDefs.js';
 
 const _grenadeOrigin = new THREE.Vector3();
 const _grenadeDir = new THREE.Vector3();
@@ -1714,6 +1714,9 @@ export class AIController {
         if (this.tracerSystem) {
             this.tracerSystem.fire(_origin, dir, tracerDist);
         }
+
+        // Visual recoil kick on gun mesh
+        this.soldier._gunRecoilZ = GunAnim.recoilOffset;
 
         // Notify minimap that this AI fired
         if (this.eventBus) {
