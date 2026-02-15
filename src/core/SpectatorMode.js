@@ -111,6 +111,8 @@ export class SpectatorMode {
 
     getCurrentTarget() {
         if (this.targets.length === 0) return null;
+        // During death freeze, don't expose next target yet
+        if (this._deathFreezeTimer > 0) return null;
         if (this.targetIndex >= this.targets.length) {
             this.targetIndex = 0;
         }
