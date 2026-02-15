@@ -271,6 +271,7 @@ export class Game {
             if (e.code === 'Digit1') this._pendingWeapon = 'AR15';
             else if (e.code === 'Digit2') this._pendingWeapon = 'SMG';
             else if (e.code === 'Digit3') this._pendingWeapon = 'LMG';
+            else if (e.code === 'Digit4') this._pendingWeapon = 'BOLT';
             else if (e.code === 'Space') {
                 this._joinTeam(this._pendingTeam, this._pendingWeapon);
             } else if (e.code === 'Escape') {
@@ -314,15 +315,15 @@ export class Game {
     _updateJoinScreen() {
         if (this.gameMode !== 'joining') return;
         const sel = this._pendingWeapon;
-        const ar = document.getElementById('join-wp-ar');
-        const smg = document.getElementById('join-wp-smg');
-        const lmg = document.getElementById('join-wp-lmg');
-        ar.style.borderColor = sel === 'AR15' ? '#4488ff' : '#888';
-        ar.style.background = sel === 'AR15' ? 'rgba(68,136,255,0.15)' : 'transparent';
-        smg.style.borderColor = sel === 'SMG' ? '#4488ff' : '#888';
-        smg.style.background = sel === 'SMG' ? 'rgba(68,136,255,0.15)' : 'transparent';
-        lmg.style.borderColor = sel === 'LMG' ? '#4488ff' : '#888';
-        lmg.style.background = sel === 'LMG' ? 'rgba(68,136,255,0.15)' : 'transparent';
+        const ids = [
+            ['join-wp-ar', 'AR15'], ['join-wp-smg', 'SMG'],
+            ['join-wp-lmg', 'LMG'], ['join-wp-bolt', 'BOLT'],
+        ];
+        for (const [id, wep] of ids) {
+            const el = document.getElementById(id);
+            el.style.borderColor = sel === wep ? '#4488ff' : '#888';
+            el.style.background = sel === wep ? 'rgba(68,136,255,0.15)' : 'transparent';
+        }
     }
 
     _joinTeam(team, weaponId) {
@@ -378,6 +379,11 @@ export class Game {
     _leaveTeam() {
         if (!this.player) return;
 
+        // Unscope before leaving
+        if (this.player.weapon && this.player.weapon.isScoped) {
+            this.player.weapon.setScoped(false);
+        }
+
         // Remove player from game world
         this.player.alive = false;
         this.player.mesh.visible = false;
@@ -418,6 +424,10 @@ export class Game {
                 hide(this.deathScreen);
                 hide(this.scoreboard);
                 hide(this.healthHUD);
+                hide(this.scopeVignette);
+                this._lastScoped = false;
+                this.camera.fov = 75;
+                this.camera.updateProjectionMatrix();
                 this.damageIndicator.style.background = 'none';
                 if (this.spectator) this.spectator.hud.show();
                 show(this.keyHints);
@@ -454,6 +464,11 @@ export class Game {
                 hide(this.joinScreen);
                 hide(this.deathScreen);
                 hide(this.scoreboard);
+                hide(this.scopeVignette);
+                this._lastScoped = false;
+                // Restore default FOV (in case spectating a scoped COM before joining)
+                this.camera.fov = 75;
+                this.camera.updateProjectionMatrix();
                 if (this.spectator) this.spectator.hud.hide();
                 hide(this.keyHints);
                 show(this.ammoHUD);
@@ -475,6 +490,8 @@ export class Game {
                 hide(this.crosshair);
                 hide(this.reloadIndicator);
                 hide(this.keyHints);
+                hide(this.scopeVignette);
+                this._lastScoped = false;
                 this.damageIndicator.style.background = 'none';
                 show(this.deathScreen, 'flex');
                 if (this.player && this.player.weapon) {
@@ -494,6 +511,7 @@ export class Game {
         this._createHealthHUD();
         this._createScoreHUD();
         this._createDamageIndicator();
+        this._createScopeVignette();
         this._createJoinScreen();
         this._createDeathScreen();
         this._createGameOverScreen();
@@ -586,6 +604,22 @@ export class Game {
         this.damageIndicator = el;
     }
 
+    _createScopeVignette() {
+        const el = document.createElement('div');
+        el.id = 'scope-vignette';
+        el.style.cssText = `position:fixed;top:0;left:0;width:100%;height:100%;
+            pointer-events:none;z-index:98;display:none;
+            background:radial-gradient(circle, transparent 30%, rgba(0,0,0,0.9) 70%);`;
+        // Full-screen crosshair lines
+        el.innerHTML = `
+            <div style="position:absolute;top:50%;left:0;width:100%;height:1px;background:rgba(255,255,255,0.5);"></div>
+            <div style="position:absolute;top:0;left:50%;width:1px;height:100%;background:rgba(255,255,255,0.5);"></div>
+            <div style="position:absolute;top:50%;left:50%;width:6px;height:6px;transform:translate(-50%,-50%);
+                border:1px solid rgba(255,255,255,0.6);border-radius:50%;"></div>`;
+        document.body.appendChild(el);
+        this.scopeVignette = el;
+    }
+
     _createJoinScreen() {
         const el = document.createElement('div');
         el.id = 'join-screen';
@@ -611,6 +645,11 @@ export class Game {
                         background:transparent;cursor:default;min-width:120px;">
                         <div style="font-size:16px;font-weight:bold;">[3] LMG</div>
                         <div style="font-size:12px;color:#aaa;margin-top:4px;">450 RPM &middot; 120 rds</div>
+                    </div>
+                    <div id="join-wp-bolt" style="border:2px solid #888;border-radius:8px;padding:10px 18px;
+                        background:transparent;cursor:default;min-width:120px;">
+                        <div style="font-size:16px;font-weight:bold;">[4] Bolt-Action</div>
+                        <div style="font-size:12px;color:#aaa;margin-top:4px;">40 RPM &middot; 5 rds</div>
                     </div>
                 </div>
                 <div style="font-size:16px;color:#aaa;margin-top:14px;">
@@ -648,6 +687,11 @@ export class Game {
                             background:transparent;cursor:default;min-width:120px;">
                             <div style="font-size:16px;font-weight:bold;">[3] LMG</div>
                             <div style="font-size:12px;color:#aaa;margin-top:4px;">450 RPM &middot; 120 rds</div>
+                        </div>
+                        <div id="weapon-bolt" style="border:2px solid #888;border-radius:8px;padding:10px 18px;
+                            background:transparent;cursor:default;min-width:120px;">
+                            <div style="font-size:16px;font-weight:bold;">[4] Bolt-Action</div>
+                            <div style="font-size:12px;color:#aaa;margin-top:4px;">40 RPM &middot; 5 rds</div>
                         </div>
                     </div>
                 </div>
@@ -793,14 +837,31 @@ export class Game {
             if (w.isReloading) {
                 isReloading = true;
                 progress = 1 - w.reloadTimer / w.reloadTime;
+            } else if (w.isBolting && w.def.boltTime) {
+                isReloading = true;
+                progress = 1 - w.boltTimer / w.def.boltTime;
             }
         } else if (this.gameMode === 'spectator' && this.spectator && this.spectator.mode === 'follow') {
             const target = this.spectator.getCurrentTarget();
-            if (target && target.controller.isReloading) {
-                isReloading = true;
+            if (target) {
                 const ctrl = target.controller;
-                progress = 1 - ctrl.reloadTimer / ctrl.reloadTime;
+                if (ctrl.isReloading) {
+                    isReloading = true;
+                    progress = 1 - ctrl.reloadTimer / ctrl.reloadTime;
+                } else if (ctrl.boltTimer > 0 && ctrl.weaponDef.boltTime) {
+                    isReloading = true;
+                    progress = 1 - ctrl.boltTimer / ctrl.weaponDef.boltTime;
+                }
             }
+        }
+
+        // Check if scoped (hide crosshair — scope overlay has its own crosshair)
+        let isAnyScoped = false;
+        if (this.gameMode === 'playing' && this.player && this.player.weapon) {
+            isAnyScoped = this.player.weapon.isScoped;
+        } else if (this.gameMode === 'spectator' && this.spectator && this.spectator.mode === 'follow') {
+            const target = this.spectator.getCurrentTarget();
+            if (target) isAnyScoped = target.controller.isScoped;
         }
 
         if (isReloading) {
@@ -813,9 +874,10 @@ export class Game {
             this.reloadArc.setAttribute('stroke-dashoffset', circ * (1 - progress));
         } else {
             this.reloadIndicator.style.display = 'none';
-            // Restore crosshair in playing mode, or spectator follow mode
-            const showCrosshair = this.gameMode === 'playing'
-                || (this.gameMode === 'spectator' && this.spectator && this.spectator.mode === 'follow');
+            // Restore crosshair in playing mode, or spectator follow mode (hidden when scoped)
+            const showCrosshair = !isAnyScoped && (
+                this.gameMode === 'playing'
+                || (this.gameMode === 'spectator' && this.spectator && this.spectator.mode === 'follow'));
             this.crosshair.style.display = showCrosshair ? 'block' : 'none';
         }
     }
@@ -831,21 +893,25 @@ export class Game {
                     const ctrl = target.controller;
                     const curAmmo = ctrl.currentAmmo;
                     const curReloading = ctrl.isReloading;
+                    const curBolting = ctrl.boltTimer > 0;
                     const curWeaponId = ctrl.weaponId;
                     const curGrenades = ctrl.grenadeCount;
                     if (curAmmo !== this._lastAmmo || curReloading !== this._lastReloading
+                        || curBolting !== this._lastBolting
                         || curWeaponId !== this._lastWeaponId || curGrenades !== this._lastGrenades) {
                         this._lastAmmo = curAmmo;
                         this._lastReloading = curReloading;
+                        this._lastBolting = curBolting;
                         this._lastWeaponId = curWeaponId;
                         this._lastGrenades = curGrenades;
-                        const reloadText = curReloading ? `<span style="color:#ffaa00">RELOADING...</span>` : '';
+                        const statusText = curReloading ? `<span style="color:#ffaa00">RELOADING...</span>`
+                            : curBolting ? `<span style="color:#ffaa00">BOLTING...</span>` : '';
                         const grenadeText = `<div style="font-size:13px;color:#aaa;margin-top:6px">&#x1F4A3; ${curGrenades}</div>`;
                         this.ammoHUD.innerHTML = `
                             <div style="font-size:12px;color:#aaa;margin-bottom:4px">${ctrl.weaponDef.name}</div>
                             <div style="font-size:28px;font-weight:bold">
                                 ${curAmmo}<span style="font-size:16px;color:#888"> / ${ctrl.magazineSize}</span>
-                            </div>${reloadText}${grenadeText}`;
+                            </div>${statusText}${grenadeText}`;
                     }
                 } else {
                     this.ammoHUD.style.display = 'none';
@@ -853,6 +919,24 @@ export class Game {
             } else {
                 this.ammoHUD.style.display = 'none';
             }
+            // Scope vignette + FOV for spectated BOLT COM
+            // Wait until camera has settled on target before showing scope
+            if (isFollow && this.spectator._initialized) {
+                const target = this.spectator.getCurrentTarget();
+                const comScoped = target && target.controller.isScoped;
+                if (comScoped !== this._lastScoped) {
+                    this._lastScoped = comScoped;
+                    this.scopeVignette.style.display = comScoped ? 'block' : 'none';
+                    this.camera.fov = comScoped ? (target.controller.weaponDef.scopeFOV || 20) : 75;
+                    this.camera.updateProjectionMatrix();
+                }
+            } else if (this._lastScoped) {
+                this._lastScoped = false;
+                this.scopeVignette.style.display = 'none';
+                this.camera.fov = 75;
+                this.camera.updateProjectionMatrix();
+            }
+
             // Clear cached values when switching away
             this._lastAmmo = undefined;
             this._updateDamageIndicator();
@@ -873,21 +957,25 @@ export class Game {
         // Ammo + grenade — only update DOM when values change
         const curAmmo = w.currentAmmo;
         const curReloading = w.isReloading;
+        const curBolting = w.isBolting;
         const curWeaponId = w.weaponId;
         const curGrenades = p.grenadeCount;
         if (curAmmo !== this._lastAmmo || curReloading !== this._lastReloading
+            || curBolting !== this._lastBolting
             || curWeaponId !== this._lastWeaponId || curGrenades !== this._lastGrenades) {
             this._lastAmmo = curAmmo;
             this._lastReloading = curReloading;
+            this._lastBolting = curBolting;
             this._lastWeaponId = curWeaponId;
             this._lastGrenades = curGrenades;
-            const reloadText = curReloading ? `<span style="color:#ffaa00">RELOADING...</span>` : '';
+            const statusText = curReloading ? `<span style="color:#ffaa00">RELOADING...</span>`
+                : curBolting ? `<span style="color:#ffaa00">BOLTING...</span>` : '';
             const grenadeText = `<div style="font-size:13px;color:#aaa;margin-top:6px">&#x1F4A3; ${curGrenades}</div>`;
             this.ammoHUD.innerHTML = `
                 <div style="font-size:12px;color:#aaa;margin-bottom:4px">${w.def.name}</div>
                 <div style="font-size:28px;font-weight:bold">
                     ${curAmmo}<span style="font-size:16px;color:#888"> / ${w.magazineSize}</span>
-                </div>${reloadText}${grenadeText}`;
+                </div>${statusText}${grenadeText}`;
         }
 
         // Health — only update DOM when value changes
@@ -902,6 +990,13 @@ export class Game {
                 <div style="width:120px;height:6px;background:#333;border-radius:3px;margin-top:4px;">
                     <div style="width:${barWidth}%;height:100%;background:${hpColor};border-radius:3px;"></div>
                 </div>`;
+        }
+
+        // Scope vignette
+        const isScoped = w.isScoped;
+        if (isScoped !== this._lastScoped) {
+            this._lastScoped = isScoped;
+            this.scopeVignette.style.display = isScoped ? 'block' : 'none';
         }
 
         // Damage direction indicator
@@ -978,34 +1073,28 @@ export class Game {
             const timer = document.getElementById('respawn-timer');
             const prompt = document.getElementById('respawn-prompt');
             const weaponSelect = document.getElementById('weapon-select');
-            const weaponAR = document.getElementById('weapon-ar');
-            const weaponSMG = document.getElementById('weapon-smg');
-            const weaponLMG = document.getElementById('weapon-lmg');
-
             if (p.canRespawn()) {
                 timer.textContent = '';
                 prompt.style.display = 'block';
                 weaponSelect.style.display = 'block';
 
                 // Weapon selection via keys
-                if (this.input.isKeyDown('Digit1')) {
-                    p.selectedWeaponId = 'AR15';
-                }
-                if (this.input.isKeyDown('Digit2')) {
-                    p.selectedWeaponId = 'SMG';
-                }
-                if (this.input.isKeyDown('Digit3')) {
-                    p.selectedWeaponId = 'LMG';
-                }
+                if (this.input.isKeyDown('Digit1')) p.selectedWeaponId = 'AR15';
+                if (this.input.isKeyDown('Digit2')) p.selectedWeaponId = 'SMG';
+                if (this.input.isKeyDown('Digit3')) p.selectedWeaponId = 'LMG';
+                if (this.input.isKeyDown('Digit4')) p.selectedWeaponId = 'BOLT';
 
                 // Highlight selected weapon
                 const sel = p.selectedWeaponId;
-                weaponAR.style.borderColor = sel === 'AR15' ? '#4488ff' : '#888';
-                weaponAR.style.background = sel === 'AR15' ? 'rgba(68,136,255,0.15)' : 'transparent';
-                weaponSMG.style.borderColor = sel === 'SMG' ? '#4488ff' : '#888';
-                weaponSMG.style.background = sel === 'SMG' ? 'rgba(68,136,255,0.15)' : 'transparent';
-                weaponLMG.style.borderColor = sel === 'LMG' ? '#4488ff' : '#888';
-                weaponLMG.style.background = sel === 'LMG' ? 'rgba(68,136,255,0.15)' : 'transparent';
+                const wepIds = [
+                    ['weapon-ar', 'AR15'], ['weapon-smg', 'SMG'],
+                    ['weapon-lmg', 'LMG'], ['weapon-bolt', 'BOLT'],
+                ];
+                for (const [id, wep] of wepIds) {
+                    const el = document.getElementById(id);
+                    el.style.borderColor = sel === wep ? '#4488ff' : '#888';
+                    el.style.background = sel === wep ? 'rgba(68,136,255,0.15)' : 'transparent';
+                }
 
                 if (this.input.isKeyDown('Space')) {
                     const spawnPos = this.aiManager.findSafeSpawn(p.team);
