@@ -99,13 +99,21 @@ export class Player {
         this.shootTargets = [];
     }
 
+    _getLimbColor() {
+        if (!this.team) return 0xddbb99;
+        const tc = new THREE.Color(this.team === 'teamA' ? 0x4488ff : 0xff4444);
+        return tc.multiplyScalar(0.7).getHex();
+    }
+
     switchWeapon(weaponId) {
         // Unscope before switching
         if (this.weapon.isScoped) this.weapon.setScoped(false);
 
-        // Dispose old merged geometry + material
-        const oldGun = this.weapon.gunGroup.children[0];
-        if (oldGun) { oldGun.geometry.dispose(); oldGun.material.dispose(); }
+        // Dispose old gun + arm geometries & materials
+        for (const child of this.weapon.gunGroup.children) {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) child.material.dispose();
+        }
 
         // Remove old weapon visuals
         this.camera.remove(this.weapon.gunGroup);
@@ -114,7 +122,7 @@ export class Player {
         // Create new weapon
         const tracerSystem = this.weapon.tracerSystem;
         const impactVFX = this.weapon.impactVFX;
-        this.weapon = new Weapon(this.scene, this.camera, weaponId);
+        this.weapon = new Weapon(this.scene, this.camera, weaponId, this._getLimbColor());
         this.weapon.tracerSystem = tracerSystem;
         this.weapon.impactVFX = impactVFX;
     }

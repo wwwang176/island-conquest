@@ -21,6 +21,9 @@ export const WeaponDefs = {
         spreadIncreasePerShot: 0.004,
         spreadRecoveryRate: 0.4,
         moveSpeedMult: 1.0,
+        // First-person arm grip Z positions (trigger hand, support hand)
+        fpGripZ: [-0.15, -0.55],
+        tpLeftArmRotX: 1.2,
     },
     GRENADE: {
         name: 'Grenade',
@@ -47,6 +50,8 @@ export const WeaponDefs = {
         spreadIncreasePerShot: 0.003,
         spreadRecoveryRate: 0.6,
         moveSpeedMult: 1.15,
+        fpGripZ: [-0.15, -0.38],
+        tpLeftArmRotX: 1.35,
     },
     LMG: {
         name: 'LMG',
@@ -65,6 +70,8 @@ export const WeaponDefs = {
         spreadRecoveryRate: 0.225,
         moveSpeedMult: 0.7,
         minSpread: 0.012,                // floor for sustained fire tightening
+        fpGripZ: [-0.15, -0.55],
+        tpLeftArmRotX: 1.35,
     },
     BOLT: {
         name: 'Bolt-Action',
@@ -85,5 +92,7 @@ export const WeaponDefs = {
         moveSpeedMult: 0.85,
         scopeFOV: 20,              // FOV when scoped (normal ~75)
         aiAimDelay: 0.5,           // AI must aim for 0.5s before firing
+        fpGripZ: [-0.18, -0.55],
+        tpLeftArmRotX: 1.35,
     },
 };

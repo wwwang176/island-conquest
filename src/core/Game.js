@@ -343,10 +343,8 @@ export class Game {
         this.player.hp = this.player.maxHP;
         this.player.mesh.visible = false; // FPS: own mesh hidden
 
-        // Switch weapon if needed
-        if (this.player.weapon.weaponId !== this.player.selectedWeaponId) {
-            this.player.switchWeapon(this.player.selectedWeaponId);
-        }
+        // Always rebuild weapon to ensure correct arm color for team
+        this.player.switchWeapon(this.player.selectedWeaponId);
         this.player.weapon.currentAmmo = this.player.weapon.magazineSize;
         this.player.weapon.isReloading = false;
         // Apply move speed

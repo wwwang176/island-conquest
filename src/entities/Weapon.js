@@ -7,7 +7,7 @@ import { WeaponDefs } from './WeaponDefs.js';
  * Handles firing (hitscan), reloading, recoil spread, and visual feedback.
  */
 export class Weapon {
-    constructor(scene, camera, weaponId = 'AR15') {
+    constructor(scene, camera, weaponId = 'AR15', armColor) {
         this.scene = scene;
         this.camera = camera;
 
@@ -56,6 +56,7 @@ export class Weapon {
         this.muzzleFlashTimer = 0;
 
         // Gun mesh (simple low-poly representation)
+        this.armColor = armColor;
         this.gunGroup = this._createGunMesh();
         this.camera.add(this.gunGroup);
 
@@ -68,7 +69,7 @@ export class Weapon {
      * Build a first-person gun mesh group for the given weapon ID.
      * Static so spectator view can reuse it without a Weapon instance.
      */
-    static buildFPGunMesh(weaponId) {
+    static buildFPGunMesh(weaponId, armColor) {
         const geos = [];
 
         if (weaponId === 'BOLT') {
@@ -149,13 +150,36 @@ export class Weapon {
         const gun = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ color: 0x333333 }));
         const group = new THREE.Group();
         group.add(gun);
+
+        // ── First-person arms (box style, same as COM) ──
+        const armMat = new THREE.MeshLambertMaterial({ color: armColor || 0xddbb99 });
+
+        // Grip Z positions from weapon config
+        const [rGripZ, lGripZ] = WeaponDefs[weaponId].fpGripZ;
+
+        // Right arm (trigger hand) — same proportions as COM (Soldier.js)
+        const rightArmGeo = new THREE.BoxGeometry(0.15, 0.40, 0.15);
+        rightArmGeo.translate(0, -0.20, 0); // pivot at hand end
+        const rightArm = new THREE.Mesh(rightArmGeo, armMat);
+        rightArm.position.set(0.28, -0.22, rGripZ);
+        rightArm.rotation.set(-1.1, 0, 0);
+        group.add(rightArm);
+
+        // Left arm (support hand) — longer, same as COM left arm
+        const leftArmGeo = new THREE.BoxGeometry(0.15, 0.55, 0.15);
+        leftArmGeo.translate(0, -0.275, 0); // pivot at hand end
+        const leftArm = new THREE.Mesh(leftArmGeo, armMat);
+        leftArm.position.set(0.21, -0.22, lGripZ);
+        leftArm.rotation.set(-1.2, 0, -0.5);
+        group.add(leftArm);
+
         // Align with third-person gun position seen in spectator follow mode
         group.position.set(-0.20, -0.10, 0);
         return group;
     }
 
     _createGunMesh() {
-        return Weapon.buildFPGunMesh(this.weaponId);
+        return Weapon.buildFPGunMesh(this.weaponId, this.armColor);
     }
 
     _createMuzzleFlash() {
@@ -344,8 +368,8 @@ export class Weapon {
         if (this.recoilOffset > 0) {
             this.recoilOffset = Math.max(0, this.recoilOffset - this.recoilRecoverySpeed * dt);
         }
-        // Gun tilt: bolt cycling ~20° (0.35 rad), reload ~45° (0.785 rad)
-        const targetTilt = this.isReloading ? 0.785 : (this.isBolting ? 0.35 : 0);
+        // Gun tilt: bolt cycling / reload
+        const targetTilt = this.isReloading ? 0.5 : (this.isBolting ? 0.25 : 0);
         if (this._reloadTilt === undefined) this._reloadTilt = 0;
         const tiltSpeed = this.isReloading ? 12 : 8; // faster going down, slower coming back
         this._reloadTilt += (targetTilt - this._reloadTilt) * Math.min(1, tiltSpeed * dt);

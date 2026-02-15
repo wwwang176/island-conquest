@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { WeaponDefs } from './WeaponDefs.js';
 
 /**
  * Base soldier entity with health, damage, death, and regen.
@@ -137,40 +138,24 @@ export class Soldier {
         shoulderPivot.position.y = 1.35; // shoulder height
         upperBody.add(shoulderPivot);
 
-        // Right arm — positions relative to shoulder pivot (subtract pivot Y)
+        // Right arm — positions relative to shoulder pivot
+        const limbMat = new THREE.MeshLambertMaterial({ color: limbColor });
         const rightArmGeo = new THREE.BoxGeometry(0.15, 0.4, 0.15);
-        rightArmGeo.translate(0, -0.2, 0);
-        const raMatrix = new THREE.Matrix4();
-        raMatrix.compose(
-            new THREE.Vector3(0.2, 0, 0), // y=0 relative to pivot
-            new THREE.Quaternion().setFromEuler(new THREE.Euler(1.1, 0, 0)),
-            new THREE.Vector3(1, 1, 1)
-        );
-        rightArmGeo.applyMatrix4(raMatrix);
-        this._setGeometryVertexColor(rightArmGeo, limbColor);
+        rightArmGeo.translate(0, -0.2, 0); // pivot at shoulder
+        const rightArm = new THREE.Mesh(rightArmGeo, limbMat);
+        rightArm.position.set(0.2, 0, 0);
+        rightArm.rotation.set(1.1, 0, 0);
+        rightArm.castShadow = true;
+        shoulderPivot.add(rightArm);
 
-        // Left arm
+        // Left arm (rotation.x adjustable per weapon via WeaponDefs.tpLeftArmRotX)
         const leftArmGeo = new THREE.BoxGeometry(0.15, 0.55, 0.15);
-        leftArmGeo.translate(0, -0.275, 0);
-        const laMatrix = new THREE.Matrix4();
-        laMatrix.compose(
-            new THREE.Vector3(-0.2, 0, 0), // y=0 relative to pivot
-            new THREE.Quaternion().setFromEuler(new THREE.Euler(1.2, 0, 0.5)),
-            new THREE.Vector3(1, 1, 1)
-        );
-        leftArmGeo.applyMatrix4(laMatrix);
-        this._setGeometryVertexColor(leftArmGeo, limbColor);
-
-        // Merge arms
-        const armsGeo = mergeGeometries([rightArmGeo, leftArmGeo]);
-        rightArmGeo.dispose(); leftArmGeo.dispose();
-
-        const armsMesh = new THREE.Mesh(
-            armsGeo,
-            new THREE.MeshLambertMaterial({ vertexColors: true })
-        );
-        armsMesh.castShadow = true;
-        shoulderPivot.add(armsMesh);
+        leftArmGeo.translate(0, -0.275, 0); // pivot at shoulder
+        this._leftArmMesh = new THREE.Mesh(leftArmGeo, limbMat);
+        this._leftArmMesh.position.set(-0.2, 0, 0);
+        this._leftArmMesh.rotation.set(1.2, 0, 0.5);
+        this._leftArmMesh.castShadow = true;
+        shoulderPivot.add(this._leftArmMesh);
 
         // Gun — placeholder, replaced by setWeaponModel()
         this.gunMesh = null;
@@ -270,6 +255,14 @@ export class Soldier {
 
         this._gunParent.add(gun);
         this.gunMesh = gun;
+
+        // Adjust left arm grip per weapon
+        if (this._leftArmMesh) {
+            const def = WeaponDefs[weaponId];
+            if (def && def.tpLeftArmRotX !== undefined) {
+                this._leftArmMesh.rotation.x = def.tpLeftArmRotX;
+            }
+        }
     }
 
     setWeaponModel(weaponId) {
@@ -529,7 +522,7 @@ export class Soldier {
         // Reload / bolt-cycling tilt animation (tracked here, applied to shoulderPivot in AIController)
         if (this.controller) {
             const bolting = this.controller.boltTimer > 0;
-            const targetTilt = this.controller.isReloading ? 0.785 : (bolting ? 0.35 : 0);
+            const targetTilt = this.controller.isReloading ? 0.5 : (bolting ? 0.25 : 0);
             const tiltSpeed = this.controller.isReloading ? 12 : 8;
             this._gunReloadTilt += (targetTilt - this._gunReloadTilt) * Math.min(1, tiltSpeed * dt);
         }
