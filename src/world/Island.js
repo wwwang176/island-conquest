@@ -681,12 +681,12 @@ export class Island {
         if (trunkGeometries.length > 0) {
             const mergedTrunks = mergeGeometries(trunkGeometries);
             const trunkMesh = new THREE.Mesh(mergedTrunks, new THREE.MeshLambertMaterial({ color: 0x8B6508, flatShading: true }));
-            trunkMesh.castShadow = false;
+            trunkMesh.castShadow = true;
             this.scene.add(trunkMesh);
 
             const mergedFronds = mergeGeometries(frondGeometries);
             const frondMesh = new THREE.Mesh(mergedFronds, new THREE.MeshLambertMaterial({ color: 0x2d8a2d, side: THREE.DoubleSide, flatShading: true }));
-            frondMesh.castShadow = false;
+            frondMesh.castShadow = true;
             this.scene.add(frondMesh);
         }
 

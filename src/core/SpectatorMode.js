@@ -104,7 +104,7 @@ export class SpectatorMode {
             this.mode = 'follow';
             this._initialized = false;
             this._deathFreezeTimer = 0;
-            this.hud.setFollowMode();
+            this._pendingFollowHUD = true; // defer HUD until camera snaps
         }
     }
 
@@ -194,6 +194,12 @@ export class SpectatorMode {
         this.camera.position.copy(this._lerpPos);
         const euler = new THREE.Euler(this._lerpPitch, this._lerpYaw, 0, 'YXZ');
         this.camera.quaternion.setFromEuler(euler);
+
+        // Show follow HUD after camera has snapped to target
+        if (this._pendingFollowHUD) {
+            this._pendingFollowHUD = false;
+            this.hud.setFollowMode();
+        }
 
         // Allow mouse look offset in follow mode (pointer locked)
         if (this.input.isPointerLocked) {
