@@ -116,10 +116,17 @@ export class AIController {
         this.fireTimer = 0;
         this.fireInterval = 60 / def.fireRate;
         this.burstCount = 0;
-        this.burstMax = this.weaponId === 'LMG'
-            ? 20 + Math.floor(Math.random() * 10)
-            : 8 + Math.floor(Math.random() * 8);
+        this.burstMax = this.weaponId === 'BOLT' ? 1
+            : this.weaponId === 'LMG'
+                ? 20 + Math.floor(Math.random() * 10)
+                : 8 + Math.floor(Math.random() * 8);
         this.burstCooldown = 0;
+
+        // Bolt-action state
+        this.boltTimer = 0;
+        this._boltAimTimer = 0;
+        this._lastAimTarget = null; // track target changes for aim delay reset
+        this.isScoped = false;      // visual scope state (for spectator)
 
         // Magazine / reload
         this.magazineSize = def.magazineSize;
@@ -189,23 +196,27 @@ export class AIController {
 
     /**
      * Pick weapon based on personality weights.
+     * Sniper: 60% BOLT, 20% AR, 20% SMG.
      * Support/Defender: 60% LMG, 20% AR, 20% SMG.
-     * Others: 10% LMG, 45% AR, 45% SMG.
+     * Others: 5% BOLT, 10% LMG, 42.5% AR, 42.5% SMG.
      */
     _pickWeapon() {
         const role = this.personality.name;
         const r = Math.random();
+        if (role === 'Sniper') {
+            if (r < 0.6) return 'BOLT';
+            if (r < 0.8) return 'AR15';
+            return 'SMG';
+        }
         if (role === 'Support' || role === 'Defender') {
             if (r < 0.6) return 'LMG';
             if (r < 0.8) return 'AR15';
             return 'SMG';
         }
-        if (r < 0.10) return 'LMG';
-        if (r < 0.55) return 'AR15';
+        if (r < 0.05) return 'BOLT';
+        if (r < 0.15) return 'LMG';
+        if (r < 0.575) return 'AR15';
         return 'SMG';
-
-        // Debug: movement arc visualization (lazy-created)
-        this._debugArc = null;
     }
 
     _buildBehaviorTree() {
@@ -1040,7 +1051,32 @@ export class AIController {
             if (alliesOnSide >= 2) strafeSide *= -1;
         }
 
-        if (dist > 35) {
+        const isBolt = this.weaponId === 'BOLT';
+
+        if (isBolt) {
+            // BOLT: stay at back-line (~40-60m), retreat if too close, hold if in sweet spot
+            const idealMin = 40;
+            const idealMax = 60;
+            if (dist < idealMin) {
+                // Too close — back away while strafing
+                _tmpVec.copy(myPos);
+                _tmpVec.x += toEnemy.x * -10 + _strafeDir.x * strafeSide * 6;
+                _tmpVec.z += toEnemy.z * -10 + _strafeDir.z * strafeSide * 6;
+                this.moveTarget = _tmpVec.clone();
+            } else if (dist > idealMax) {
+                // Too far — close distance slightly
+                _tmpVec.copy(enemyPos);
+                _tmpVec.x += toEnemy.x * -idealMin + _strafeDir.x * strafeSide * 8;
+                _tmpVec.z += toEnemy.z * -idealMin + _strafeDir.z * strafeSide * 8;
+                this.moveTarget = _tmpVec.clone();
+            } else {
+                // Sweet spot — strafe only, maintain range
+                _tmpVec.copy(myPos);
+                _tmpVec.x += _strafeDir.x * strafeSide * 8;
+                _tmpVec.z += _strafeDir.z * strafeSide * 8;
+                this.moveTarget = _tmpVec.clone();
+            }
+        } else if (dist > 35) {
             // Far away: move toward enemy position directly — let A* handle routing
             _tmpVec.copy(enemyPos);
             this.moveTarget = _tmpVec.clone();
@@ -1095,13 +1131,25 @@ export class AIController {
             const baseAngle = (this.soldier.id / 12) * Math.PI * 2;
             const jitter = (Math.random() - 0.5) * 0.6;
             const angle = baseAngle + jitter;
-            const radius = 6 + Math.random() * 4; // 6-10m from flag
+            // BOLT COMs sit at outer edge (~20-25m) as overwatch; others 6-10m
+            const radius = this.weaponId === 'BOLT'
+                ? 20 + Math.random() * 5
+                : 6 + Math.random() * 4;
             this.moveTarget = flagPos.clone().add(
                 new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius)
             );
             this.missionPressure = 0.0;
         } else {
-            this.moveTarget = flagPos.clone();
+            // BOLT COMs don't rush to the flag center — stop at overwatch range
+            if (this.weaponId === 'BOLT' && dist < 25) {
+                const baseAngle = (this.soldier.id / 12) * Math.PI * 2;
+                const radius = 20 + Math.random() * 5;
+                this.moveTarget = flagPos.clone().add(
+                    new THREE.Vector3(Math.cos(baseAngle) * radius, 0, Math.sin(baseAngle) * radius)
+                );
+            } else {
+                this.moveTarget = flagPos.clone();
+            }
             this.missionPressure = 0.5;
         }
         this._validateMoveTarget();
@@ -1501,6 +1549,34 @@ export class AIController {
         this.fireTimer -= dt;
         this.burstCooldown -= dt;
 
+        // Bolt cycling timer
+        if (this.boltTimer > 0) {
+            this.boltTimer -= dt;
+            if (this.boltTimer <= 0) this.boltTimer = 0;
+        }
+
+        // BOLT aim delay: must aim at target for aiAimDelay seconds before firing
+        if (this.weaponDef.aiAimDelay) {
+            // Unscope during bolt cycling or reloading
+            if (this.boltTimer > 0 || this.isReloading) {
+                this.isScoped = false;
+            } else if (this.targetEnemy && this.targetEnemy.alive && this.hasReacted) {
+                if (this.targetEnemy !== this._lastAimTarget) {
+                    // Target changed → unscope and restart full aim delay
+                    this.isScoped = false;
+                    this._boltAimTimer = 0;
+                    this._lastAimTarget = this.targetEnemy;
+                }
+                this._boltAimTimer += dt;
+                // Scope in while aiming
+                this.isScoped = true;
+            } else {
+                this._boltAimTimer = 0;
+                this._lastAimTarget = null;
+                this.isScoped = false;
+            }
+        }
+
         // Spread recovery during burst cooldown or when not shooting
         // Recovery moves toward baseSpread (up for LMG after sustained fire, down for others)
         if (this.burstCooldown > 0 || !this.targetEnemy) {
@@ -1559,18 +1635,30 @@ export class AIController {
             return;
         }
 
+        // Block firing during bolt cycling
+        if (this.boltTimer > 0) return;
+
+        // Block firing during BOLT aim delay
+        if (this.weaponDef.aiAimDelay && this._boltAimTimer < this.weaponDef.aiAimDelay) return;
+
         if (this.fireTimer <= 0) {
             this.fireTimer += this.fireInterval;
             this._fireShot();
             this.currentAmmo--;
             this.burstCount++;
 
+            // Start bolt cycling after firing (BOLT only)
+            if (this.weaponDef.boltTime) {
+                this.boltTimer = this.weaponDef.boltTime;
+            }
+
             if (this.burstCount >= this.burstMax) {
                 this.burstCount = 0;
-                this.burstMax = this.weaponId === 'LMG'
-                    ? 20 + Math.floor(Math.random() * 10)
-                    : 6 + Math.floor(Math.random() * 8);
-                this.burstCooldown = 0.08 + Math.random() * 0.2;
+                this.burstMax = this.weaponId === 'BOLT' ? 1
+                    : this.weaponId === 'LMG'
+                        ? 20 + Math.floor(Math.random() * 10)
+                        : 6 + Math.floor(Math.random() * 8);
+                this.burstCooldown = this.weaponId === 'BOLT' ? 0 : 0.08 + Math.random() * 0.2;
             }
         }
     }
@@ -1755,9 +1843,15 @@ export class AIController {
         this.spreadIncreasePerShot = def.spreadIncreasePerShot;
         this.spreadRecoveryRate = def.spreadRecoveryRate;
         this.moveSpeed = 4.125 * (def.moveSpeedMult || 1.0);
-        this.burstMax = this.weaponId === 'LMG'
-            ? 20 + Math.floor(Math.random() * 10)
-            : 8 + Math.floor(Math.random() * 8);
+        this.burstMax = this.weaponId === 'BOLT' ? 1
+            : this.weaponId === 'LMG'
+                ? 20 + Math.floor(Math.random() * 10)
+                : 8 + Math.floor(Math.random() * 8);
+        // Reset bolt state
+        this.boltTimer = 0;
+        this._boltAimTimer = 0;
+        this._lastAimTarget = null;
+        this.isScoped = false;
         // Reset ammo and spread on respawn
         this.currentAmmo = this.magazineSize;
         this.isReloading = false;

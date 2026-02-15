@@ -235,6 +235,21 @@ export class Soldier {
             barrelGeo.rotateX(Math.PI / 2);
             barrelGeo.translate(0, 0.01, -0.15);
             geos.push(barrelGeo);
+        } else if (weaponId === 'BOLT') {
+            // Bolt-Action: long body + extra-long barrel + scope tube
+            const bodyGeo = new THREE.BoxGeometry(0.07, 0.07, 0.50);
+            geos.push(bodyGeo);
+
+            const barrelGeo = new THREE.CylinderGeometry(0.014, 0.014, 0.55, 6);
+            barrelGeo.rotateX(Math.PI / 2);
+            barrelGeo.translate(0, 0.01, -0.52);
+            geos.push(barrelGeo);
+
+            // Scope tube on top
+            const scopeGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.30, 8);
+            scopeGeo.rotateX(Math.PI / 2);
+            scopeGeo.translate(0, 0.07, -0.05);
+            geos.push(scopeGeo);
         } else {
             // AR-15: long body + long barrel
             const bodyGeo = new THREE.BoxGeometry(0.08, 0.08, 0.50);
@@ -511,9 +526,10 @@ export class Soldier {
             this.damageIndicatorTimer -= dt;
         }
 
-        // Reload tilt animation (tracked here, applied to shoulderPivot in AIController)
+        // Reload / bolt-cycling tilt animation (tracked here, applied to shoulderPivot in AIController)
         if (this.controller) {
-            const targetTilt = this.controller.isReloading ? 0.785 : 0;
+            const bolting = this.controller.boltTimer > 0;
+            const targetTilt = this.controller.isReloading ? 0.785 : (bolting ? 0.35 : 0);
             const tiltSpeed = this.controller.isReloading ? 12 : 8;
             this._gunReloadTilt += (targetTilt - this._gunReloadTilt) * Math.min(1, tiltSpeed * dt);
         }
