@@ -464,6 +464,7 @@ export class Soldier {
         this.body.angularVelocity.set(0, 0, 0);
         this.body.position.set(position.x, position.y + 1, position.z); // back to feet level
         this.body.velocity.set(0, 0, 0);
+        this.mesh.position.set(position.x, position.y + 1, position.z); // sync mesh immediately to avoid 1-frame flash at old position
         this.ragdollActive = false;
 
         // Kinematic AI soldiers don't need physics after respawn
