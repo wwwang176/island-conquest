@@ -121,7 +121,7 @@ export class GrenadeManager {
 
         // Distance-attenuated damage (may trigger die() → ragdoll)
         const dmg = def.damageCenter * (1 - dist / def.blastRadius);
-        target.takeDamage(dmg, pos, false);
+        target.takeDamage(dmg, pos, null);
 
         // Impulse after damage — if killed, ragdoll body is already set up by die()
         this._applyBlastImpulse(pos, target, def);

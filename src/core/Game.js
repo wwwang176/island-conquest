@@ -1136,8 +1136,7 @@ export class Game {
                 if (this.impactVFX) {
                     this.impactVFX.spawn('blood', hit.point, null);
                 }
-                const headshot = hit.point.y >= soldier.body.position.y + 1.45;
-                const result = soldier.takeDamage(hit.damage, this.player.getPosition(), headshot);
+                const result = soldier.takeDamage(hit.damage, this.player.getPosition(), hit.point.y);
                 this._showHitMarker();
                 if (result.killed) {
                     this.eventBus.emit('kill', {
@@ -1145,7 +1144,7 @@ export class Game {
                         killerTeam: this.player.team,
                         victimName: `${soldier.team === 'teamA' ? 'A' : 'B'}-${soldier.id}`,
                         victimTeam: soldier.team,
-                        headshot,
+                        headshot: result.headshot,
                         weapon: this.player.weapon.weaponId,
                     });
                 }

@@ -342,10 +342,13 @@ export class Player {
         this.camera.quaternion.setFromEuler(euler);
     }
 
-    takeDamage(amount, fromPosition, headshot = false) {
-        if (!this.alive) return { killed: false, damage: 0 };
+    takeDamage(amount, fromPosition, hitY = null) {
+        if (!this.alive) return { killed: false, damage: 0, headshot: false };
 
-        const actualDamage = headshot ? amount * 2 : amount;
+        const baseY = this.body.position.y;
+        const headshot = hitY !== null && hitY >= baseY + 1.45;
+        const legshot = hitY !== null && !headshot && hitY < baseY + 0.7;
+        const actualDamage = headshot ? amount * 2 : legshot ? amount * 0.5 : amount;
         this.hp = Math.max(0, this.hp - actualDamage);
         this.timeSinceLastDamage = 0;
 
@@ -360,9 +363,9 @@ export class Player {
 
         if (this.hp <= 0) {
             this.die();
-            return { killed: true, damage: actualDamage };
+            return { killed: true, damage: actualDamage, headshot };
         }
-        return { killed: false, damage: actualDamage };
+        return { killed: false, damage: actualDamage, headshot };
     }
 
     die() {

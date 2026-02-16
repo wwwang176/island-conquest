@@ -271,7 +271,7 @@ export class AIManager {
                 mesh: this.player.mesh,
                 body: this.player.body,
                 getPosition: () => this.player.getPosition(),
-                takeDamage: (amt, from, hs) => this.player.takeDamage(amt, from, hs),
+                takeDamage: (amt, from, hitY) => this.player.takeDamage(amt, from, hitY),
             }
             : null;
 

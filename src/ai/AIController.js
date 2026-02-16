@@ -355,6 +355,7 @@ export class AIController {
      * Handles BT decisions, threat scanning, movement.
      */
     update(dt, enemies, allies, collidables) {
+        this._dt = dt; // store for BT actions that need delta time
         if (!this.soldier.alive) {
             this._onDeath();
             return;
@@ -1158,7 +1159,7 @@ export class AIController {
         _strafeDir.set(toEnemy.z, 0, -toEnemy.x);
 
         // Random-interval strafe direction changes (replaces predictable sine wave)
-        this._strafeTimer -= dt;
+        this._strafeTimer -= this._dt;
         if (this._strafeTimer <= 0) {
             // When targeted, change direction more frequently
             const baseInterval = this.soldier.targetedByCount > 0 ? 0.25 : 0.4;
@@ -1904,8 +1905,7 @@ export class AIController {
                     if (this.impactVFX) {
                         this.impactVFX.spawn('blood', hitChar.point, _v1.copy(dir).negate());
                     }
-                    const headshot = hitChar.point.y >= enemy.body.position.y + 1.45;
-                    const result = enemy.takeDamage(dmg, myPos, headshot);
+                    const result = enemy.takeDamage(dmg, myPos, hitChar.point.y);
                     if (this.eventBus) {
                         this.eventBus.emit('aiHit', { soldier: this.soldier, killed: result.killed });
                     }
@@ -1916,7 +1916,7 @@ export class AIController {
                             killerTeam: this.team,
                             victimName: `${vTeam === 'teamA' ? 'A' : 'B'}-${enemy.id}`,
                             victimTeam: vTeam,
-                            headshot,
+                            headshot: result.headshot,
                             weapon: this.weaponId,
                         });
                     }
@@ -1927,14 +1927,14 @@ export class AIController {
                 if (this.impactVFX) {
                     this.impactVFX.spawn('blood', hitChar.point, _v1.copy(dir).negate());
                 }
-                const result = this._playerRef.takeDamage(dmg, myPos, false);
+                const result = this._playerRef.takeDamage(dmg, myPos, hitChar.point.y);
                 if (result.killed && this.eventBus) {
                     this.eventBus.emit('kill', {
                         killerName: myName,
                         killerTeam: this.team,
                         victimName: 'You',
                         victimTeam: this._playerRef.team,
-                        headshot: false,
+                        headshot: result.headshot,
                         weapon: this.weaponId,
                     });
                 }
