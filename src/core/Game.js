@@ -625,6 +625,51 @@ export class Game {
         this.scopeVignette = el;
     }
 
+    _weaponStatBars(weaponId) {
+        const def = WeaponDefs[weaponId];
+        // Derive max values from all gun-type weapons
+        let maxDmg = 0, maxRof = 0, maxRng = 0, maxSpread = 0, maxMob = 0;
+        for (const k in WeaponDefs) {
+            const w = WeaponDefs[k];
+            if (!w.fireRate) continue; // skip GRENADE etc.
+            if (w.damage > maxDmg) maxDmg = w.damage;
+            if (w.fireRate > maxRof) maxRof = w.fireRate;
+            if (w.maxRange > maxRng) maxRng = w.maxRange;
+            if (w.baseSpread > maxSpread) maxSpread = w.baseSpread;
+            if ((w.moveSpeedMult || 1) > maxMob) maxMob = w.moveSpeedMult || 1;
+        }
+        const stats = [
+            ['DMG', def.damage / maxDmg],
+            ['ROF', def.fireRate / maxRof],
+            ['RNG', def.maxRange / maxRng],
+            ['ACC', 1 - def.baseSpread / (maxSpread * 1.25)],
+            ['MOB', (def.moveSpeedMult || 1) / maxMob],
+        ];
+        const barW = 64;
+        return stats.map(([label, ratio]) => {
+            const pct = Math.round(Math.min(1, Math.max(0, ratio)) * 100);
+            return `<div style="display:flex;align-items:center;gap:5px;margin-top:3px;">
+                <span style="font-size:9px;color:#888;width:24px;text-align:right;">${label}</span>
+                <div style="width:${barW}px;height:5px;background:rgba(255,255,255,0.12);border-radius:2px;overflow:hidden;">
+                    <div style="width:${pct}%;height:100%;background:rgba(255,255,255,0.6);border-radius:2px;"></div>
+                </div>
+                <span style="font-size:9px;color:#aaa;width:20px;text-align:right;">${pct}</span>
+            </div>`;
+        }).join('');
+    }
+
+    _weaponCardHTML(idPrefix, num, weaponId, shortId, selected) {
+        const def = WeaponDefs[weaponId];
+        const border = selected ? '#4488ff' : '#888';
+        const bg = selected ? 'rgba(68,136,255,0.15)' : 'transparent';
+        return `<div id="${idPrefix}-${shortId}" style="border:2px solid ${border};border-radius:8px;padding:10px 14px;
+            background:${bg};cursor:default;min-width:140px;">
+            <div style="font-size:16px;font-weight:bold;">[${num}] ${def.name}</div>
+            <div style="font-size:11px;color:#aaa;margin-top:3px;">${def.fireRate} RPM &middot; ${def.magazineSize} rds</div>
+            ${this._weaponStatBars(weaponId)}
+        </div>`;
+    }
+
     _createJoinScreen() {
         const el = document.createElement('div');
         el.id = 'join-screen';
@@ -635,27 +680,11 @@ export class Game {
             <div style="color:white;font-family:Arial,sans-serif;text-align:center;">
                 <div id="join-team-label" style="font-size:28px;font-weight:bold;margin-bottom:16px;"></div>
                 <div style="font-size:14px;color:#aaa;margin-bottom:8px;">Select weapon:</div>
-                <div style="display:flex;gap:16px;justify-content:center;">
-                    <div id="join-wp-ar" style="border:2px solid #4488ff;border-radius:8px;padding:10px 18px;
-                        background:rgba(68,136,255,0.15);cursor:default;min-width:120px;">
-                        <div style="font-size:16px;font-weight:bold;">[1] AR-15</div>
-                        <div style="font-size:12px;color:#aaa;margin-top:4px;">600 RPM &middot; 30 rds</div>
-                    </div>
-                    <div id="join-wp-smg" style="border:2px solid #888;border-radius:8px;padding:10px 18px;
-                        background:transparent;cursor:default;min-width:120px;">
-                        <div style="font-size:16px;font-weight:bold;">[2] SMG</div>
-                        <div style="font-size:12px;color:#aaa;margin-top:4px;">900 RPM &middot; 35 rds</div>
-                    </div>
-                    <div id="join-wp-lmg" style="border:2px solid #888;border-radius:8px;padding:10px 18px;
-                        background:transparent;cursor:default;min-width:120px;">
-                        <div style="font-size:16px;font-weight:bold;">[3] LMG</div>
-                        <div style="font-size:12px;color:#aaa;margin-top:4px;">450 RPM &middot; 120 rds</div>
-                    </div>
-                    <div id="join-wp-bolt" style="border:2px solid #888;border-radius:8px;padding:10px 18px;
-                        background:transparent;cursor:default;min-width:120px;">
-                        <div style="font-size:16px;font-weight:bold;">[4] Bolt-Action</div>
-                        <div style="font-size:12px;color:#aaa;margin-top:4px;">40 RPM &middot; 5 rds</div>
-                    </div>
+                <div style="display:flex;gap:12px;justify-content:center;">
+                    ${this._weaponCardHTML('join-wp', 1, 'AR15', 'ar', true)}
+                    ${this._weaponCardHTML('join-wp', 2, 'SMG', 'smg', false)}
+                    ${this._weaponCardHTML('join-wp', 3, 'LMG', 'lmg', false)}
+                    ${this._weaponCardHTML('join-wp', 4, 'BOLT', 'bolt', false)}
                 </div>
                 <div style="font-size:16px;color:#aaa;margin-top:14px;">
                     Press <b>SPACE</b> to deploy &nbsp; | &nbsp; <b>ESC</b> to cancel
@@ -677,27 +706,11 @@ export class Game {
                 <div id="respawn-timer" style="font-size:20px;color:#ccc;"></div>
                 <div id="weapon-select" style="display:none;margin-top:18px;">
                     <div style="font-size:14px;color:#aaa;margin-bottom:8px;">Select weapon:</div>
-                    <div style="display:flex;gap:16px;justify-content:center;">
-                        <div id="weapon-ar" style="border:2px solid #4488ff;border-radius:8px;padding:10px 18px;
-                            background:rgba(68,136,255,0.15);cursor:default;min-width:120px;">
-                            <div style="font-size:16px;font-weight:bold;">[1] AR-15</div>
-                            <div style="font-size:12px;color:#aaa;margin-top:4px;">600 RPM &middot; 30 rds</div>
-                        </div>
-                        <div id="weapon-smg" style="border:2px solid #888;border-radius:8px;padding:10px 18px;
-                            background:transparent;cursor:default;min-width:120px;">
-                            <div style="font-size:16px;font-weight:bold;">[2] SMG</div>
-                            <div style="font-size:12px;color:#aaa;margin-top:4px;">900 RPM &middot; 35 rds</div>
-                        </div>
-                        <div id="weapon-lmg" style="border:2px solid #888;border-radius:8px;padding:10px 18px;
-                            background:transparent;cursor:default;min-width:120px;">
-                            <div style="font-size:16px;font-weight:bold;">[3] LMG</div>
-                            <div style="font-size:12px;color:#aaa;margin-top:4px;">450 RPM &middot; 120 rds</div>
-                        </div>
-                        <div id="weapon-bolt" style="border:2px solid #888;border-radius:8px;padding:10px 18px;
-                            background:transparent;cursor:default;min-width:120px;">
-                            <div style="font-size:16px;font-weight:bold;">[4] Bolt-Action</div>
-                            <div style="font-size:12px;color:#aaa;margin-top:4px;">40 RPM &middot; 5 rds</div>
-                        </div>
+                    <div style="display:flex;gap:12px;justify-content:center;">
+                        ${this._weaponCardHTML('weapon', 1, 'AR15', 'ar', true)}
+                        ${this._weaponCardHTML('weapon', 2, 'SMG', 'smg', false)}
+                        ${this._weaponCardHTML('weapon', 3, 'LMG', 'lmg', false)}
+                        ${this._weaponCardHTML('weapon', 4, 'BOLT', 'bolt', false)}
                     </div>
                 </div>
                 <div id="respawn-prompt" style="font-size:16px;color:#aaa;margin-top:10px;display:none;">
