@@ -404,7 +404,7 @@ export class AIController {
         if (!this.seekingCover) {
             this.currentPath = [];
             this.pathIndex = 0;
-            this._pathCooldown = 0;
+            this._pathCooldown *= 0.5;
         }
     }
 
