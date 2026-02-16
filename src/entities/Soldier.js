@@ -84,10 +84,10 @@ export class Soldier {
         const leftLeg = new THREE.Group();
         leftLeg.position.set(-0.13, 0.7, 0);
         const leftLegMesh = new THREE.Mesh(
-            new THREE.BoxGeometry(0.18, 0.55, 0.18),
+            new THREE.BoxGeometry(0.18, 0.70, 0.18),
             new THREE.MeshLambertMaterial({ color: limbColor })
         );
-        leftLegMesh.position.y = -0.275;
+        leftLegMesh.position.y = -0.35;
         leftLegMesh.castShadow = false;
         leftLeg.add(leftLegMesh);
         lowerBody.add(leftLeg);
@@ -96,10 +96,10 @@ export class Soldier {
         const rightLeg = new THREE.Group();
         rightLeg.position.set(0.13, 0.7, 0);
         const rightLegMesh = new THREE.Mesh(
-            new THREE.BoxGeometry(0.18, 0.55, 0.18),
+            new THREE.BoxGeometry(0.18, 0.70, 0.18),
             new THREE.MeshLambertMaterial({ color: limbColor })
         );
-        rightLegMesh.position.y = -0.275;
+        rightLegMesh.position.y = -0.35;
         rightLegMesh.castShadow = false;
         rightLeg.add(rightLegMesh);
         lowerBody.add(rightLeg);
