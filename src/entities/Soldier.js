@@ -22,6 +22,9 @@ export class Soldier {
         this.regenRate = 10;        // HP per second
         this.timeSinceLastDamage = Infinity;
 
+        // Targeting awareness — how many enemy controllers are aiming at me
+        this.targetedByCount = 0;
+
         // State
         this.alive = true;
         this.deathTimer = 0;
@@ -358,6 +361,11 @@ export class Soldier {
             return { killed: true, damage: actualDamage };
         }
 
+        // Notify AI controller for immediate reaction
+        if (this.controller && this.controller.onDamaged) {
+            this.controller.onDamaged();
+        }
+
         return { killed: false, damage: actualDamage };
     }
 
@@ -423,6 +431,7 @@ export class Soldier {
         this.alive = true;
         this.hp = this.maxHP;
         this.timeSinceLastDamage = Infinity;
+        this.targetedByCount = 0;
         this.mesh.visible = true;
         this.mesh.rotation.set(0, 0, 0);
 

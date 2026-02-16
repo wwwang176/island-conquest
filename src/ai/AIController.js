@@ -152,6 +152,17 @@ export class AIController {
         this.jumpVelY = 0;      // manual Y velocity for kinematic jumping
         this.isJumping = false;
 
+        // Reflex dodge — immediate lateral movement when first targeted
+        this._reflexDodgeTimer = 0;
+        this._reflexDodgeDirX = 0;
+        this._reflexDodgeDirZ = 0;
+        this._prevTargetedByCount = 0;
+
+        // Combat strafe — random interval direction changes
+        this._strafeTimer = 0;
+        this._strafeInterval = 0.4 + Math.random() * 0.4;
+        this._strafeSide = Math.random() > 0.5 ? 1 : -1;
+
         // ThreatMap (set by AIManager)
         this.threatMap = null;
         // Pathfinding
@@ -374,6 +385,30 @@ export class AIController {
     }
 
     /**
+     * Centralized target setter — maintains targetedByCount on soldiers.
+     */
+    _setTargetEnemy(enemy) {
+        if (this.targetEnemy === enemy) return;
+        if (this.targetEnemy) this.targetEnemy.targetedByCount--;
+        this.targetEnemy = enemy;
+        if (enemy) enemy.targetedByCount++;
+    }
+
+    /**
+     * Called by Soldier.takeDamage() — force immediate BT re-tick next frame
+     * so the COM reacts to being hit without waiting 150-550ms.
+     */
+    onDamaged() {
+        this.btTimer = this.btInterval; // triggers BT on next update()
+        // Clear current path so cover-seek recalculates from current position
+        if (!this.seekingCover) {
+            this.currentPath = [];
+            this.pathIndex = 0;
+            this._pathCooldown = 0;
+        }
+    }
+
+    /**
      * Continuous update — called EVERY frame for ALL alive AIs.
      * Handles aiming + shooting so fire rate is not throttled by stagger.
      */
@@ -413,6 +448,56 @@ export class AIController {
             this._pathCooldown = 0;
         }
         this._lastRiskLevel = this.riskLevel;
+
+        // Being targeted by enemy — force BT re-tick to seek cover
+        if (this.soldier.targetedByCount > 0 && !this.occupiedCover && !this.seekingCover) {
+            this.btTimer = this.btInterval;
+        }
+
+        // Reflex dodge: first frame being targeted → pick best dodge direction
+        const targeted = this.soldier.targetedByCount;
+        if (targeted > 0 && this._prevTargetedByCount === 0 && !this.occupiedCover) {
+            const myPos = this.soldier.getPosition();
+            if (this.targetEnemy && this.targetEnemy.alive) {
+                const ePos = this.targetEnemy.getPosition();
+                const toEX = ePos.x - myPos.x;
+                const toEZ = ePos.z - myPos.z;
+                const eLen = Math.sqrt(toEX * toEX + toEZ * toEZ);
+                const nX = eLen > 0.001 ? toEX / eLen : 0;
+                const nZ = eLen > 0.001 ? toEZ / eLen : 1;
+
+                // Three candidates: left, right, backward
+                const candidates = [
+                    { x:  nZ, z: -nX },  // left perpendicular
+                    { x: -nZ, z:  nX },  // right perpendicular
+                    { x: -nX, z: -nZ },  // backward (away from enemy)
+                ];
+
+                // Pick safest direction via ThreatMap, fallback to random
+                const checkDist = 3;
+                let bestDir = candidates[Math.floor(Math.random() * 3)];
+                if (this.threatMap) {
+                    let bestThreat = Infinity;
+                    for (const c of candidates) {
+                        const t = this.threatMap.getThreat(
+                            myPos.x + c.x * checkDist, myPos.z + c.z * checkDist);
+                        if (t < bestThreat) { bestThreat = t; bestDir = c; }
+                    }
+                }
+                this._reflexDodgeDirX = bestDir.x;
+                this._reflexDodgeDirZ = bestDir.z;
+            } else {
+                // No known enemy — random direction
+                const angle = Math.random() * Math.PI * 2;
+                this._reflexDodgeDirX = Math.cos(angle);
+                this._reflexDodgeDirZ = Math.sin(angle);
+            }
+            this._reflexDodgeTimer = 0.4;
+        }
+        this._prevTargetedByCount = targeted;
+
+        // Decay reflex dodge timer
+        if (this._reflexDodgeTimer > 0) this._reflexDodgeTimer -= dt;
 
         this._updateMovement(dt);
         this._updateSoldierVisual(dt);
@@ -484,7 +569,7 @@ export class AIController {
         // Target switching: only switch if new target is significantly closer
         if (closestEnemy) {
             if (this.targetEnemy !== closestEnemy) {
-                this.targetEnemy = closestEnemy;
+                this._setTargetEnemy(closestEnemy);
                 this.hasReacted = false;
                 this.reactionTimer = this.personality.reactionTime / 1000 +
                     (Math.random() * 0.15);
@@ -496,7 +581,7 @@ export class AIController {
                 );
             }
         } else {
-            this.targetEnemy = null;
+            this._setTargetEnemy(null);
             this.hasReacted = false;
         }
     }
@@ -1020,7 +1105,7 @@ export class AIController {
     _actionEngage() {
         // Move and shoot
         if (!this.targetEnemy || !this.targetEnemy.alive) {
-            this.targetEnemy = null;
+            this._setTargetEnemy(null);
             return BTState.FAILURE;
         }
 
@@ -1049,7 +1134,18 @@ export class AIController {
         // Strafe while shooting (move perpendicular to enemy)
         const toEnemy = _v1.subVectors(enemyPos, myPos).normalize();
         _strafeDir.set(toEnemy.z, 0, -toEnemy.x);
-        let strafeSide = Math.sin(Date.now() * 0.002 + this.soldier.id * 7) > 0 ? 1 : -1;
+
+        // Random-interval strafe direction changes (replaces predictable sine wave)
+        this._strafeTimer -= dt;
+        if (this._strafeTimer <= 0) {
+            // When targeted, change direction more frequently
+            const baseInterval = this.soldier.targetedByCount > 0 ? 0.25 : 0.4;
+            this._strafeInterval = baseInterval + Math.random() * 0.4;
+            this._strafeTimer = this._strafeInterval;
+            // Flip direction, with 20% chance of a fake-out (stay same side)
+            this._strafeSide = Math.random() > 0.2 ? -this._strafeSide : this._strafeSide;
+        }
+        let strafeSide = this._strafeSide;
 
         // Ally-aware strafe: if an ally is already on the chosen side, flip
         if (this.allies) {
@@ -1296,6 +1392,29 @@ export class AIController {
             this.facingDir.lerp(_v2, turnRate).normalize();
         }
 
+        // Reflex dodge: lateral movement even without moveTarget
+        if (this._reflexDodgeTimer > 0 && !this.moveTarget) {
+            const speed = this.moveSpeed;
+            const rdx = this._reflexDodgeDirX * speed * dt;
+            const rdz = this._reflexDodgeDirZ * speed * dt;
+            let nx = body.position.x + rdx;
+            let nz = body.position.z + rdz;
+            // NavGrid check
+            let blocked = false;
+            if (this.navGrid) {
+                const g = this.navGrid.worldToGrid(nx, nz);
+                if (!this.navGrid.isWalkable(g.col, g.row)) blocked = true;
+            }
+            if (!blocked) {
+                const gy = this.getHeightAt(nx, nz);
+                body.position.x = nx;
+                body.position.z = nz;
+                if (!this.isJumping) body.position.y = gy + 0.05;
+            }
+            this.lastPos.copy(myPos);
+            return;
+        }
+
         if (!this.moveTarget) return;
 
         // Request A* path if available
@@ -1368,6 +1487,15 @@ export class AIController {
         }
 
         _v1.normalize();
+
+        // ── Reflex dodge blend: inject lateral offset while dodging ──
+        if (this._reflexDodgeTimer > 0) {
+            const dodgeWeight = 0.5; // blend 50% dodge into movement
+            _v1.x = _v1.x * (1 - dodgeWeight) + this._reflexDodgeDirX * dodgeWeight;
+            _v1.z = _v1.z * (1 - dodgeWeight) + this._reflexDodgeDirZ * dodgeWeight;
+            const rLen = Math.sqrt(_v1.x * _v1.x + _v1.z * _v1.z);
+            if (rLen > 0.001) { _v1.x /= rLen; _v1.z /= rLen; }
+        }
 
         // ── Ally separation force ──
         // Strength scales with context: high risk → strong, combat → moderate, idle → mild
@@ -1837,13 +1965,15 @@ export class AIController {
 
     _onDeath() {
         this._releaseCover();
-        this.targetEnemy = null;
+        this._setTargetEnemy(null);
         this.suppressionTarget = null;
         this.suppressionTimer = 0;
         this.fallbackTarget = null;
         this.rushTarget = null;
         this.rushReady = false;
         this.crossfirePos = null;
+        this._reflexDodgeTimer = 0;
+        this._prevTargetedByCount = 0;
         if (this._tacLabel) this._tacLabel.visible = false;
         this._tacLabelText = '';
         this._previouslyVisible.clear();
