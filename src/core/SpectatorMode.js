@@ -81,6 +81,10 @@ export class SpectatorMode {
             } else if (this._deathFreezeTimer <= 0) {
                 // Tracked soldier died — freeze camera, then switch after delay
                 this._deathFreezeTimer = 1.0;
+                // Immediately show 0 HP on HUD
+                const name = `${this._trackedSoldier.team === 'teamA' ? 'A' : 'B'}-${this._trackedSoldier.id}`;
+                const role = this._trackedSoldier.controller ? this._trackedSoldier.controller.personality.name : '';
+                this.hud.updateTarget(name, role, this._trackedSoldier.team, 0, this._trackedSoldier.maxHP);
             }
         }
     }
