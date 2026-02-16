@@ -84,6 +84,7 @@ export class AIController {
         // Suppression state (set by SquadCoordinator)
         this.suppressionTarget = null;  // TeamIntel contact
         this.suppressionTimer = 0;
+        this._suppressBlockedCount = 0; // consecutive frames where own cover blocks fire
 
         // Tactical state (set by SquadCoordinator)
         this.fallbackTarget = null;   // Vector3 | null
@@ -1003,6 +1004,27 @@ export class AIController {
             this.aimPoint.x += (Math.random() - 0.5) * 3;
             this.aimPoint.z += (Math.random() - 0.5) * 3;
         }
+
+        // LOS clearance check — make sure own cover doesn't block the shot
+        const aimDir = _v1.subVectors(this.aimPoint, _v2).normalize();
+        _raycaster.set(_v2, aimDir);
+        _raycaster.far = _v2.distanceTo(this.aimPoint);
+        const blockHits = _raycaster.intersectObjects(this.collidables, true);
+        if (blockHits.length > 0 && blockHits[0].distance < _raycaster.far * 0.8) {
+            // Shot blocked by nearby obstacle (own cover) — don't fire
+            this._suppressBlockedCount++;
+            if (this._suppressBlockedCount >= 3) {
+                // Give up suppression after 3 consecutive blocked attempts
+                this.suppressionTarget = null;
+                this.suppressionTimer = 0;
+                this._suppressBlockedCount = 0;
+                return BTState.FAILURE;
+            }
+            this.hasReacted = false;
+            return BTState.RUNNING;
+        }
+        this._suppressBlockedCount = 0;
+
         this.aimOffset.set(0, 0, 0);
         this.hasReacted = true; // allow shooting
 
@@ -1968,6 +1990,7 @@ export class AIController {
         this._setTargetEnemy(null);
         this.suppressionTarget = null;
         this.suppressionTimer = 0;
+        this._suppressBlockedCount = 0;
         this.fallbackTarget = null;
         this.rushTarget = null;
         this.rushReady = false;
