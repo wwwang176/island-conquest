@@ -374,6 +374,7 @@ export class Game {
         const sy = this.island.getHeightAt(sx, sz) + 2;
         this.player.body.position.set(sx, sy, sz);
         this.player.body.velocity.set(0, 0, 0);
+        this.player._prevSpace = true; // suppress jump from Space used to join
 
         // Register with AI
         this.aiManager.setPlayer(this.player);

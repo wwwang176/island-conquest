@@ -53,6 +53,9 @@ export class Player {
         this.grenadeManager = null; // set by Game
         this._grenadePrevDown = false;
 
+        // Jump edge detection (prevent jump on spawn frame)
+        this._prevSpace = false;
+
         // Scope state
         this._prevRightMouse = false;
 
@@ -219,11 +222,13 @@ export class Player {
         if (this.input.isKeyDown('KeyA')) _moveDir.sub(_right);
         if (this.input.isKeyDown('KeyD')) _moveDir.add(_right);
 
-        // Manual jump (check before movement so player can jump in place)
-        if (this.input.isKeyDown('Space') && !this.isJumping) {
+        // Manual jump (edge-triggered to avoid jump on spawn/respawn frame)
+        const spaceDown = this.input.isKeyDown('Space');
+        if (spaceDown && !this._prevSpace && !this.isJumping) {
             this.isJumping = true;
             this.jumpVelY = this.jumpSpeed;
         }
+        this._prevSpace = spaceDown;
 
         if (_moveDir.lengthSq() > 0) {
             _moveDir.normalize();
@@ -398,6 +403,7 @@ export class Player {
         this.body.velocity.set(0, 0, 0);
         this.isJumping = false;
         this.jumpVelY = 0;
+        this._prevSpace = true; // suppress jump on spawn frame
         this.grenadeCount = WeaponDefs.GRENADE.maxPerLife;
         this.grenadeCooldown = 0;
         this.eventBus.emit('playerRespawned');

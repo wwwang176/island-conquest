@@ -1774,11 +1774,8 @@ export class AIController {
             return;
         }
 
-        // Auto-reload when empty (staggered: wait if squadmate reloading)
+        // Auto-reload when empty (immediate — no stagger, can't fight with 0 ammo)
         if (this.currentAmmo <= 0) {
-            if (this.squad && !this.squad.canReload(this)) {
-                return; // squadmate reloading — wait
-            }
             this.isReloading = true;
             this.reloadTimer = this.reloadTime;
             this.fireTimer = 0;
