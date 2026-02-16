@@ -5,6 +5,8 @@ import { WeaponDefs } from '../entities/WeaponDefs.js';
 
 const _up = new THREE.Vector3(0, 1, 0);
 const _diff = new THREE.Vector3();
+const _splashPos = new THREE.Vector3();
+const WATER_Y = -0.3;
 
 /**
  * Manages all active grenades — spawning, updating, and explosion handling.
@@ -43,6 +45,13 @@ export class GrenadeManager {
         for (let i = this.grenades.length - 1; i >= 0; i--) {
             const grenade = this.grenades[i];
             const result = grenade.update(dt);
+
+            // Water splash on entry
+            if (!grenade._waterSplashed && grenade.body.position.y <= WATER_Y && this.impactVFX) {
+                grenade._waterSplashed = true;
+                _splashPos.set(grenade.body.position.x, WATER_Y, grenade.body.position.z);
+                this.impactVFX.spawn('water', _splashPos, _up);
+            }
 
             if (result) {
                 // Exploded
@@ -101,6 +110,27 @@ export class GrenadeManager {
                     headshot: false,
                     weapon: 'GRENADE',
                 });
+            }
+        }
+
+        // Push dropped guns
+        if (this.droppedGunManager) {
+            for (const gun of this.droppedGunManager.guns) {
+                const bp = gun.body.position;
+                _diff.set(bp.x - pos.x, bp.y - pos.y, bp.z - pos.z);
+                const dist = _diff.length();
+                if (dist < def.blastRadius) {
+                    const falloff = 1 - dist / def.blastRadius;
+                    const strength = 50 * falloff;
+                    _diff.normalize();
+                    gun.body.applyImpulse(
+                        new CANNON.Vec3(
+                            _diff.x * strength,
+                            strength * 0.7,
+                            _diff.z * strength
+                        )
+                    );
+                }
             }
         }
 

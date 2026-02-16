@@ -12,6 +12,7 @@ export class Grenade {
         this.throwerName = throwerName;
         this.fuseTime = fuseTime;
         this.alive = true;
+        this._waterSplashed = false;
 
         // Visual — small dark sphere
         const geo = new THREE.SphereGeometry(0.08, 8, 6);

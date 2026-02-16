@@ -3,6 +3,10 @@ import * as CANNON from 'cannon-es';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WeaponDefs, GunAnim } from './WeaponDefs.js';
 
+const WATER_Y = -0.3;
+const _splashPos = new THREE.Vector3();
+const _upDir = new THREE.Vector3(0, 1, 0);
+
 /**
  * Base soldier entity with health, damage, death, and regen.
  * Used by both Player and AI COM.
@@ -56,6 +60,13 @@ export class Soldier {
 
         // Ragdoll death effect
         this.ragdollActive = false;
+        this._waterSplashed = false;
+
+        // VFX reference (set by AIManager/Game)
+        this.impactVFX = null;
+
+        // Dropped gun manager (set by Game)
+        this.droppedGunManager = null;
 
         // Last movement velocity (for death momentum inheritance)
         this.lastMoveVelocity = new THREE.Vector3();
@@ -424,6 +435,34 @@ export class Soldier {
         // Inherit walking momentum
         this.body.velocity.x += this.lastMoveVelocity.x;
         this.body.velocity.z += this.lastMoveVelocity.z;
+
+        // Drop gun
+        if (this.droppedGunManager && this.gunMesh) {
+            // Get gun world transform before hiding
+            this.gunMesh.updateWorldMatrix(true, false);
+            const worldPos = new THREE.Vector3();
+            const worldQuat = new THREE.Quaternion();
+            this.gunMesh.getWorldPosition(worldPos);
+            this.gunMesh.getWorldQuaternion(worldQuat);
+
+            const vel = new THREE.Vector3(
+                this.lastMoveVelocity.x,
+                0,
+                this.lastMoveVelocity.z
+            );
+
+            let impulseDir = null;
+            if (fromPosition) {
+                impulseDir = new THREE.Vector3(
+                    this.body.position.x - fromPosition.x,
+                    0,
+                    this.body.position.z - fromPosition.z
+                ).normalize();
+            }
+
+            this.droppedGunManager.spawn(this.gunMesh, worldPos, worldQuat, vel, impulseDir);
+            this.gunMesh.visible = false;
+        }
     }
 
     /**
@@ -436,6 +475,7 @@ export class Soldier {
         this.timeSinceLastDamage = Infinity;
         this.targetedByCount = 0;
         this.mesh.visible = true;
+        if (this.gunMesh) this.gunMesh.visible = true;
         this.mesh.rotation.set(0, 0, 0);
 
         // Reset body part rotations
@@ -478,6 +518,7 @@ export class Soldier {
         this.body.velocity.set(0, 0, 0);
         this.mesh.position.set(position.x, position.y + 1, position.z); // sync mesh immediately to avoid 1-frame flash at old position
         this.ragdollActive = false;
+        this._waterSplashed = false;
 
         // Kinematic AI soldiers don't need physics after respawn
         if (this.kinematic) {
@@ -513,6 +554,13 @@ export class Soldier {
                     this.body.position.y + ry,
                     this.body.position.z + rz
                 );
+                // Water splash on ragdoll entering water
+                if (!this._waterSplashed && this.body.position.y <= WATER_Y && this.impactVFX) {
+                    this._waterSplashed = true;
+                    _splashPos.set(this.body.position.x, WATER_Y, this.body.position.z);
+                    this.impactVFX.spawn('water', _splashPos, _upDir);
+                }
+
                 // Stop ragdoll when timer runs out (about to respawn)
                 if (this.deathTimer <= 0.5) {
                     this.ragdollActive = false;

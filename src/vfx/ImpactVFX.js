@@ -17,7 +17,7 @@ const PARTICLE_TYPES = {
     },
     water: {
         colors: [new THREE.Color(0xffffff), new THREE.Color(0xeeeeff)],
-        count: 10,
+        count: 20,
         sizeMin: 0.3, sizeMax: 0.625,
         life: 0.5,
         speedMin: 3, speedMax: 6,

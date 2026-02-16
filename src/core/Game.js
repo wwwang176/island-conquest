@@ -15,6 +15,7 @@ import { AIController } from '../ai/AIController.js';
 import { TracerSystem } from '../vfx/TracerSystem.js';
 import { ImpactVFX } from '../vfx/ImpactVFX.js';
 import { GrenadeManager } from '../systems/GrenadeManager.js';
+import { DroppedGunManager } from '../systems/DroppedGunManager.js';
 import { Minimap } from '../ui/Minimap.js';
 import { KillFeed } from '../ui/KillFeed.js';
 import { SpectatorMode } from './SpectatorMode.js';
@@ -87,10 +88,23 @@ export class Game {
         );
         this.aiManager.tracerSystem = this.tracerSystem;
         this.aiManager.impactVFX = this.impactVFX;
+        // Dropped gun manager
+        this.droppedGunManager = new DroppedGunManager(this.scene, this.physics, this.impactVFX);
+
+        // Give soldiers impactVFX + droppedGunManager references
+        for (const s of this.aiManager.teamA.soldiers) {
+            s.impactVFX = this.impactVFX;
+            s.droppedGunManager = this.droppedGunManager;
+        }
+        for (const s of this.aiManager.teamB.soldiers) {
+            s.impactVFX = this.impactVFX;
+            s.droppedGunManager = this.droppedGunManager;
+        }
 
         // Grenade manager
         this.grenadeManager = new GrenadeManager(this.scene, this.physics, this.impactVFX, this.eventBus);
         this.aiManager.grenadeManager = this.grenadeManager;
+        this.grenadeManager.droppedGunManager = this.droppedGunManager;
 
         this._threatVisState = 0; // 0=off, 1=teamA, 2=teamB
         this._intelVisState = 0; // 0=off, 1=teamA, 2=teamB
@@ -1135,7 +1149,19 @@ export class Game {
     // ───── Events ─────
 
     _onPlayerDied() {
-        // Could add kill feed entry here later
+        // Drop the player's gun
+        if (this.player && this.droppedGunManager) {
+            const pos = this.player.getPosition();
+            pos.y += this.player.cameraHeight * 0.8; // gun height
+            const vel = this.player.lastMoveVelocity.clone();
+            let impulseDir = null;
+            if (this.player.lastDamageDirection) {
+                impulseDir = this.player.lastDamageDirection.clone().negate();
+            }
+            this.droppedGunManager.spawnFromWeaponId(
+                this.player.selectedWeaponId, pos, vel, impulseDir
+            );
+        }
     }
 
     _onPlayerHit(hit) {
@@ -1288,6 +1314,9 @@ export class Game {
         for (const s of this.aiManager.teamA.soldiers) allSoldiersBuf.push(s);
         for (const s of this.aiManager.teamB.soldiers) allSoldiersBuf.push(s);
         this.grenadeManager.update(dt, allSoldiersBuf, this.player);
+
+        // Update dropped guns
+        this.droppedGunManager.update(dt);
 
         if (this.gameMode === 'spectator' || this.gameMode === 'joining') {
             // Spectator camera

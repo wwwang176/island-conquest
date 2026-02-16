@@ -219,6 +219,12 @@ export class Player {
         if (this.input.isKeyDown('KeyA')) _moveDir.sub(_right);
         if (this.input.isKeyDown('KeyD')) _moveDir.add(_right);
 
+        // Manual jump (check before movement so player can jump in place)
+        if (this.input.isKeyDown('Space') && !this.isJumping) {
+            this.isJumping = true;
+            this.jumpVelY = this.jumpSpeed;
+        }
+
         if (_moveDir.lengthSq() > 0) {
             _moveDir.normalize();
         } else {
@@ -277,11 +283,6 @@ export class Player {
             }
         }
 
-        // Manual jump
-        if (this.input.isKeyDown('Space') && !this.isJumping) {
-            this.isJumping = true;
-            this.jumpVelY = this.jumpSpeed;
-        }
     }
 
     _handleShooting(dt) {
