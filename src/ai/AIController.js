@@ -17,10 +17,10 @@ const _tmpVec = new THREE.Vector3();
 const _targetMeshes = [];
 
 const EYE_HEIGHT = 1.5;
+const HEAD_TOP_HEIGHT = 1.7;
 
-/** Grid-based Bresenham LOS check using ThreatMap heightGrid. */
-function _hasGridLOS(tm, c0, r0, eyeY0, c1, r1) {
-    const eyeY1 = tm.heightGrid[r1 * tm.cols + c1] + EYE_HEIGHT;
+/** Bresenham walk: returns true if ray from eyeY0 to targetY1 is unblocked. */
+function _bresenhamClear(tm, c0, r0, eyeY0, c1, r1, targetY1) {
     let nc = c0, nr = r0;
     const dc = Math.abs(c1 - c0), dr = Math.abs(r1 - r0);
     const sc = c0 < c1 ? 1 : -1, sr = r0 < r1 ? 1 : -1;
@@ -31,7 +31,7 @@ function _hasGridLOS(tm, c0, r0, eyeY0, c1, r1) {
         if (!(nc === c0 && nr === r0)) {
             if (totalSteps > 0) {
                 const t = step / totalSteps;
-                const expectedY = eyeY0 + (eyeY1 - eyeY0) * t;
+                const expectedY = eyeY0 + (targetY1 - eyeY0) * t;
                 const cellY = tm.heightGrid[nr * tm.cols + nc];
                 if (cellY > expectedY) return false;
             }
@@ -42,6 +42,18 @@ function _hasGridLOS(tm, c0, r0, eyeY0, c1, r1) {
         if (e2 > -dr) { err -= dr; nc += sc; }
         if (e2 < dc) { err += dc; nr += sr; }
     }
+}
+
+/**
+ * Grid-based Bresenham LOS check using ThreatMap heightGrid.
+ * Dual-ray: first eye→eye, if blocked try eye→head-top.
+ * Returns: 0 = not visible, 1 = body visible, 2 = head-only visible.
+ */
+function _hasGridLOS(tm, c0, r0, eyeY0, c1, r1) {
+    const baseY1 = tm.heightGrid[r1 * tm.cols + c1];
+    if (_bresenhamClear(tm, c0, r0, eyeY0, c1, r1, baseY1 + EYE_HEIGHT)) return 1;
+    if (_bresenhamClear(tm, c0, r0, eyeY0, c1, r1, baseY1 + HEAD_TOP_HEIGHT)) return 2;
+    return 0;
 }
 
 /** Lerp between two angles handling wraparound. */
@@ -78,6 +90,7 @@ export class AIController {
 
         // Target management
         this.targetEnemy = null;
+        this._targetLOSLevel = 1; // 1=body visible, 2=head-only
         this.targetFlag = null;
         this.moveTarget = null;
 
@@ -539,9 +552,11 @@ export class AIController {
             if (dot < -0.2) continue; // behind us (~120° FOV)
 
             // Line of sight check — use fast grid Bresenham instead of raycaster
+            let losLevel = 1; // default: fully visible (no grid LOS available)
             if (useGridLOS) {
                 const eGrid = tm._worldToGrid(ePos.x, ePos.z);
-                if (!_hasGridLOS(tm, myGrid.col, myGrid.row, myEyeY, eGrid.col, eGrid.row)) continue;
+                losLevel = _hasGridLOS(tm, myGrid.col, myGrid.row, myEyeY, eGrid.col, eGrid.row);
+                if (losLevel === 0) continue;
             }
 
             currentlyVisible.add(enemy);
@@ -554,6 +569,7 @@ export class AIController {
             if (dist < closestDist) {
                 closestDist = dist;
                 closestEnemy = enemy;
+                this._targetLOSLevel = losLevel;
             }
         }
 
@@ -583,6 +599,7 @@ export class AIController {
                 );
             }
         } else {
+            this._targetLOSLevel = 1;
             this._setTargetEnemy(null);
             this.hasReacted = false;
         }
@@ -1704,10 +1721,10 @@ export class AIController {
             return;
         }
 
-        // Aim at enemy center mass with offset
+        // Aim at enemy — head-only if only head is exposed, otherwise center mass
         const enemyPos = this.targetEnemy.getPosition();
         this.aimPoint.copy(enemyPos);
-        this.aimPoint.y += 1.2;
+        this.aimPoint.y += this._targetLOSLevel === 2 ? 1.6 : 1.2;
 
         // Gradually reduce aim offset
         this.aimOffset.multiplyScalar(1 - this.aimCorrectionSpeed * dt);
