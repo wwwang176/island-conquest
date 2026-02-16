@@ -1064,6 +1064,17 @@ export class AIController {
         }
 
         if (dist > 8) {
+            // Opportunistic grenade: lob toward flag if enemies are defending it
+            if (this.grenadeCount > 0 && this.grenadeCooldown <= 0 && dist >= 8 && dist <= 40 && this.teamIntel) {
+                const threats = this.teamIntel.getKnownEnemies({
+                    minConfidence: 0.15, maxDist: 18, fromPos: this.rushTarget,
+                });
+                if (threats.length > 0) {
+                    this._grenadeTargetPos = this.rushTarget;
+                    this._actionThrowGrenade();
+                }
+            }
+
             // Rush active — charge the flag
             this.moveTarget = this.rushTarget.clone();
             this._validateMoveTarget();
