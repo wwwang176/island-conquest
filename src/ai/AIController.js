@@ -185,6 +185,8 @@ export class AIController {
         this._engageTimer = 0;        // time engaging same enemy
         this._lastEngageEnemy = null;  // track which enemy we're timing
         this._grenadeTargetPos = null; // set by _shouldThrowGrenade, used by _actionThrowGrenade
+        this._grenadeThrowTimer = 0;   // visual look-up timer after throwing
+        this._grenadeThrowPitch = 0;   // pitch angle to look at during throw
         this.grenadeManager = null;    // set by AIManager
 
         // Flag deficit (positive = behind, set by AIManager each frame)
@@ -389,6 +391,7 @@ export class AIController {
 
         // Decay grenade cooldown
         if (this.grenadeCooldown > 0) this.grenadeCooldown -= dt;
+        if (this._grenadeThrowTimer > 0) this._grenadeThrowTimer -= dt;
 
         // Track engage timer (how long fighting the same enemy)
         if (this.targetEnemy && this.targetEnemy.alive && this.hasReacted) {
@@ -795,6 +798,17 @@ export class AIController {
 
         this.grenadeCount--;
         this.grenadeCooldown = def.cooldown;
+
+        // Visual: look up toward throw angle
+        this._grenadeThrowPitch = Math.atan2(vy, vHoriz);
+        this._grenadeThrowTimer = 0.5;
+        // Set aimPoint for spectator camera
+        const throwDist = 8;
+        this.aimPoint.set(
+            myPos.x + _grenadeDir.x * throwDist,
+            myPos.y + 1.5 + Math.tan(this._grenadeThrowPitch) * throwDist,
+            myPos.z + _grenadeDir.z * throwDist
+        );
 
         // Brief pause after throwing (don't shoot for 0.5s)
         this.fireTimer = 0.5;
@@ -1866,6 +1880,8 @@ export class AIController {
         this._engageTimer = 0;
         this._lastEngageEnemy = null;
         this._grenadeTargetPos = null;
+        this._grenadeThrowTimer = 0;
+        this._grenadeThrowPitch = 0;
         // Reset visual state
         this._smoothAimPitch = 0;
         // Reset jump state
@@ -2048,7 +2064,9 @@ export class AIController {
             // Pitch only the shoulder pivot (arms + gun), torso stays upright
             if (soldier.shoulderPivot) {
                 let targetPitch = 0;
-                if ((this.targetEnemy && this.targetEnemy.alive && this.hasReacted) || this._preAimActive) {
+                if (this._grenadeThrowTimer > 0) {
+                    targetPitch = this._grenadeThrowPitch;
+                } else if ((this.targetEnemy && this.targetEnemy.alive && this.hasReacted) || this._preAimActive) {
                     const dx = this.aimPoint.x - myPos.x;
                     const dy = this.aimPoint.y - (myPos.y + 1.35);
                     const dz = this.aimPoint.z - myPos.z;

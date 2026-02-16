@@ -161,7 +161,7 @@ export class SpectatorMode {
 
         // Pitch from aim point (if aiming at enemy or pre-aiming intel contact)
         let pitch = 0;
-        if ((controller.targetEnemy && controller.hasReacted) || controller._preAimActive) {
+        if (controller._grenadeThrowTimer > 0 || (controller.targetEnemy && controller.hasReacted) || controller._preAimActive) {
             const aimTarget = controller.aimPoint;
             const dx = aimTarget.x - headPos.x;
             const dy = aimTarget.y - headPos.y;
