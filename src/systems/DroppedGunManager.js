@@ -39,7 +39,7 @@ export class DroppedGunManager {
         const size = new THREE.Vector3();
         box.getSize(size);
         const hx = Math.max(size.x, 0.05) / 2;
-        const hy = Math.max(size.y, 0.05) / 2;
+        const hy = Math.min(Math.max(size.y, 0.05) / 2, 0.03);
         const hz = Math.max(size.z, 0.05) / 2;
 
         // Physics body
