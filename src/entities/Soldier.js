@@ -7,6 +7,23 @@ const WATER_Y = -0.3;
 const _splashPos = new THREE.Vector3();
 const _upDir = new THREE.Vector3(0, 1, 0);
 
+/** Create a trapezoid stock from a BoxGeometry: flat top, bottom slopes down toward back. */
+function trapezoidGeo(w, frontH, backH, depth, cx, topY, zFront) {
+    const geo = new THREE.BoxGeometry(w, backH, depth);
+    const pos = geo.attributes.position;
+    const halfD = depth / 2, halfH = backH / 2;
+    for (let i = 0; i < pos.count; i++) {
+        if (pos.getY(i) < 0) {
+            const t = (pos.getZ(i) + halfD) / depth;
+            pos.setY(i, halfH - (frontH + (backH - frontH) * t));
+        }
+    }
+    pos.needsUpdate = true;
+    geo.translate(cx, topY - halfH, zFront + halfD);
+    geo.computeVertexNormals();
+    return geo;
+}
+
 /**
  * Base soldier entity with health, damage, death, and regen.
  * Used by both Player and AI COM.
@@ -202,6 +219,72 @@ export class Soldier {
         geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     }
 
+    /**
+     * Build a shared gun mesh for the given weapon ID (centered at origin).
+     * Used by third-person view, first-person view, and dropped guns.
+     */
+    static buildGunMesh(weaponId) {
+        const geos = [];
+
+        if (weaponId === 'LMG') {
+            const bodyGeo = new THREE.BoxGeometry(0.10, 0.10, 0.50);
+            geos.push(bodyGeo);
+            const barrelGeo = new THREE.CylinderGeometry(0.022, 0.022, 0.35, 6);
+            barrelGeo.rotateX(Math.PI / 2);
+            barrelGeo.translate(0, 0.01, -0.42);
+            geos.push(barrelGeo);
+            const drumGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.08, 8);
+            drumGeo.translate(0, -0.10, 0.05);
+            geos.push(drumGeo);
+            // Trapezoid stock
+            geos.push(trapezoidGeo(0.06, 0.06, 0.12, 0.25, 0, 0.03, 0.22));
+        } else if (weaponId === 'SMG') {
+            const bodyGeo = new THREE.BoxGeometry(0.08, 0.08, 0.30);
+            bodyGeo.translate(0, 0, 0.10);
+            geos.push(bodyGeo);
+            const barrelGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.15, 6);
+            barrelGeo.rotateX(Math.PI / 2);
+            barrelGeo.translate(0, 0.01, -0.15);
+            geos.push(barrelGeo);
+            // Long magazine
+            const magGeo = new THREE.BoxGeometry(0.04, 0.18, 0.04);
+            magGeo.translate(0, -0.13, 0.10);
+            geos.push(magGeo);
+            // Compact trapezoid stock
+            geos.push(trapezoidGeo(0.05, 0.05, 0.10, 0.20, 0, 0.02, 0.22));
+        } else if (weaponId === 'BOLT') {
+            const bodyGeo = new THREE.BoxGeometry(0.07, 0.07, 0.50);
+            geos.push(bodyGeo);
+            const barrelGeo = new THREE.CylinderGeometry(0.014, 0.014, 0.55, 6);
+            barrelGeo.rotateX(Math.PI / 2);
+            barrelGeo.translate(0, 0.01, -0.52);
+            geos.push(barrelGeo);
+            const scopeGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.30, 8);
+            scopeGeo.rotateX(Math.PI / 2);
+            scopeGeo.translate(0, 0.07, -0.05);
+            geos.push(scopeGeo);
+            // Trapezoid stock
+            geos.push(trapezoidGeo(0.06, 0.06, 0.14, 0.30, 0, 0.025, 0.22));
+        } else {
+            const bodyGeo = new THREE.BoxGeometry(0.08, 0.08, 0.50);
+            geos.push(bodyGeo);
+            const barrelGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.35, 6);
+            barrelGeo.rotateX(Math.PI / 2);
+            barrelGeo.translate(0, 0.01, -0.42);
+            geos.push(barrelGeo);
+            // Magazine
+            const magGeo = new THREE.BoxGeometry(0.04, 0.12, 0.05);
+            magGeo.translate(0, -0.10, 0);
+            geos.push(magGeo);
+            // Trapezoid stock
+            geos.push(trapezoidGeo(0.06, 0.06, 0.12, 0.25, 0, 0.03, 0.22));
+        }
+
+        const merged = mergeGeometries(geos);
+        for (const g of geos) g.dispose();
+        return new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ color: 0x333333 }));
+    }
+
     _createGunMesh(weaponId) {
         if (this.gunMesh) {
             this._gunParent.remove(this.gunMesh);
@@ -209,62 +292,7 @@ export class Soldier {
             if (this.gunMesh.material) this.gunMesh.material.dispose();
         }
 
-        const geos = [];
-
-        if (weaponId === 'LMG') {
-            // LMG: thick squared body + heavy barrel + drum magazine
-            const bodyGeo = new THREE.BoxGeometry(0.10, 0.10, 0.50);
-            geos.push(bodyGeo);
-
-            const barrelGeo = new THREE.CylinderGeometry(0.022, 0.022, 0.35, 6);
-            barrelGeo.rotateX(Math.PI / 2);
-            barrelGeo.translate(0, 0.01, -0.42);
-            geos.push(barrelGeo);
-
-            // Drum magazine (cylinder underneath)
-            const drumGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.08, 8);
-            drumGeo.translate(0, -0.10, 0.05);
-            geos.push(drumGeo);
-        } else if (weaponId === 'SMG') {
-            // SMG: short body + stubby barrel
-            const bodyGeo = new THREE.BoxGeometry(0.08, 0.08, 0.30);
-            bodyGeo.translate(0, 0, 0.10);
-            geos.push(bodyGeo);
-
-            const barrelGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.15, 6);
-            barrelGeo.rotateX(Math.PI / 2);
-            barrelGeo.translate(0, 0.01, -0.15);
-            geos.push(barrelGeo);
-        } else if (weaponId === 'BOLT') {
-            // Bolt-Action: long body + extra-long barrel + scope tube
-            const bodyGeo = new THREE.BoxGeometry(0.07, 0.07, 0.50);
-            geos.push(bodyGeo);
-
-            const barrelGeo = new THREE.CylinderGeometry(0.014, 0.014, 0.55, 6);
-            barrelGeo.rotateX(Math.PI / 2);
-            barrelGeo.translate(0, 0.01, -0.52);
-            geos.push(barrelGeo);
-
-            // Scope tube on top
-            const scopeGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.30, 8);
-            scopeGeo.rotateX(Math.PI / 2);
-            scopeGeo.translate(0, 0.07, -0.05);
-            geos.push(scopeGeo);
-        } else {
-            // AR-15: long body + long barrel
-            const bodyGeo = new THREE.BoxGeometry(0.08, 0.08, 0.50);
-            geos.push(bodyGeo);
-
-            const barrelGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.35, 6);
-            barrelGeo.rotateX(Math.PI / 2);
-            barrelGeo.translate(0, 0.01, -0.42);
-            geos.push(barrelGeo);
-        }
-
-        const merged = mergeGeometries(geos);
-        for (const g of geos) g.dispose();
-
-        const gun = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ color: 0x333333 }));
+        const gun = Soldier.buildGunMesh(weaponId);
         gun.position.set(0.05, -0.05, -0.45);
         gun.castShadow = false;
 

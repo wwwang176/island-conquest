@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { Soldier } from '../entities/Soldier.js';
 
 const WATER_Y = -0.3;
 const _splashPos = new THREE.Vector3();
@@ -107,47 +107,7 @@ export class DroppedGunManager {
     }
 
     static buildGunMesh(weaponId) {
-        const geos = [];
-        if (weaponId === 'LMG') {
-            const bodyGeo = new THREE.BoxGeometry(0.10, 0.10, 0.50);
-            geos.push(bodyGeo);
-            const barrelGeo = new THREE.CylinderGeometry(0.022, 0.022, 0.35, 6);
-            barrelGeo.rotateX(Math.PI / 2);
-            barrelGeo.translate(0, 0.01, -0.42);
-            geos.push(barrelGeo);
-            const drumGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.08, 8);
-            drumGeo.translate(0, -0.10, 0.05);
-            geos.push(drumGeo);
-        } else if (weaponId === 'SMG') {
-            const bodyGeo = new THREE.BoxGeometry(0.08, 0.08, 0.30);
-            bodyGeo.translate(0, 0, 0.10);
-            geos.push(bodyGeo);
-            const barrelGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.15, 6);
-            barrelGeo.rotateX(Math.PI / 2);
-            barrelGeo.translate(0, 0.01, -0.15);
-            geos.push(barrelGeo);
-        } else if (weaponId === 'BOLT') {
-            const bodyGeo = new THREE.BoxGeometry(0.07, 0.07, 0.50);
-            geos.push(bodyGeo);
-            const barrelGeo = new THREE.CylinderGeometry(0.014, 0.014, 0.55, 6);
-            barrelGeo.rotateX(Math.PI / 2);
-            barrelGeo.translate(0, 0.01, -0.52);
-            geos.push(barrelGeo);
-            const scopeGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.30, 8);
-            scopeGeo.rotateX(Math.PI / 2);
-            scopeGeo.translate(0, 0.07, -0.05);
-            geos.push(scopeGeo);
-        } else {
-            const bodyGeo = new THREE.BoxGeometry(0.08, 0.08, 0.50);
-            geos.push(bodyGeo);
-            const barrelGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.35, 6);
-            barrelGeo.rotateX(Math.PI / 2);
-            barrelGeo.translate(0, 0.01, -0.42);
-            geos.push(barrelGeo);
-        }
-        const merged = mergeGeometries(geos);
-        for (const g of geos) g.dispose();
-        return new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ color: 0x333333 }));
+        return Soldier.buildGunMesh(weaponId);
     }
 
     update(dt) {

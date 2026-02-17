@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WeaponDefs, GunAnim } from './WeaponDefs.js';
+import { Soldier } from './Soldier.js';
 
 /**
  * Assault Rifle weapon system.
@@ -70,84 +70,10 @@ export class Weapon {
      * Static so spectator view can reuse it without a Weapon instance.
      */
     static buildFPGunMesh(weaponId, armColor) {
-        const geos = [];
+        // Reuse shared gun mesh, position it for first-person view
+        const gun = Soldier.buildGunMesh(weaponId);
+        gun.position.set(0.25, -0.19, -0.40);
 
-        if (weaponId === 'BOLT') {
-            // Long stock
-            const stockGeo = new THREE.BoxGeometry(0.05, 0.06, 0.22);
-            stockGeo.translate(0.25, -0.22, -0.04);
-            geos.push(stockGeo);
-            // Body / receiver
-            const bodyGeo = new THREE.BoxGeometry(0.055, 0.07, 0.50);
-            bodyGeo.translate(0.25, -0.20, -0.40);
-            geos.push(bodyGeo);
-            // Extra-long barrel
-            const barrelGeo = new THREE.CylinderGeometry(0.012, 0.012, 0.90, 6);
-            barrelGeo.rotateX(Math.PI / 2);
-            barrelGeo.translate(0.25, -0.17, -1.10);
-            geos.push(barrelGeo);
-            // Scope — single tube raised above body
-            const scopeGeo = new THREE.CylinderGeometry(0.028, 0.028, 0.36, 8);
-            scopeGeo.rotateX(Math.PI / 2);
-            scopeGeo.translate(0.25, -0.04, -0.38);
-            geos.push(scopeGeo);
-            // Scope mount (single rail bridging body to scope)
-            const mountGeo = new THREE.BoxGeometry(0.025, 0.10, 0.06);
-            mountGeo.translate(0.25, -0.11, -0.38);
-            geos.push(mountGeo);
-            // Short magazine
-            const magGeo = new THREE.BoxGeometry(0.035, 0.08, 0.05);
-            magGeo.translate(0.25, -0.28, -0.38);
-            geos.push(magGeo);
-        } else if (weaponId === 'LMG') {
-            const stockGeo = new THREE.BoxGeometry(0.05, 0.06, 0.16);
-            stockGeo.translate(0.25, -0.22, -0.05);
-            geos.push(stockGeo);
-            const bodyGeo = new THREE.BoxGeometry(0.08, 0.10, 0.55);
-            bodyGeo.translate(0.25, -0.19, -0.40);
-            geos.push(bodyGeo);
-            const barrelGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.45, 6);
-            barrelGeo.rotateX(Math.PI / 2);
-            barrelGeo.translate(0.25, -0.16, -0.90);
-            geos.push(barrelGeo);
-            const drumGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.08, 8);
-            drumGeo.translate(0.25, -0.30, -0.38);
-            geos.push(drumGeo);
-        } else if (weaponId === 'SMG') {
-            const stockGeo = new THREE.BoxGeometry(0.04, 0.05, 0.12);
-            stockGeo.translate(0.25, -0.22, -0.09);
-            geos.push(stockGeo);
-            const bodyGeo = new THREE.BoxGeometry(0.06, 0.08, 0.30);
-            bodyGeo.translate(0.25, -0.2, -0.30);
-            geos.push(bodyGeo);
-            const barrelGeo = new THREE.CylinderGeometry(0.013, 0.013, 0.18, 6);
-            barrelGeo.rotateX(Math.PI / 2);
-            barrelGeo.translate(0.25, -0.17, -0.54);
-            geos.push(barrelGeo);
-            const magGeo = new THREE.BoxGeometry(0.045, 0.17, 0.05);
-            magGeo.rotateX(-0.15);
-            magGeo.translate(0.25, -0.32, -0.28);
-            geos.push(magGeo);
-        } else {
-            const stockGeo = new THREE.BoxGeometry(0.05, 0.06, 0.18);
-            stockGeo.translate(0.25, -0.22, -0.06);
-            geos.push(stockGeo);
-            const bodyGeo = new THREE.BoxGeometry(0.06, 0.08, 0.55);
-            bodyGeo.translate(0.25, -0.2, -0.425);
-            geos.push(bodyGeo);
-            const barrelGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.525, 6);
-            barrelGeo.rotateX(Math.PI / 2);
-            barrelGeo.translate(0.25, -0.17, -0.9625);
-            geos.push(barrelGeo);
-            const magGeo = new THREE.BoxGeometry(0.04, 0.15, 0.06);
-            magGeo.rotateX(-0.15);
-            magGeo.translate(0.25, -0.32, -0.40);
-            geos.push(magGeo);
-        }
-
-        const merged = mergeGeometries(geos);
-        for (const g of geos) g.dispose();
-        const gun = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ color: 0x333333 }));
         const group = new THREE.Group();
         group.add(gun);
 
@@ -157,17 +83,17 @@ export class Weapon {
         // Grip Z positions from weapon config
         const [rGripZ, lGripZ] = WeaponDefs[weaponId].fpGripZ;
 
-        // Right arm (trigger hand) — same proportions as COM (Soldier.js)
+        // Right arm (trigger hand)
         const rightArmGeo = new THREE.BoxGeometry(0.15, 0.40, 0.15);
-        rightArmGeo.translate(0, -0.20, 0); // pivot at hand end
+        rightArmGeo.translate(0, -0.20, 0);
         const rightArm = new THREE.Mesh(rightArmGeo, armMat);
         rightArm.position.set(0.28, -0.22, rGripZ);
         rightArm.rotation.set(-1.1, 0, 0);
         group.add(rightArm);
 
-        // Left arm (support hand) — longer, same as COM left arm
+        // Left arm (support hand)
         const leftArmGeo = new THREE.BoxGeometry(0.15, 0.55, 0.15);
-        leftArmGeo.translate(0, -0.275, 0); // pivot at hand end
+        leftArmGeo.translate(0, -0.275, 0);
         const leftArm = new THREE.Mesh(leftArmGeo, armMat);
         leftArm.position.set(0.21, -0.22, lGripZ);
         leftArm.rotation.set(-1.2, 0, -0.5);
@@ -191,10 +117,11 @@ export class Weapon {
         });
         const flash = new THREE.Mesh(geo, mat);
         flash.visible = false;
-        const muzzleZ = this.weaponId === 'BOLT' ? -1.55
-            : this.weaponId === 'LMG' ? -1.125
-            : (this.weaponId === 'SMG' ? -0.63 : -1.225);
-        flash.position.set(0.05, -0.27, muzzleZ);
+        // Muzzle Z in camera space: gun at (0.25, -0.19, -0.40) in group, group at (-0.20, -0.10, 0)
+        const muzzleZ = this.weaponId === 'BOLT' ? -1.195
+            : this.weaponId === 'LMG' ? -0.995
+            : (this.weaponId === 'SMG' ? -0.625 : -0.995);
+        flash.position.set(0.05, -0.28, muzzleZ);
         this.camera.add(flash);
         return flash;
     }
