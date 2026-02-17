@@ -377,10 +377,7 @@ export class AIController {
      */
     update(dt, enemies, allies, collidables) {
         this._dt = dt; // store for BT actions that need delta time
-        if (!this.soldier.alive) {
-            this._onDeath();
-            return;
-        }
+        if (!this.soldier.alive) return;
 
         this.enemies = enemies;
         this.allies = allies;
@@ -2110,7 +2107,7 @@ export class AIController {
         }
     }
 
-    _onDeath() {
+    onRespawn() {
         this._releaseCover();
         this._setTargetEnemy(null);
         this.suppressionTarget = null;
@@ -2125,6 +2122,23 @@ export class AIController {
         if (this._tacLabel) this._tacLabel.visible = false;
         this._tacLabelText = '';
         this._previouslyVisible.clear();
+        // Reset timers and cooldowns
+        this.btTimer = 0;
+        this.reactionTimer = 0;
+        this.hasReacted = false;
+        this._targetSwitchCooldown = 0;
+        this._scanTimer = 0;
+        this._strafeTimer = 0;
+        this.stuckTimer = 0;
+        this.fireTimer = 0;
+        this.burstCount = 0;
+        this.burstCooldown = 0;
+        this.riskLevel = 0;
+        this.riskTimer = 0;
+        this.seekingCover = false;
+        this.coverTarget = null;
+        this.moveTarget = null;
+        this.missionPressure = 0.5;
         // Personality-weighted weapon on respawn
         this.weaponId = this._pickWeapon();
         const def = WeaponDefs[this.weaponId];

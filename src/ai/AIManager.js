@@ -502,6 +502,7 @@ export class AIManager {
             if (!spawnPoint) continue;
 
             soldier.respawn(spawnPoint);
+            if (soldier.controller) soldier.controller.onRespawn();
         }
     }
 }
