@@ -589,13 +589,20 @@ export class AIController {
             if (this.targetEnemy !== closestEnemy) {
                 this._setTargetEnemy(closestEnemy);
                 this.hasReacted = false;
-                this.reactionTimer = this.personality.reactionTime / 1000 +
+                // Per-personality distance curve: lerp(nearReaction, farReaction, t)
+                const t = Math.max(0, Math.min(1, closestDist / 60));
+                const p = this.personality;
+                const distFactor = p.nearReaction + (p.farReaction - p.nearReaction) * t;
+                // Exposure penalty: head-only target is harder to identify
+                const losFactor = losLevel === 2 ? 1.4 : 1.0;
+                this.reactionTimer = p.reactionTime / 1000 * distFactor * losFactor +
                     (Math.random() * 0.15);
-                // Initial aim offset
+                // Initial aim offset — smaller at close range (target fills FOV)
+                const aimSpread = Math.max(0.3, Math.min(1.0, closestDist / 25));
                 this.aimOffset.set(
-                    (Math.random() - 0.5) * 2,
-                    (Math.random() - 0.5) * 1.5,
-                    (Math.random() - 0.5) * 2
+                    (Math.random() - 0.5) * 2 * aimSpread,
+                    (Math.random() - 0.5) * 1.5 * aimSpread,
+                    (Math.random() - 0.5) * 2 * aimSpread
                 );
             }
         } else {
