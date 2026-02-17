@@ -6,6 +6,9 @@
 
 使用 **Three.js** + **cannon-es** 構建，無需任何打包工具。
 
+![觀戰跟隨模式 — 熱帶島嶼戰場](assets/screenshots/1.jpg)
+![山頂激戰與手榴彈爆炸](assets/screenshots/2.jpg)
+
 ## 快速開始
 
 ```bash

@@ -6,6 +6,9 @@ A single-player 3D first-person shooter running entirely in the browser. Two AI 
 
 Built with **Three.js** + **cannon-es**, no build tools or bundlers required.
 
+![Spectator follow mode — tropical island battlefield](assets/screenshots/1.jpg)
+![Hilltop battle with grenade explosion](assets/screenshots/2.jpg)
+
 ## Quick Start
 
 ```bash
