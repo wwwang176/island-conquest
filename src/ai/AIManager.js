@@ -176,6 +176,16 @@ export class AIManager {
     }
 
     /**
+     * Set the vehicle manager so AI can board/drive vehicles.
+     */
+    set vehicleManager(mgr) {
+        this._vehicleManager = mgr;
+        for (const ctrl of [...this.teamA.controllers, ...this.teamB.controllers]) {
+            ctrl.vehicleManager = mgr;
+        }
+    }
+
+    /**
      * Set the impact VFX system so AI shots produce hit particles.
      */
     set impactVFX(sys) {

@@ -1,0 +1,560 @@
+import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { Vehicle } from './Vehicle.js';
+
+const WATER_Y = -0.3;
+const MAP_HALF_W = 150;  // island.width / 2
+const MAP_HALF_D = 60;   // island.depth / 2
+
+/**
+ * World-space offsets from helicopter mesh center (rotY=0, facing +Z).
+ * Hull is rotated PI internally, so hull-local (x,y,z) → world (-x,y,-z).
+ * Cabin sides at world x≈±0.9, cabin floor at y≈-0.55, cabin z from -1.3 to +1.3.
+ */
+const PILOT_OFFSET = { x: 0, y: -0.85, z: 1.8 }; // cockpit (nose area, sunk into seat)
+
+const PASSENGER_SLOTS = [
+    { x: -0.75, y: -1.2, z:  0.2, facingOffset:  Math.PI / 2 },  // left front  → face -X (outward)
+    { x: -0.75, y: -1.2, z: -0.7, facingOffset:  Math.PI / 2 },  // left rear   → face -X (outward)
+    { x:  0.75, y: -1.2, z:  0.2, facingOffset: -Math.PI / 2 },  // right front → face +X (outward)
+    { x:  0.75, y: -1.2, z: -0.7, facingOffset: -Math.PI / 2 },  // right rear  → face +X (outward)
+];
+
+/**
+ * Helicopter vehicle — simplified flight model.
+ * Kinematic: position directly controlled, auto-stabilize attitude.
+ * Seats: 1 pilot + 3 passengers (all can fire).
+ */
+export { PASSENGER_SLOTS as HELI_PASSENGER_SLOTS, PILOT_OFFSET as HELI_PILOT_OFFSET };
+
+export class Helicopter extends Vehicle {
+    constructor(scene, team, spawnPosition) {
+        super(scene, team, 'helicopter', spawnPosition);
+
+        this.maxHP = 3000;
+        this.hp = this.maxHP;
+
+        // Multi-passenger
+        this.passengers = [];
+        this.maxPassengers = 4;
+
+        // Flight parameters
+        this.maxHSpeed = 30;    // horizontal m/s
+        this.maxVSpeed = 10;    // vertical m/s
+        this.hAccel = 14;       // horizontal acceleration
+        this.vAccel = 14;       // vertical acceleration
+        this.hDrag = 3;         // horizontal drag
+        this.vDrag = 4;         // vertical drag
+        this.turnSpeed = 2.2;   // rad/s
+        this.minAltitude = WATER_Y + 1;
+        this.maxAltitude = 30;
+
+        // State
+        this.velocityY = 0;
+        this.altitude = spawnPosition.y;
+
+        // Crash state
+        this._crashing = false;
+        this._wreckageTimer = 0; // time wreckage stays on ground before vanishing
+
+        // getHeightAt — set by VehicleManager after construction
+        this.getHeightAt = null;
+
+        // Physics collision body — created by initPhysicsBody()
+        this.body = null;
+        this._physics = null;
+
+        // Rotor animation
+        this._rotorAngle = 0;
+        this._rotorMesh = null;
+        this._tailRotorMesh = null;
+
+        // Build mesh
+        this.mesh = this._createMesh();
+        this.mesh.userData.vehicle = this;
+        scene.add(this.mesh);
+
+        // Position
+        this.mesh.position.copy(spawnPosition);
+        this.mesh.position.y = spawnPosition.y + 1.1;
+    }
+
+    /**
+     * Create CANNON collision body. Called by VehicleManager after construction.
+     * @param {import('../systems/PhysicsWorld.js').PhysicsWorld} physics
+     */
+    initPhysicsBody(physics) {
+        this._physics = physics;
+
+        this.body = new CANNON.Body({
+            mass: 0,
+            type: CANNON.Body.KINEMATIC,
+            collisionFilterGroup: 1,
+            collisionFilterMask: 1,
+        });
+
+        // Main fuselage box (cabin + nose area)
+        this.body.addShape(
+            new CANNON.Box(new CANNON.Vec3(0.9, 0.7, 2.5)),
+            new CANNON.Vec3(0, -0.15, 0)
+        );
+        // Tail boom
+        this.body.addShape(
+            new CANNON.Box(new CANNON.Vec3(0.2, 0.2, 1.8)),
+            new CANNON.Vec3(0, 0.1, -3.2) // behind center (world -Z = hull +Z tail)
+        );
+
+        this._syncBody();
+        physics.addBody(this.body);
+    }
+
+    /** Sync CANNON body position/rotation to mesh. */
+    _syncBody() {
+        if (!this.body) return;
+        const p = this.mesh.position;
+        this.body.position.set(p.x, p.y, p.z);
+        this.body.quaternion.setFromAxisAngle(
+            new CANNON.Vec3(0, 1, 0), this.rotationY
+        );
+    }
+
+    _createMesh() {
+        const teamColor = this.team === 'teamA' ? 0x3366cc : 0xcc3333;
+        const OD = 0x4a5a2a;  // olive drab
+        const DK = 0x333333;  // dark grey
+        const mat = (c, opts) => new THREE.MeshLambertMaterial({ color: c, flatShading: true, ...opts });
+
+        const group = new THREE.Group();
+        const hull = new THREE.Group();
+        hull.rotation.y = Math.PI; // -Z local = nose → +Z world
+        group.add(hull);
+
+        // ── Cabin (open sides — only floor, roof, back wall) ──
+        const floorGeo = new THREE.BoxGeometry(1.8, 0.12, 2.6);
+        const floor = new THREE.Mesh(floorGeo, mat(OD));
+        floor.position.set(0, -0.55, 0);
+        floor.castShadow = true;
+        hull.add(floor);
+
+        const roofGeo = new THREE.BoxGeometry(1.8, 0.12, 2.6);
+        const roof = new THREE.Mesh(roofGeo, mat(OD));
+        roof.position.set(0, 0.65, 0);
+        hull.add(roof);
+
+        const backGeo = new THREE.BoxGeometry(1.8, 1.2, 0.12);
+        const back = new THREE.Mesh(backGeo, mat(OD));
+        back.position.set(0, 0.05, 1.3);
+        hull.add(back);
+
+        // Thin door-frame pillars at the cabin opening edges
+        for (const side of [-1, 1]) {
+            const pillarGeo = new THREE.BoxGeometry(0.08, 1.2, 0.08);
+            const pillar = new THREE.Mesh(pillarGeo, mat(OD));
+            pillar.position.set(side * 0.9, 0.05, -1.25);
+            hull.add(pillar);
+        }
+
+        // ── Cockpit nose (tapered egg shape) ──
+        const noseGeo = new THREE.BoxGeometry(1.5, 1.0, 1.6);
+        const np = noseGeo.attributes.position;
+        for (let i = 0; i < np.count; i++) {
+            const z = np.getZ(i);
+            if (z < 0) {
+                const t = Math.abs(z) / 0.8;
+                np.setX(i, np.getX(i) * (1 - t * 0.4));
+                if (np.getY(i) < 0) np.setY(i, np.getY(i) * (1 - t * 0.5));
+            }
+        }
+        np.needsUpdate = true;
+        noseGeo.computeVertexNormals();
+        const nose = new THREE.Mesh(noseGeo, mat(OD));
+        nose.position.set(0, -0.05, -2.0);
+        nose.castShadow = true;
+        hull.add(nose);
+
+        // ── Cockpit glass (semi-transparent bubble) ──
+        const glassGeo = new THREE.BoxGeometry(1.4, 0.75, 1.3);
+        const gp = glassGeo.attributes.position;
+        for (let i = 0; i < gp.count; i++) {
+            const z = gp.getZ(i);
+            if (z < 0) {
+                const t = Math.abs(z) / 0.65;
+                gp.setX(i, gp.getX(i) * (1 - t * 0.35));
+                if (gp.getY(i) > 0) gp.setY(i, gp.getY(i) * (1 + t * 0.15));
+            }
+        }
+        gp.needsUpdate = true;
+        glassGeo.computeVertexNormals();
+        const glass = new THREE.Mesh(glassGeo, mat(0x88ccaa, { transparent: true, opacity: 0.3 }));
+        glass.position.set(0, 0.4, -1.7);
+        hull.add(glass);
+
+        // ── Tail boom ──
+        const tailGeo = new THREE.BoxGeometry(0.35, 0.35, 3.5);
+        const tail = new THREE.Mesh(tailGeo, mat(OD));
+        tail.position.set(0, 0.1, 3.2);
+        tail.castShadow = true;
+        hull.add(tail);
+
+        // Team stripe on tail boom
+        const stripeGeo = new THREE.BoxGeometry(0.36, 0.36, 0.8);
+        const stripe = new THREE.Mesh(stripeGeo, mat(teamColor));
+        stripe.position.set(0, 0.1, 4.0);
+        hull.add(stripe);
+
+        // Vertical tail fin
+        const finGeo = new THREE.BoxGeometry(0.1, 1.0, 0.7);
+        const fin = new THREE.Mesh(finGeo, mat(OD));
+        fin.position.set(0, 0.7, 4.9);
+        hull.add(fin);
+
+        // Horizontal stabilizer
+        const hStabGeo = new THREE.BoxGeometry(1.4, 0.08, 0.5);
+        const hStab = new THREE.Mesh(hStabGeo, mat(OD));
+        hStab.position.set(0, 0.15, 4.9);
+        hull.add(hStab);
+
+        // ── Landing skids ──
+        for (const side of [-1, 1]) {
+            const skidGeo = new THREE.BoxGeometry(0.08, 0.08, 3.0);
+            const skid = new THREE.Mesh(skidGeo, mat(DK));
+            skid.position.set(side * 0.95, -1.0, -0.2);
+            hull.add(skid);
+            // Cross-tube struts
+            for (const zOff of [-0.8, 0.6]) {
+                const strutGeo = new THREE.BoxGeometry(0.06, 0.45, 0.06);
+                const strut = new THREE.Mesh(strutGeo, mat(DK));
+                strut.position.set(side * 0.95, -0.75, zOff);
+                hull.add(strut);
+            }
+        }
+
+        // ── Main rotor (2-blade) ──
+        const rotorGeo = new THREE.BoxGeometry(7, 0.04, 0.25);
+        this._rotorMesh = new THREE.Mesh(rotorGeo, mat(DK, { transparent: true, opacity: 0.7 }));
+        this._rotorMesh.position.y = 0.95;
+        hull.add(this._rotorMesh);
+        const rotor2Geo = new THREE.BoxGeometry(0.25, 0.04, 7);
+        const rotor2 = new THREE.Mesh(rotor2Geo, mat(DK, { transparent: true, opacity: 0.7 }));
+        this._rotorMesh.add(rotor2);
+
+        // Rotor mast
+        const mastGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.35, 6);
+        const mast = new THREE.Mesh(mastGeo, mat(DK));
+        mast.position.y = 0.8;
+        hull.add(mast);
+
+        // ── Tail rotor ──
+        const trGeo = new THREE.BoxGeometry(0.04, 1.2, 0.12);
+        this._tailRotorMesh = new THREE.Mesh(trGeo, mat(DK, { transparent: true, opacity: 0.7 }));
+        this._tailRotorMesh.position.set(0.22, 0.6, 4.9);
+        hull.add(this._tailRotorMesh);
+
+        return group;
+    }
+
+    // ───── Multi-passenger overrides ─────
+
+    /**
+     * Total occupants (driver + passengers).
+     */
+    get occupantCount() {
+        return (this.driver ? 1 : 0) + this.passengers.length;
+    }
+
+    canEnter(entity) {
+        if (!this.alive || this._crashing) return false;
+        if (entity.team !== this.team) return false;
+        if (this.occupantCount >= 5) return false;
+        const pos = entity.getPosition();
+        const vp = this.mesh ? this.mesh.position : this.spawnPosition;
+        const dx = pos.x - vp.x;
+        const dz = pos.z - vp.z;
+        return (dx * dx + dz * dz) < this.enterRadius * this.enterRadius;
+    }
+
+    enter(entity) {
+        if (!this.driver) {
+            this.driver = entity;
+        } else {
+            this.passengers.push(entity);
+        }
+    }
+
+    exit(entity) {
+        if (this.driver === entity) {
+            this.driver = null;
+            // Promote first passenger to pilot
+            if (this.passengers.length > 0) {
+                this.driver = this.passengers.shift();
+            }
+        } else {
+            const idx = this.passengers.indexOf(entity);
+            if (idx >= 0) this.passengers.splice(idx, 1);
+        }
+        // Return exit position
+        const exitPos = this.mesh.position.clone();
+        const sideAngle = this.rotationY + Math.PI / 2;
+        exitPos.x += Math.cos(sideAngle) * 2.5;
+        exitPos.z += Math.sin(sideAngle) * 2.5;
+        return exitPos;
+    }
+
+    /**
+     * Get all occupants (driver + passengers).
+     */
+    getAllOccupants() {
+        const list = [];
+        if (this.driver) list.push(this.driver);
+        list.push(...this.passengers);
+        return list;
+    }
+
+    // ───── Crash & Destroy ─────
+
+    destroy() {
+        this.alive = false;
+        this.hp = 0;
+        this._crashing = true;
+        this._wreckageTimer = 0;
+
+        // Explosion VFX at current position
+        if (this.impactVFX && this.mesh) {
+            this.impactVFX.spawn('explosion', this.mesh.position, null);
+        }
+
+        // Switch physics body to dynamic — let CANNON handle crash physics
+        if (this.body && this._physics) {
+            this.body.type = CANNON.Body.DYNAMIC;
+            this.body.mass = 500;
+            this.body.material = this._physics.defaultMaterial;
+            this.body.linearDamping = 0.1;
+            this.body.angularDamping = 0.3;
+            this.body.updateMassProperties();
+            // Initial velocity from flight
+            this.body.velocity.set(
+                Math.sin(this.rotationY) * this.speed,
+                this.velocityY || 0,
+                Math.cos(this.rotationY) * this.speed
+            );
+            // Random tumble
+            this.body.angularVelocity.set(
+                (Math.random() - 0.5) * 6,
+                (Math.random() - 0.5) * 4,
+                (Math.random() - 0.5) * 6
+            );
+        }
+
+        // Kill all occupants
+        this._killAllOccupants();
+    }
+
+    _killAllOccupants() {
+        const occupants = this.getAllOccupants();
+        for (const occ of occupants) {
+            // Clear vehicle reference on entity
+            if (occ.vehicle !== undefined) occ.vehicle = null;
+            // Clear vehicle reference on AI controller
+            if (occ.controller) {
+                occ.controller.vehicle = null;
+                occ.controller._vehicleMoveTarget = null;
+                occ.controller._vehicleOrbitAngle = 0;
+            }
+            // Kill them (deal lethal damage — vehicle ref already cleared above)
+            if (occ.takeDamage) {
+                occ.takeDamage(9999);
+            }
+        }
+        this.driver = null;
+        this.passengers = [];
+    }
+
+    _updateCrash(dt) {
+        // Sync mesh FROM physics body (CANNON handles gravity, collision, friction)
+        if (this.body) {
+            const p = this.body.position;
+            const q = this.body.quaternion;
+            this.mesh.position.set(p.x, p.y, p.z);
+            this.mesh.quaternion.set(q.x, q.y, q.z, q.w);
+        }
+
+        // Slow rotor
+        this._rotorAngle += 3 * dt;
+        if (this._rotorMesh) this._rotorMesh.rotation.y = this._rotorAngle;
+        if (this._tailRotorMesh) this._tailRotorMesh.rotation.z = this._rotorAngle;
+
+        // Wreckage timer
+        this._wreckageTimer += dt;
+        if (this._wreckageTimer >= 10) {
+            this.mesh.visible = false;
+            this._crashing = false;
+            this.respawnTimer = this.respawnDelay;
+            // Switch body back to kinematic and move out of the way
+            if (this.body) {
+                this.body.type = CANNON.Body.KINEMATIC;
+                this.body.mass = 0;
+                this.body.updateMassProperties();
+                this.body.velocity.set(0, 0, 0);
+                this.body.angularVelocity.set(0, 0, 0);
+                this.body.position.set(0, -999, 0);
+            }
+        }
+    }
+
+    // ───── Update ─────
+
+    update(dt) {
+        // Crash animation takes priority
+        if (this._crashing) {
+            this._updateCrash(dt);
+            return;
+        }
+
+        // Base handles respawn countdown when !alive
+        if (!this.alive) {
+            this.respawnTimer -= dt;
+            if (this.respawnTimer <= 0) {
+                this.respawn();
+            }
+            return;
+        }
+
+        // Drag when no one aboard
+        if (!this.driver && this.passengers.length === 0) {
+            this.speed *= Math.max(0, 1 - this.hDrag * dt);
+            this.velocityY *= Math.max(0, 1 - this.vDrag * dt);
+            if (Math.abs(this.speed) < 0.1) this.speed = 0;
+
+            // Gravity when empty — slowly descend
+            if (this.mesh.position.y > this.minAltitude + 1) {
+                this.velocityY -= 3 * dt;
+            }
+        }
+
+        // Apply velocity
+        if (Math.abs(this.speed) > 0.01) {
+            this.mesh.position.x += Math.sin(this.rotationY) * this.speed * dt;
+            this.mesh.position.z += Math.cos(this.rotationY) * this.speed * dt;
+        }
+        this.mesh.position.y += this.velocityY * dt;
+
+        // Altitude constraints — respect actual terrain height
+        let floorY = this.minAltitude;
+        if (this.getHeightAt) {
+            const groundY = this.getHeightAt(this.mesh.position.x, this.mesh.position.z);
+            floorY = Math.max(floorY, groundY + 1.1); // skid bottom at local y=-1.04
+        }
+        if (this.mesh.position.y <= floorY) {
+            this.mesh.position.y = floorY;
+            if (this.velocityY < 0) this.velocityY = 0;
+        }
+        if (this.mesh.position.y >= this.maxAltitude) {
+            this.mesh.position.y = this.maxAltitude;
+            if (this.velocityY > 0) this.velocityY = 0;
+        }
+
+        // Map boundary clamp
+        const px = this.mesh.position.x;
+        const pz = this.mesh.position.z;
+        if (px < -MAP_HALF_W) { this.mesh.position.x = -MAP_HALF_W; this.speed *= 0.5; }
+        if (px >  MAP_HALF_W) { this.mesh.position.x =  MAP_HALF_W; this.speed *= 0.5; }
+        if (pz < -MAP_HALF_D) { this.mesh.position.z = -MAP_HALF_D; this.speed *= 0.5; }
+        if (pz >  MAP_HALF_D) { this.mesh.position.z =  MAP_HALF_D; this.speed *= 0.5; }
+
+        // Store altitude
+        this.altitude = this.mesh.position.y;
+
+        // Apply rotation
+        this.mesh.rotation.y = this.rotationY;
+
+        // Tilt based on speed (visual only)
+        const tiltAmount = (this.speed / this.maxHSpeed) * 0.15;
+        this.mesh.rotation.x = -tiltAmount;
+
+        // Rotor animation
+        const rotorSpeed = this.driver ? 25 : 8; // faster when piloted
+        this._rotorAngle += rotorSpeed * dt;
+        if (this._rotorMesh) {
+            this._rotorMesh.rotation.y = this._rotorAngle;
+        }
+        if (this._tailRotorMesh) {
+            this._tailRotorMesh.rotation.z = this._rotorAngle * 1.5;
+        }
+
+        // Sync physics body
+        this._syncBody();
+    }
+
+    applyInput(input, dt) {
+        if (!this.alive) return;
+
+        // Thrust / brake (forward/back)
+        if (input.thrust > 0) {
+            this.speed = Math.min(this.maxHSpeed, this.speed + this.hAccel * input.thrust * dt);
+        }
+        if (input.brake > 0) {
+            this.speed = Math.max(-this.maxHSpeed * 0.3, this.speed - this.hAccel * input.brake * dt);
+        }
+
+        // Horizontal drag
+        this.speed *= Math.max(0, 1 - this.hDrag * 0.3 * dt);
+
+        // Steering
+        if (input.steerLeft) this.rotationY += this.turnSpeed * dt;
+        if (input.steerRight) this.rotationY -= this.turnSpeed * dt;
+
+        // Ascend / descend
+        if (input.ascend) {
+            this.velocityY = Math.min(this.maxVSpeed, this.velocityY + this.vAccel * dt);
+        } else if (input.descend) {
+            this.velocityY = Math.max(-this.maxVSpeed, this.velocityY - this.vAccel * dt);
+        } else {
+            // Auto-stabilize vertical velocity
+            this.velocityY *= Math.max(0, 1 - this.vDrag * dt);
+        }
+    }
+
+    /**
+     * Check if helicopter is close enough to ground for safe exit.
+     * @param {Function} getHeightAtFn
+     * @returns {boolean}
+     */
+    canExitSafely(getHeightAtFn) {
+        if (!this.mesh) return false;
+        const groundY = getHeightAtFn(this.mesh.position.x, this.mesh.position.z);
+        const altAboveGround = this.mesh.position.y - groundY;
+        return altAboveGround < 5;
+    }
+
+    respawn() {
+        this.alive = true;
+        this.hp = this.maxHP;
+        this.speed = 0;
+        this.velocityX = 0;
+        this.velocityZ = 0;
+        this.velocityY = 0;
+        this.altitude = this.spawnPosition.y;
+        this.rotationY = this.spawnRotationY;
+        this._crashing = false;
+        this._wreckageTimer = 0;
+        this.passengers = [];
+
+        if (this.mesh) {
+            this.mesh.visible = true;
+            this.mesh.position.copy(this.spawnPosition);
+            this.mesh.position.y = this.spawnPosition.y + 1.1;
+            this.mesh.rotation.set(0, this.rotationY, 0);
+        }
+
+        // Ensure body is kinematic for normal flight
+        if (this.body) {
+            this.body.type = CANNON.Body.KINEMATIC;
+            this.body.mass = 0;
+            this.body.updateMassProperties();
+            this.body.velocity.set(0, 0, 0);
+            this.body.angularVelocity.set(0, 0, 0);
+        }
+        this._syncBody();
+    }
+}

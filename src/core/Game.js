@@ -16,6 +16,7 @@ import { TracerSystem } from '../vfx/TracerSystem.js';
 import { ImpactVFX } from '../vfx/ImpactVFX.js';
 import { GrenadeManager } from '../systems/GrenadeManager.js';
 import { DroppedGunManager } from '../systems/DroppedGunManager.js';
+import { VehicleManager } from '../systems/VehicleManager.js';
 import { Minimap } from '../ui/Minimap.js';
 import { KillFeed } from '../ui/KillFeed.js';
 import { SpectatorMode } from './SpectatorMode.js';
@@ -106,6 +107,15 @@ export class Game {
         this.aiManager.grenadeManager = this.grenadeManager;
         this.grenadeManager.droppedGunManager = this.droppedGunManager;
 
+        // Vehicle manager
+        this.vehicleManager = new VehicleManager(
+            this.scene, this.physics, this.flags,
+            (x, z) => this.island.getHeightAt(x, z),
+            this.eventBus
+        );
+        this.vehicleManager.setImpactVFX(this.impactVFX);
+        this.aiManager.vehicleManager = this.vehicleManager;
+
         this._threatVisState = 0; // 0=off, 1=teamA, 2=teamB
         this._intelVisState = 0; // 0=off, 1=teamA, 2=teamB
 
@@ -134,6 +144,7 @@ export class Game {
         this.eventBus.on('aiFired', (data) => this._onAIFired(data));
         this.eventBus.on('aiHit', (data) => this._onAIHit(data));
         this.eventBus.on('grenadeDamage', (data) => this._onGrenadeDamage(data));
+        this.eventBus.on('vehicleDestroyed', (data) => this._onVehicleDestroyed(data));
 
         // Blocker / pointer lock — show loading state
         this.blocker = document.getElementById('blocker');
@@ -292,7 +303,26 @@ export class Game {
                 this._cancelJoin();
             }
         } else if (this.gameMode === 'playing') {
-            if (e.code === 'Escape') {
+            if (e.code === 'KeyE' && this.player && this.player.alive) {
+                if (this.player.vehicle) {
+                    // Exit vehicle
+                    const v = this.player.vehicle;
+                    // Helicopter: only allow exit near ground
+                    if (v.type === 'helicopter' && !v.canExitSafely((x, z) => this.island.getHeightAt(x, z))) {
+                        return; // too high to exit
+                    }
+                    const exitPos = this.vehicleManager.exitVehicle(this.player);
+                    if (exitPos) {
+                        this.player.exitVehicle(exitPos);
+                    }
+                } else {
+                    // Try enter vehicle
+                    const v = this.vehicleManager.tryEnterVehicle(this.player);
+                    if (v) {
+                        this.player.enterVehicle(v);
+                    }
+                }
+            } else if (e.code === 'Escape') {
                 // Only leave team if pointer lock is already released (second Esc)
                 // First Esc releases pointer lock (browser default), second Esc returns to spectator
                 if (!this.input.isPointerLocked) {
@@ -391,6 +421,12 @@ export class Game {
 
     _leaveTeam() {
         if (!this.player) return;
+
+        // Exit vehicle if in one
+        if (this.player.vehicle) {
+            const exitPos = this.vehicleManager.exitVehicle(this.player);
+            if (exitPos) this.player.exitVehicle(exitPos);
+        }
 
         // Unscope before leaving
         if (this.player.weapon && this.player.weapon.isScoped) {
@@ -537,6 +573,7 @@ export class Game {
         this._createGameOverScreen();
         this._createKeyHints();
         this._createScoreboard();
+        this._createVehicleHUD();
     }
 
     _createCrosshair() {
@@ -766,6 +803,7 @@ export class Game {
             '<span style="color:#fff">N</span> Tactic labels',
             '<span style="color:#fff">Q</span> Next COM',
             '<span style="color:#fff">V</span> Camera mode',
+            '<span style="color:#fff">E</span> Enter/exit vehicle',
             '<span style="color:#fff">1/2</span> Join team',
             '<span style="color:#fff">Esc</span> Leave team',
         ].join('<br>');
@@ -788,6 +826,49 @@ export class Game {
             <div id="sb-teamB" style="flex:1;min-width:260px;"></div>`;
         document.body.appendChild(el);
         this.scoreboard = el;
+    }
+
+    _createVehicleHUD() {
+        const el = document.createElement('div');
+        el.id = 'vehicle-hud';
+        el.style.cssText = `position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
+            color:white;font-family:Consolas,monospace;background:rgba(0,0,0,0.5);
+            padding:10px 20px;border-radius:6px;pointer-events:none;z-index:100;
+            text-align:center;display:none;`;
+        document.body.appendChild(el);
+        this.vehicleHUD = el;
+    }
+
+    _updateVehicleHUD() {
+        if (!this.player || !this.player.vehicle || this.gameMode !== 'playing') {
+            this.vehicleHUD.style.display = 'none';
+            return;
+        }
+
+        const v = this.player.vehicle;
+        this.vehicleHUD.style.display = 'block';
+
+        const hpPct = Math.max(0, v.hp / v.maxHP * 100);
+        const hpColor = hpPct > 50 ? '#4f4' : hpPct > 25 ? '#ff4' : '#f44';
+        const isPilot = v.driver === this.player;
+        let typeName, controls;
+        if (v.type === 'helicopter') {
+            const occ = v.occupantCount || 1;
+            typeName = `HELICOPTER [${occ}/4]` + (isPilot ? ' PILOT' : ' GUNNER');
+            controls = isPilot
+                ? 'WASD Move | Space Up | Shift Down | E Exit'
+                : 'Mouse Aim | LMB Fire | E Exit';
+        } else {
+            typeName = 'SPEEDBOAT';
+            controls = 'WS Thrust | AD Steer | E Exit';
+        }
+
+        this.vehicleHUD.innerHTML = `
+            <div style="font-size:14px;font-weight:bold;margin-bottom:4px">${typeName}</div>
+            <div style="width:200px;height:8px;background:#333;border-radius:4px;margin:4px auto;">
+                <div style="width:${hpPct}%;height:100%;background:${hpColor};border-radius:4px;"></div>
+            </div>
+            <div style="font-size:11px;color:#aaa;margin-top:4px">${controls}</div>`;
     }
 
     _updateScoreboard() {
@@ -1169,6 +1250,28 @@ export class Game {
         if (!this.player) return;
         let obj = hit.target;
         while (obj) {
+            // Vehicle hit
+            if (obj.userData && obj.userData.vehicle) {
+                const vehicle = obj.userData.vehicle;
+                if (!vehicle.alive) return;
+                // No friendly fire on vehicles
+                if (vehicle.team === this.player.team) return;
+                if (this.impactVFX) {
+                    this.impactVFX.spawn('rock', hit.point, null);
+                }
+                const result = vehicle.takeDamage(hit.damage);
+                this._showHitMarker();
+                if (result.destroyed) {
+                    this.eventBus.emit('vehicleDestroyed', {
+                        destroyerName: 'You',
+                        destroyerTeam: this.player.team,
+                        vehicleTeam: vehicle.team,
+                        vehicleType: vehicle.type,
+                    });
+                }
+                return;
+            }
+            // Soldier hit
             if (obj.userData && obj.userData.soldier) {
                 const soldier = obj.userData.soldier;
                 if (!soldier.alive) return;
@@ -1234,6 +1337,16 @@ export class Game {
         }
     }
 
+    _onVehicleDestroyed(data) {
+        const typeName = data.vehicleType === 'helicopter' ? 'Helicopter' : 'Speedboat';
+        const teamName = data.vehicleTeam === 'teamA' ? 'A' : 'B';
+        this.killFeed.addKill(
+            data.destroyerName, data.destroyerTeam,
+            `${teamName}-${typeName}`, data.vehicleTeam,
+            false, 'VEHICLE'
+        );
+    }
+
     _showHitMarker() {
         this._hitMarkerTimer = 0.15;
         this.hitMarker.style.display = 'block';
@@ -1275,6 +1388,11 @@ export class Game {
         buf.length = 0;
         for (const c of this.island.collidables) buf.push(c);
         for (const m of enemyMeshes) buf.push(m);
+        // Include vehicle meshes as hitscan targets (skip own vehicle)
+        const ownVehicleMesh = this.player.vehicle ? this.player.vehicle.mesh : null;
+        for (const m of this.vehicleManager.getVehicleMeshes()) {
+            if (m !== ownVehicleMesh) buf.push(m);
+        }
         this.player.shootTargets = buf;
     }
 
@@ -1301,8 +1419,13 @@ export class Game {
         // Update impact particles
         this.impactVFX.update(dt);
 
-        // Update AI
-        this.aiManager.update(dt, this.island.collidables);
+        // Update AI — include vehicle meshes in collidables for hitscan
+        if (!this._aiCollidablesBuf) this._aiCollidablesBuf = [];
+        const aiCollidables = this._aiCollidablesBuf;
+        aiCollidables.length = 0;
+        for (const c of this.island.collidables) aiCollidables.push(c);
+        for (const m of this.vehicleManager.getVehicleMeshes()) aiCollidables.push(m);
+        this.aiManager.update(dt, aiCollidables);
 
         // Update intel visualization
         if (this._intelVisState === 1) this.aiManager.intelA.updateVisualization();
@@ -1318,6 +1441,9 @@ export class Game {
 
         // Update dropped guns
         this.droppedGunManager.update(dt);
+
+        // Update vehicles
+        this.vehicleManager.update(dt);
 
         if (this.gameMode === 'spectator' || this.gameMode === 'joining') {
             // Spectator camera
@@ -1350,6 +1476,7 @@ export class Game {
         this._updateReloadIndicator();
         this._updateHitMarker(dt);
         this._updateJoinScreen();
+        this._updateVehicleHUD();
 
         // Update minimap
         const playerPos = this.player && this.player.alive ? this.player.getPosition() : null;
@@ -1362,6 +1489,7 @@ export class Game {
             flags: this.flags,
             teamASoldiers: this.aiManager.teamA.soldiers,
             teamBSoldiers: this.aiManager.teamB.soldiers,
+            vehicles: this.vehicleManager.vehicles,
             dt,
         });
 

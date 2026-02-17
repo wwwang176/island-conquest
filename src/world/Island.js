@@ -3,6 +3,7 @@ import * as CANNON from 'cannon-es';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Noise } from './Noise.js';
 import { NavGrid } from '../ai/NavGrid.js';
+import { generateFortifications } from './Fortification.js';
 
 /**
  * Procedural tropical island generator.
@@ -42,6 +43,7 @@ export class Island {
         // Cache flag positions early so cover generation can use them
         this._flagPositionsCache = this.getFlagPositions();
         this._generateCovers();
+        this._generateBuildings();
         this._generateVegetation();
     }
 
@@ -621,6 +623,10 @@ export class Island {
         this._crateGeos = null;
         this._sandbagGeos = null;
         this._wallGeos = null;
+    }
+
+    _generateBuildings() {
+        generateFortifications(this, this._flagPositionsCache);
     }
 
     _generateVegetation() {
