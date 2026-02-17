@@ -52,6 +52,7 @@ export class Player {
         this.grenadeCooldown = 0;
         this.grenadeManager = null; // set by Game
         this._grenadePrevDown = false;
+        this._grenadeThrowTimer = 0; // blocks fire & scope during throw
 
         // Jump edge detection (prevent jump on spawn frame)
         this._prevSpace = false;
@@ -71,6 +72,10 @@ export class Player {
         this.getHeightAt = null;
         /** @type {import('../ai/NavGrid.js').NavGrid|null} */
         this.navGrid = null;
+
+        // Movement inertia
+        this._velX = 0;
+        this._velZ = 0;
 
         // Kinematic jump state
         this.isJumping = false;
@@ -160,6 +165,7 @@ export class Player {
 
         // Grenade cooldown
         if (this.grenadeCooldown > 0) this.grenadeCooldown -= dt;
+        if (this._grenadeThrowTimer > 0) this._grenadeThrowTimer -= dt;
 
         if (this.input.isPointerLocked) {
             this._handleMouseLook();
@@ -185,8 +191,9 @@ export class Player {
 
     _handleMouseLook() {
         const { dx, dy } = this.input.consumeMouseDelta();
-        this.yaw -= dx * this.mouseSensitivity;
-        this.pitch -= dy * this.mouseSensitivity;
+        const sens = this.weapon.isScoped ? this.mouseSensitivity * 0.5 : this.mouseSensitivity;
+        this.yaw -= dx * sens;
+        this.pitch -= dy * sens;
         this.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, this.pitch));
     }
 
@@ -230,19 +237,33 @@ export class Player {
         }
         this._prevSpace = spaceDown;
 
+        // Compute target velocity from input
+        let targetVX = 0, targetVZ = 0;
         if (_moveDir.lengthSq() > 0) {
             _moveDir.normalize();
-        } else {
-            // No input — just snap to ground if not jumping
-            if (!this.isJumping) {
-                pos.y = groundY + 0.05;
-            }
+            targetVX = _moveDir.x * this.moveSpeed;
+            targetVZ = _moveDir.z * this.moveSpeed;
+        }
+
+        // Lerp current velocity toward target (inertia)
+        const accelRate = 20;
+        const decelRate = 12;
+        const rate = (targetVX !== 0 || targetVZ !== 0) ? accelRate : decelRate;
+        const t = Math.min(1, rate * dt);
+        this._velX += (targetVX - this._velX) * t;
+        this._velZ += (targetVZ - this._velZ) * t;
+
+        // Snap to zero when very slow
+        if (this._velX * this._velX + this._velZ * this._velZ < 0.01) {
+            this._velX = 0;
+            this._velZ = 0;
+            if (!this.isJumping) pos.y = groundY + 0.05;
             return;
         }
 
         // Kinematic position update
-        const dx = _moveDir.x * this.moveSpeed * dt;
-        const dz = _moveDir.z * this.moveSpeed * dt;
+        const dx = this._velX * dt;
+        const dz = this._velZ * dt;
         const newX = pos.x + dx;
         const newZ = pos.z + dz;
 
@@ -293,6 +314,9 @@ export class Player {
     _handleShooting(dt) {
         this.weapon.triggerHeld = this.input.mouseDown;
 
+        // Block fire & scope during grenade throw
+        if (this._grenadeThrowTimer > 0) return;
+
         // Right-click scope toggle (BOLT only, edge-triggered)
         // Block scope during bolt cycling or reloading
         const rmb = this.input.rightMouseDown;
@@ -338,6 +362,8 @@ export class Player {
         this.grenadeManager.spawn(origin, velocity, def.fuseTime, this.team, 'You');
         this.grenadeCount--;
         this.grenadeCooldown = 1;
+        this._grenadeThrowTimer = 0.5;
+        if (this.weapon.isScoped) this.weapon.setScoped(false);
     }
 
     _syncMeshAndCamera() {
@@ -403,9 +429,12 @@ export class Player {
         this.body.velocity.set(0, 0, 0);
         this.isJumping = false;
         this.jumpVelY = 0;
+        this._velX = 0;
+        this._velZ = 0;
         this._prevSpace = true; // suppress jump on spawn frame
         this.grenadeCount = WeaponDefs.GRENADE.maxPerLife;
         this.grenadeCooldown = 0;
+        this._grenadeThrowTimer = 0;
         this.eventBus.emit('playerRespawned');
     }
 

@@ -165,6 +165,8 @@ export class AIController {
         this.lastPos = new THREE.Vector3();
         this.jumpVelY = 0;      // manual Y velocity for kinematic jumping
         this.isJumping = false;
+        this._velX = 0;         // movement inertia
+        this._velZ = 0;
 
         // Reflex dodge — immediate lateral movement when first targeted
         this._reflexDodgeTimer = 0;
@@ -393,7 +395,9 @@ export class AIController {
         }
 
         // Behavior tree (throttled) — threat scan moved to updateContinuous
+        // Skip BT during grenade throw so aimPoint stays on the throw arc
         this.btTimer += dt;
+        if (this._grenadeThrowTimer > 0) return;
         if (this.btTimer >= this.btInterval) {
             this.btTimer = 0;
             this._updateRisk(dt);
@@ -1042,6 +1046,7 @@ export class AIController {
             if (d >= 8 && d <= 40) {
                 this._grenadeTargetPos = contact.lastSeenPos;
                 this._actionThrowGrenade();
+                return BTState.RUNNING; // keep aimPoint on the throw arc
             }
         }
 
@@ -1507,7 +1512,32 @@ export class AIController {
             return;
         }
 
-        if (!this.moveTarget) return;
+        if (!this.moveTarget) {
+            // No destination — decelerate to zero (inertia slide)
+            const decelRate = 12;
+            const td = Math.min(1, decelRate * dt);
+            this._velX += (0 - this._velX) * td;
+            this._velZ += (0 - this._velZ) * td;
+            if (this._velX * this._velX + this._velZ * this._velZ < 0.01) {
+                this._velX = 0;
+                this._velZ = 0;
+            } else {
+                const nx2 = body.position.x + this._velX * dt;
+                const nz2 = body.position.z + this._velZ * dt;
+                let slideBlocked = false;
+                if (this.navGrid) {
+                    const g = this.navGrid.worldToGrid(nx2, nz2);
+                    if (!this.navGrid.isWalkable(g.col, g.row)) slideBlocked = true;
+                }
+                if (!slideBlocked) {
+                    body.position.x = nx2;
+                    body.position.z = nz2;
+                    if (!this.isJumping) body.position.y = this.getHeightAt(nx2, nz2) + 0.05;
+                }
+            }
+            this.lastPos.copy(myPos);
+            return;
+        }
 
         // Request A* path if available
         this._requestPath();
@@ -1629,9 +1659,19 @@ export class AIController {
 
         const speed = this.seekingCover ? this.moveSpeed * 1.2 : this.moveSpeed;
 
-        // Move horizontally (direct position update)
-        const dx = _v1.x * speed * dt;
-        const dz = _v1.z * speed * dt;
+        // Target velocity from direction
+        const targetVX = _v1.x * speed;
+        const targetVZ = _v1.z * speed;
+
+        // Lerp current velocity toward target (inertia)
+        const accelRate = 20;
+        const ta = Math.min(1, accelRate * dt);
+        this._velX += (targetVX - this._velX) * ta;
+        this._velZ += (targetVZ - this._velZ) * ta;
+
+        // Move horizontally using smoothed velocity
+        const dx = this._velX * dt;
+        const dz = this._velZ * dt;
         const newX = body.position.x + dx;
         const newZ = body.position.z + dz;
 
@@ -1685,7 +1725,9 @@ export class AIController {
 
         // Update facing: pre-aim nearest intel contact, or fall back to movement direction
         this._preAimActive = false;
-        if (!this.targetEnemy || !this.targetEnemy.alive) {
+        if (this._grenadeThrowTimer > 0) {
+            // During grenade throw, keep aimPoint on the throw arc — skip pre-aim
+        } else if (!this.targetEnemy || !this.targetEnemy.alive) {
             let preAimed = false;
             if (this.teamIntel) {
                 // Re-evaluate intel target only when cooldown expires or current contact is stale
@@ -1757,6 +1799,9 @@ export class AIController {
     // ───── Aiming ─────
 
     _updateAiming(dt) {
+        // During grenade throw, aimPoint is set to the throw arc — don't overwrite
+        if (this._grenadeThrowTimer > 0) return;
+
         // For suppression with no visible enemy, aim point is set by _actionSuppress
         const isSuppressingBlind = this.suppressionTarget && this.suppressionTimer > 0
             && (!this.targetEnemy || !this.targetEnemy.alive);
@@ -1802,8 +1847,8 @@ export class AIController {
 
         // BOLT aim delay: must aim at target for aiAimDelay seconds before firing
         if (this.weaponDef.aiAimDelay) {
-            // Unscope during bolt cycling or reloading
-            if (this.boltTimer > 0 || this.isReloading) {
+            // Unscope during bolt cycling, reloading, or grenade throw
+            if (this.boltTimer > 0 || this.isReloading || this._grenadeThrowTimer > 0) {
                 this.isScoped = false;
             } else if (this.targetEnemy && this.targetEnemy.alive && this.hasReacted) {
                 if (this.targetEnemy !== this._lastAimTarget) {
@@ -1876,6 +1921,9 @@ export class AIController {
             this.fireTimer = 0;
             return;
         }
+
+        // Block firing during grenade throw
+        if (this._grenadeThrowTimer > 0) return;
 
         // Block firing during bolt cycling
         if (this.boltTimer > 0) return;
@@ -2114,9 +2162,11 @@ export class AIController {
         this._grenadeThrowPitch = 0;
         // Reset visual state
         this._smoothAimPitch = 0;
-        // Reset jump state
+        // Reset jump and inertia state
         this.isJumping = false;
         this.jumpVelY = 0;
+        this._velX = 0;
+        this._velZ = 0;
         // Reset path state
         this.currentPath = [];
         this.pathIndex = 0;
