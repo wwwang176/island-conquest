@@ -204,6 +204,12 @@ export class AIController {
         this.btTimer = 0;
         this.btInterval = 0.15 + Math.random() * 0.1;
 
+        // Threat scan throttle (independent of BT, runs in updateContinuous)
+        this._scanTimer = Math.random() * 0.05; // stagger initial scans
+        this._targetSwitchCooldown = 0;
+        this._preAimContact = null;
+        this._preAimCooldown = 0;
+
         // Grenade state
         this.grenadeCount = WeaponDefs.GRENADE.maxPerLife;
         this.grenadeCooldown = 0;
@@ -386,11 +392,10 @@ export class AIController {
             }
         }
 
-        // Behavior tree (throttled)
+        // Behavior tree (throttled) — threat scan moved to updateContinuous
         this.btTimer += dt;
         if (this.btTimer >= this.btInterval) {
             this.btTimer = 0;
-            this._updateThreatScan();
             this._updateRisk(dt);
             this._chooseFlagTarget();
             this.behaviorTree.tick(this);
@@ -434,6 +439,17 @@ export class AIController {
                 this._tacLabelText = '';
             }
             return;
+        }
+
+        // Target switch cooldowns
+        if (this._targetSwitchCooldown > 0) this._targetSwitchCooldown -= dt;
+        if (this._preAimCooldown > 0) this._preAimCooldown -= dt;
+
+        // Threat scan — 50ms throttle, independent of BT stagger
+        this._scanTimer += dt;
+        if (this._scanTimer >= 0.05) {
+            this._scanTimer = 0;
+            this._updateThreatScan();
         }
 
         // Decay path cooldown
@@ -581,31 +597,49 @@ export class AIController {
                 }
             }
         }
+        const prevVisible = this._previouslyVisible;
         this._previouslyVisible = currentlyVisible;
         this._useSetA = !this._useSetA;
 
-        // Target switching: only switch if new target is significantly closer
+        // Target switching with stickiness
         if (closestEnemy) {
             if (this.targetEnemy !== closestEnemy) {
-                this._setTargetEnemy(closestEnemy);
-                this.hasReacted = false;
-                // Per-personality distance curve: lerp(nearReaction, farReaction, t)
-                const t = Math.max(0, Math.min(1, closestDist / 60));
-                const p = this.personality;
-                const distFactor = p.nearReaction + (p.farReaction - p.nearReaction) * t;
-                // Exposure penalty: head-only target is harder to identify
-                const losFactor = losLevel === 2 ? 1.4 : 1.0;
-                this.reactionTimer = p.reactionTime / 1000 * distFactor * losFactor +
-                    (Math.random() * 0.15);
-                // Initial aim offset — smaller at close range (target fills FOV)
-                const aimSpread = Math.max(0.3, Math.min(1.0, closestDist / 25));
-                this.aimOffset.set(
-                    (Math.random() - 0.5) * 2 * aimSpread,
-                    (Math.random() - 0.5) * 1.5 * aimSpread,
-                    (Math.random() - 0.5) * 2 * aimSpread
-                );
+                const isNewThreat = !prevVisible.has(closestEnemy);
+                const currentLost = !this.targetEnemy || !this.targetEnemy.alive
+                    || !currentlyVisible.has(this.targetEnemy);
+                const canSwitch = isNewThreat || currentLost
+                    || this._targetSwitchCooldown <= 0;
+
+                if (canSwitch) {
+                    this._setTargetEnemy(closestEnemy);
+                    this.hasReacted = false;
+                    this._targetSwitchCooldown = 0.4;
+                    // Per-personality distance curve: lerp(nearReaction, farReaction, t)
+                    const t = Math.max(0, Math.min(1, closestDist / 60));
+                    const p = this.personality;
+                    const distFactor = p.nearReaction + (p.farReaction - p.nearReaction) * t;
+                    // Exposure penalty: head-only target is harder to identify
+                    const losFactor = losLevel === 2 ? 1.4 : 1.0;
+                    this.reactionTimer = p.reactionTime / 1000 * distFactor * losFactor +
+                        (Math.random() * 0.15);
+                    // Initial aim offset — smaller at close range (target fills FOV)
+                    const aimSpread = Math.max(0.3, Math.min(1.0, closestDist / 25));
+                    this.aimOffset.set(
+                        (Math.random() - 0.5) * 2 * aimSpread,
+                        (Math.random() - 0.5) * 1.5 * aimSpread,
+                        (Math.random() - 0.5) * 2 * aimSpread
+                    );
+                }
             }
         } else {
+            // Lost all visual targets — hand off to intel pre-aim
+            if (this.targetEnemy && this.teamIntel) {
+                const contact = this.teamIntel.contacts.get(this.targetEnemy);
+                if (contact) {
+                    this._preAimContact = contact;
+                    this._preAimCooldown = 0.5;
+                }
+            }
             this._targetLOSLevel = 1;
             this._setTargetEnemy(null);
             this.hasReacted = false;
@@ -1654,15 +1688,26 @@ export class AIController {
         if (!this.targetEnemy || !this.targetEnemy.alive) {
             let preAimed = false;
             if (this.teamIntel) {
-                let nearest = null;
-                let nearestDist = Infinity;
-                for (const contact of this.teamIntel.contacts.values()) {
-                    if (contact.status === 'visible') continue;
-                    const d = myPos.distanceTo(contact.lastSeenPos);
-                    if (d < this.weaponDef.maxRange && d < nearestDist) {
-                        nearestDist = d;
-                        nearest = contact;
+                // Re-evaluate intel target only when cooldown expires or current contact is stale
+                let nearest = this._preAimContact;
+                if (nearest && nearest.confidence <= 0) {
+                    nearest = null; // contact expired
+                }
+                if (!nearest || this._preAimCooldown <= 0) {
+                    nearest = null;
+                    let nearestDist = Infinity;
+                    for (const contact of this.teamIntel.contacts.values()) {
+                        if (contact.status === 'visible') continue;
+                        const d = myPos.distanceTo(contact.lastSeenPos);
+                        if (d < this.weaponDef.maxRange && d < nearestDist) {
+                            nearestDist = d;
+                            nearest = contact;
+                        }
                     }
+                    if (nearest && nearest !== this._preAimContact) {
+                        this._preAimCooldown = 0.5;
+                    }
+                    this._preAimContact = nearest;
                 }
                 if (nearest) {
                     _v2.subVectors(nearest.lastSeenPos, myPos).normalize();
