@@ -1424,13 +1424,8 @@ export class Game {
         // Update vehicles FIRST so AI passengers read current helicopter position
         this.vehicleManager.update(dt);
 
-        // Update AI — include vehicle meshes in collidables for hitscan
-        if (!this._aiCollidablesBuf) this._aiCollidablesBuf = [];
-        const aiCollidables = this._aiCollidablesBuf;
-        aiCollidables.length = 0;
-        for (const c of this.island.collidables) aiCollidables.push(c);
-        for (const m of this.vehicleManager.getVehicleMeshes()) aiCollidables.push(m);
-        this.aiManager.update(dt, aiCollidables);
+        // Update AI — vehicle meshes added by AIController at fire time via vehicleManager
+        this.aiManager.update(dt, this.island.collidables);
 
         // Update intel visualization
         if (this._intelVisState === 1) this.aiManager.intelA.updateVisualization();

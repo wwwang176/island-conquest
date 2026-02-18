@@ -7,6 +7,7 @@ import { HELI_PASSENGER_SLOTS, HELI_PILOT_OFFSET } from '../entities/Helicopter.
 
 const _grenadeOrigin = new THREE.Vector3();
 const _grenadeDir = new THREE.Vector3();
+const _heliInput = { thrust: 0, brake: 0, steerLeft: false, steerRight: false, ascend: false, descend: false };
 
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -16,6 +17,7 @@ const _target = new THREE.Vector3();
 const _strafeDir = new THREE.Vector3();
 const _tmpVec = new THREE.Vector3();
 const _targetMeshes = [];
+const _fireCollidables = [];
 
 const EYE_HEIGHT = 1.5;
 const HEAD_TOP_HEIGHT = 1.7;
@@ -585,8 +587,8 @@ export class AIController {
                         heli.getWorldSeatPos(_tmpVec, HELI_PILOT_OFFSET);
                         this.soldier.body.position.set(_tmpVec.x, _tmpVec.y, _tmpVec.z);
                         this.soldier.mesh.position.copy(_tmpVec);
-                        // Tilt with helicopter (yaw+pitch+roll via quaternion)
-                        heli._attitudeGroup.getWorldQuaternion(this.soldier.mesh.quaternion);
+                        // Tilt with helicopter (yaw+pitch+roll via cached quaternion)
+                        this.soldier.mesh.quaternion.copy(heli._cachedWorldQuat);
                         // Body faces forward relative to helicopter
                         if (this.soldier.lowerBody) this.soldier.lowerBody.rotation.y = Math.PI;
                         if (this.soldier.upperBody) {
@@ -616,8 +618,8 @@ export class AIController {
                                 this.facingDir.set(-Math.sin(outward), 0, -Math.cos(outward));
                             }
                             this._updateUpperBodyAim(dt);
-                            // Tilt with helicopter (yaw+pitch+roll via quaternion)
-                            heli._attitudeGroup.getWorldQuaternion(this.soldier.mesh.quaternion);
+                            // Tilt with helicopter (yaw+pitch+roll via cached quaternion)
+                            this.soldier.mesh.quaternion.copy(heli._cachedWorldQuat);
                             // Lower body: outward relative to helicopter
                             if (this.soldier.lowerBody) {
                                 this.soldier.lowerBody.rotation.y = slot.facingOffset;
@@ -1708,31 +1710,29 @@ export class AIController {
         while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
         while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
 
-        const input = {
-            thrust: Math.min(0.7, dist / 20),
-            brake: 0,
-            steerLeft: angleDiff > 0.1,
-            steerRight: angleDiff < -0.1,
-            ascend: vPos.y < desiredAlt,
-            descend: vPos.y > desiredAlt + 5,
-        };
+        _heliInput.thrust = Math.min(0.7, dist / 20);
+        _heliInput.brake = 0;
+        _heliInput.steerLeft = angleDiff > 0.1;
+        _heliInput.steerRight = angleDiff < -0.1;
+        _heliInput.ascend = vPos.y < desiredAlt;
+        _heliInput.descend = vPos.y > desiredAlt + 5;
 
         // Terrain clearance: climb if terrain is close below or ahead
         const groundBelow = this.getHeightAt(vPos.x, vPos.z);
         const minClearance = 12;
         if (vPos.y < groundBelow + minClearance) {
-            input.ascend = true;
-            input.descend = false;
+            _heliInput.ascend = true;
+            _heliInput.descend = false;
         }
         const aheadX = vPos.x + Math.sin(v.rotationY) * 20;
         const aheadZ = vPos.z + Math.cos(v.rotationY) * 20;
         const aheadGround = this.getHeightAt(aheadX, aheadZ);
         if (vPos.y < aheadGround + minClearance) {
-            input.ascend = true;
-            input.descend = false;
+            _heliInput.ascend = true;
+            _heliInput.descend = false;
         }
 
-        v.applyInput(input, dt);
+        v.applyInput(_heliInput, dt);
     }
 
     _exitVehicle() {
@@ -2380,7 +2380,14 @@ export class AIController {
         }
         if (this._playerMesh) _targetMeshes.push(this._playerMesh);
 
-        const envHits = _raycaster.intersectObjects(this.collidables, true);
+        // Build combined collidables (terrain + vehicles) only at fire time
+        _fireCollidables.length = 0;
+        for (let i = 0; i < this.collidables.length; i++) _fireCollidables.push(this.collidables[i]);
+        if (this.vehicleManager) {
+            const vMeshes = this.vehicleManager.getVehicleMeshes();
+            for (let i = 0; i < vMeshes.length; i++) _fireCollidables.push(vMeshes[i]);
+        }
+        const envHits = _raycaster.intersectObjects(_fireCollidables, true);
         const charHits = _raycaster.intersectObjects(_targetMeshes, true);
 
         let hitChar = charHits.length > 0 ? charHits[0] : null;
@@ -2389,17 +2396,18 @@ export class AIController {
         // Skip raycast hits on own vehicle (passengers firing from inside)
         if (this.vehicle && hitEnv) {
             const ownMesh = this.vehicle.mesh;
-            while (hitEnv) {
-                let obj = hitEnv.object;
+            let envIdx = 0;
+            while (envIdx < envHits.length) {
+                let obj = envHits[envIdx].object;
                 let isOwn = false;
                 while (obj) {
                     if (obj === ownMesh) { isOwn = true; break; }
                     obj = obj.parent;
                 }
                 if (!isOwn) break;
-                envHits.shift();
-                hitEnv = envHits.length > 0 ? envHits[0] : null;
+                envIdx++;
             }
+            hitEnv = envIdx < envHits.length ? envHits[envIdx] : null;
         }
 
         // Determine closest hit distance for tracer length

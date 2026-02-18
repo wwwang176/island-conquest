@@ -83,6 +83,9 @@ export class Helicopter extends Vehicle {
         this._rotorMesh = null;
         this._tailRotorMesh = null;
 
+        // Cached world quaternion for passengers/pilot (updated once per frame in update())
+        this._cachedWorldQuat = new THREE.Quaternion();
+
         // Build mesh
         this.mesh = this._createMesh();
         this.mesh.userData.vehicle = this;
@@ -303,21 +306,23 @@ export class Helicopter extends Vehicle {
 
         // ── Main rotor (animated — stays separate) ──
         const rotorGeo = new THREE.BoxGeometry(7, 0.04, 0.25);
-        this._rotorMesh = new THREE.Mesh(rotorGeo, mat(DK, { transparent: true, opacity: 0.7 }));
+        this._rotorMesh = new THREE.Mesh(rotorGeo, mat(0x444444));
         this._rotorMesh.position.y = 0.95;
         this._attitudeGroup.add(this._rotorMesh);
         const rotor2Geo = new THREE.BoxGeometry(0.25, 0.04, 7);
-        this._rotorMesh.add(new THREE.Mesh(rotor2Geo, mat(DK, { transparent: true, opacity: 0.7 })));
+        const rotor2 = new THREE.Mesh(rotor2Geo, mat(0x444444));
+        this._rotorMesh.add(rotor2);
 
         // ── Tail rotor (animated — stays separate) ──
         // Hull-local (0.22, 0.7, 4.9) → after PI rotation: (-0.22, 0.7, -4.9)
         const trGeo = new THREE.BoxGeometry(0.04, 1.8, 0.15);
-        this._tailRotorMesh = new THREE.Mesh(trGeo, mat(DK, { transparent: true, opacity: 0.7 }));
+        this._tailRotorMesh = new THREE.Mesh(trGeo, mat(0x444444));
         this._tailRotorMesh.position.set(-0.22, 0.7, -4.9);
         this._attitudeGroup.add(this._tailRotorMesh);
 
         // Exclude rotors from raycasting (thin spinning blades shouldn't block bullets)
         this._rotorMesh.raycast = () => {};
+        rotor2.raycast = () => {};
         this._tailRotorMesh.raycast = () => {};
 
         return group;
@@ -571,13 +576,17 @@ export class Helicopter extends Vehicle {
 
         // Rotor animation
         const rotorSpeed = this.driver ? 25 : 8; // faster when piloted
-        this._rotorAngle += rotorSpeed * dt;
+        this._rotorAngle = (this._rotorAngle + rotorSpeed * dt) % (Math.PI * 2);
         if (this._rotorMesh) {
             this._rotorMesh.rotation.y = this._rotorAngle;
         }
         if (this._tailRotorMesh) {
             this._tailRotorMesh.rotation.x = this._rotorAngle * 1.5;
         }
+
+        // Cache world quaternion for passengers/pilot (avoids repeated matrix traversal)
+        this._attitudeGroup.updateWorldMatrix(true, false);
+        this._cachedWorldQuat.setFromRotationMatrix(this._attitudeGroup.matrixWorld);
 
         // Sync physics body (skip when idle — no occupants and on ground)
         if (this.driver || this.passengers.length > 0 || this.altitude > this._groundY + 1) {
