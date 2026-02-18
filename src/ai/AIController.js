@@ -648,7 +648,7 @@ export class AIController {
                 let canFire = false;
                 if (this.targetEnemy && this.targetEnemy.alive) {
                     const slotIdx = this.vehicle.passengers.indexOf(this.soldier);
-                    const isLeftSeat = slotIdx >= 0 && slotIdx < 2;
+                    const isLeftSeat = slotIdx >= 0 && slotIdx % 2 === 0;
                     const ep = this.targetEnemy.getPosition();
                     const hx = this.vehicle.mesh.position.x;
                     const hz = this.vehicle.mesh.position.z;
@@ -1604,6 +1604,7 @@ export class AIController {
 
         if (dist < this._vehicleBoardTarget.enterRadius) {
             // Close enough — enter the vehicle
+            this._releaseCover();
             this._vehicleBoardTarget.enter(this.soldier);
             this.vehicle = this._vehicleBoardTarget;
             // AI soldiers always visible in vehicles (positioned at cockpit/door slots)

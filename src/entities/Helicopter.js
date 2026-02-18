@@ -17,8 +17,8 @@ const PILOT_OFFSET = { x: 0, y: -1.15, z: 1.4 }; // cockpit (nose area, sunk int
 
 const PASSENGER_SLOTS = [
     { x: -0.75, y: -1.2, z:  0.2, facingOffset:  Math.PI / 2 },  // left front  → face -X (outward)
-    { x: -0.75, y: -1.2, z: -0.7, facingOffset:  Math.PI / 2 },  // left rear   → face -X (outward)
     { x:  0.75, y: -1.2, z:  0.2, facingOffset: -Math.PI / 2 },  // right front → face +X (outward)
+    { x: -0.75, y: -1.2, z: -0.7, facingOffset:  Math.PI / 2 },  // left rear   → face -X (outward)
     { x:  0.75, y: -1.2, z: -0.7, facingOffset: -Math.PI / 2 },  // right rear  → face +X (outward)
 ];
 

@@ -498,7 +498,7 @@ export class Player {
             // Helicopter passengers: restricted to their side
             if (this.vehicle && !isPilot && this.vehicle.type === 'helicopter') {
                 const slotIdx = this.vehicle.passengers.indexOf(this);
-                const isLeftSeat = slotIdx >= 0 && slotIdx < 2;
+                const isLeftSeat = slotIdx >= 0 && slotIdx % 2 === 0;
                 const aimDir = this.getAimDirection();
                 const rY = this.vehicle.rotationY;
                 const cross = Math.sin(rY) * aimDir.z - Math.cos(rY) * aimDir.x;
