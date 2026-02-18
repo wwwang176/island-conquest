@@ -75,16 +75,20 @@ export class VehicleManager {
     }
 
     _findWaterSpawn(basePos, angle, radius) {
-        // Search outward from base to find water
-        for (let r = radius; r < radius + 40; r += 3) {
+        // Walk outward until we hit water (h < -0.3), then place boat
+        // just 2m past the shoreline. Collision threshold is -0.15 so
+        // anything at h < -0.3 is safe to spawn and maneuver.
+        for (let r = radius; r < radius + 50; r += 2) {
             const x = basePos.x + Math.cos(angle) * r;
             const z = basePos.z + Math.sin(angle) * r;
-            const h = this.getHeightAt(x, z);
-            if (h < 0) {
-                return new THREE.Vector3(x, WATER_Y + 0.3, z);
+            if (this.getHeightAt(x, z) < -0.3) {
+                // Found water — nudge 2m further to avoid the very edge
+                const bx = basePos.x + Math.cos(angle) * (r + 2);
+                const bz = basePos.z + Math.sin(angle) * (r + 2);
+                return new THREE.Vector3(bx, WATER_Y + 0.3, bz);
             }
         }
-        // Fallback: just place at edge of map in water
+        // Fallback
         const x = basePos.x + Math.cos(angle) * 50;
         const z = basePos.z + Math.sin(angle) * 50;
         return new THREE.Vector3(x, WATER_Y + 0.3, z);
@@ -200,6 +204,8 @@ export class VehicleManager {
             // Check if vehicle has room
             if (v.type === 'helicopter') {
                 if (v.occupantCount >= 5) continue;
+            } else if (v.type === 'speedboat') {
+                if (v.occupantCount >= 3) continue;
             } else {
                 if (v.driver) continue;
             }

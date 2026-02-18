@@ -3,6 +3,7 @@ import * as CANNON from 'cannon-es';
 import { Weapon } from './Weapon.js';
 import { WeaponDefs } from './WeaponDefs.js';
 import { HELI_PASSENGER_SLOTS, HELI_PILOT_OFFSET } from './Helicopter.js';
+import { BOAT_PASSENGER_SLOTS, BOAT_PILOT_OFFSET } from './Speedboat.js';
 
 // Module-level reusable objects (avoid per-frame allocation)
 const _forward = new THREE.Vector3();
@@ -492,19 +493,19 @@ export class Player {
         if (this.input.isPointerLocked) {
             this._handleMouseLook();
             this._handleVehicleControls(dt);
-            // Helicopter pilot cannot shoot; passengers only on their side
-            const isHeliPilot = this.vehicle && this.vehicle.type === 'helicopter' && this.vehicle.driver === this;
+            // Pilots cannot shoot; passengers can
+            const isPilot = this.vehicle && this.vehicle.driver === this;
             let sideBlocked = false;
-            if (this.vehicle && this.vehicle.type === 'helicopter' && !isHeliPilot) {
+            // Helicopter passengers: restricted to their side
+            if (this.vehicle && !isPilot && this.vehicle.type === 'helicopter') {
                 const slotIdx = this.vehicle.passengers.indexOf(this);
                 const isLeftSeat = slotIdx >= 0 && slotIdx < 2;
                 const aimDir = this.getAimDirection();
                 const rY = this.vehicle.rotationY;
-                // Cross product: helicopter forward × aim direction
                 const cross = Math.sin(rY) * aimDir.z - Math.cos(rY) * aimDir.x;
                 sideBlocked = isLeftSeat ? cross < 0 : cross > 0;
             }
-            if (!isHeliPilot && !sideBlocked) {
+            if (!isPilot && !sideBlocked) {
                 this._handleShooting(dt);
             }
         }
@@ -574,8 +575,31 @@ export class Player {
                     camY = vp.y + 0.5;
                 }
             }
+        } else if (v.type === 'speedboat') {
+            if (v.driver === this) {
+                _eyeOffset.x = BOAT_PILOT_OFFSET.x;
+                _eyeOffset.y = BOAT_PILOT_OFFSET.y + 1.6;
+                _eyeOffset.z = BOAT_PILOT_OFFSET.z;
+                v.getWorldSeatPos(_seatPos, _eyeOffset);
+                camX = _seatPos.x;
+                camY = _seatPos.y;
+                camZ = _seatPos.z;
+            } else {
+                const slotIdx = v.passengers ? v.passengers.indexOf(this) : -1;
+                if (slotIdx >= 0 && slotIdx < BOAT_PASSENGER_SLOTS.length) {
+                    const slot = BOAT_PASSENGER_SLOTS[slotIdx];
+                    _eyeOffset.x = slot.x;
+                    _eyeOffset.y = slot.y + 1.6;
+                    _eyeOffset.z = slot.z;
+                    v.getWorldSeatPos(_seatPos, _eyeOffset);
+                    camX = _seatPos.x;
+                    camY = _seatPos.y;
+                    camZ = _seatPos.z;
+                } else {
+                    camY = vp.y + 2.0;
+                }
+            }
         } else {
-            // Speedboat: driver sits at cabin
             camY = vp.y + 2.0;
         }
 

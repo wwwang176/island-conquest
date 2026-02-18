@@ -4,6 +4,7 @@ import { PersonalityTypes } from './Personality.js';
 import { findFlankPosition, computePreAimPoint, computeSuppressionTarget, findRidgelineAimPoint } from './TacticalActions.js';
 import { WeaponDefs, GunAnim } from '../entities/WeaponDefs.js';
 import { HELI_PASSENGER_SLOTS, HELI_PILOT_OFFSET } from '../entities/Helicopter.js';
+import { BOAT_PASSENGER_SLOTS, BOAT_PILOT_OFFSET } from '../entities/Speedboat.js';
 
 const _grenadeOrigin = new THREE.Vector3();
 const _grenadeDir = new THREE.Vector3();
@@ -240,6 +241,8 @@ export class AIController {
         this._vehicleOrbitAngle = 0;     // helicopter orbit angle
         this._heliWaitingForPassengers = false;
         this._heliWaitTimer = 0;      // countdown after first passenger boards
+        this._boatWaitingForPassengers = false;
+        this._boatWaitTimer = 0;
         this.vehicleManager = null;   // set by AIManager
 
         // Build behavior tree
@@ -636,27 +639,67 @@ export class AIController {
                             if (this.soldier.rightLeg) this.soldier.rightLeg.rotation.x = Math.PI / 4;
                         }
                     }
+                } else if (this.vehicle.type === 'speedboat') {
+                    const boat = this.vehicle;
+                    if (boat.driver === this.soldier) {
+                        boat.getWorldSeatPos(_tmpVec, BOAT_PILOT_OFFSET);
+                        this.soldier.body.position.set(_tmpVec.x, _tmpVec.y, _tmpVec.z);
+                        this.soldier.mesh.position.copy(_tmpVec);
+                        this.soldier.mesh.rotation.y = rotY + Math.PI;
+                    } else {
+                        const slotIdx = boat.passengers.indexOf(this.soldier);
+                        if (slotIdx >= 0 && slotIdx < BOAT_PASSENGER_SLOTS.length) {
+                            const slot = BOAT_PASSENGER_SLOTS[slotIdx];
+                            boat.getWorldSeatPos(_tmpVec, slot);
+                            this.soldier.body.position.set(_tmpVec.x, _tmpVec.y, _tmpVec.z);
+                            this.soldier.mesh.position.copy(_tmpVec);
+                            // Face outward
+                            const outward = rotY + slot.facingOffset;
+                            if (this.targetEnemy && this.targetEnemy.alive && this.hasReacted) {
+                                const sp = this.soldier.getPosition();
+                                const adx = this.aimPoint.x - sp.x;
+                                const adz = this.aimPoint.z - sp.z;
+                                const hd = Math.sqrt(adx * adx + adz * adz);
+                                if (hd > 0.1) this.facingDir.set(adx / hd, 0, adz / hd);
+                            } else {
+                                this.facingDir.set(-Math.sin(outward), 0, -Math.cos(outward));
+                            }
+                            this._updateUpperBodyAim(dt);
+                            this.soldier.mesh.rotation.y = rotY;
+                            if (this.soldier.lowerBody) {
+                                this.soldier.lowerBody.rotation.y = slot.facingOffset;
+                            }
+                            if (this.soldier.upperBody) {
+                                this.soldier.upperBody.rotation.y -= rotY;
+                            }
+                        }
+                    }
                 } else {
-                    // Speedboat: center
+                    // Other vehicle types: center
                     this.soldier.body.position.set(vp.x, vp.y, vp.z);
                     this.soldier.mesh.position.set(vp.x, vp.y, vp.z);
                 }
             }
-            // Helicopter passengers (not pilot) can aim and shoot — only on their side
-            if (this.vehicle.type === 'helicopter' && this.vehicle.driver !== this.soldier) {
-                // Always tick shooting systems (reload, bolt cycle, scope, spread)
+            // Passengers (not pilot) can aim and shoot — only on their side
+            const isPassengerVehicle = this.vehicle.type === 'helicopter' || this.vehicle.type === 'speedboat';
+            if (isPassengerVehicle && this.vehicle.driver !== this.soldier) {
                 this._updateShooting(dt);
-                // Only aim and fire if target is on this passenger's side
                 let canFire = false;
                 if (this.targetEnemy && this.targetEnemy.alive) {
-                    const slotIdx = this.vehicle.passengers.indexOf(this.soldier);
-                    const isLeftSeat = slotIdx >= 0 && slotIdx < 2; // slots 0,1 = left
-                    const ep = this.targetEnemy.getPosition();
-                    const hx = this.vehicle.mesh.position.x;
-                    const hz = this.vehicle.mesh.position.z;
-                    const rY = this.vehicle.rotationY;
-                    const cross = Math.sin(rY) * (ep.z - hz) - Math.cos(rY) * (ep.x - hx);
-                    canFire = isLeftSeat ? cross > 0 : cross < 0;
+                    if (this.vehicle.type === 'helicopter') {
+                        // Helicopter: side-restricted
+                        const slotIdx = this.vehicle.passengers.indexOf(this.soldier);
+                        const isLeftSeat = slotIdx >= 0 && slotIdx < 2;
+                        const ep = this.targetEnemy.getPosition();
+                        const hx = this.vehicle.mesh.position.x;
+                        const hz = this.vehicle.mesh.position.z;
+                        const rY = this.vehicle.rotationY;
+                        const cross = Math.sin(rY) * (ep.z - hz) - Math.cos(rY) * (ep.x - hx);
+                        canFire = isLeftSeat ? cross > 0 : cross < 0;
+                    } else {
+                        // Speedboat: 360° fire
+                        canFire = true;
+                    }
                 }
                 if (canFire) {
                     this.hasReacted = true;
@@ -1521,10 +1564,10 @@ export class AIController {
         for (const ctrl of this.squad.controllers) {
             if (ctrl === this) continue;
             if (!ctrl.vehicle) continue;
-            if (ctrl.vehicle.type !== 'helicopter') continue;
             const v = ctrl.vehicle;
-            if (!v.alive || v.occupantCount >= 5) continue;
-            if (v.team !== this.team) continue;
+            if (!v.alive || v.team !== this.team) continue;
+            const maxOcc = v.type === 'helicopter' ? 5 : v.type === 'speedboat' ? 3 : 1;
+            if (v.occupantCount >= maxOcc) continue;
             return v;
         }
         return null;
@@ -1587,8 +1630,9 @@ export class AIController {
             this._vehicleShoreApproach = null;
             return BTState.FAILURE;
         }
-        // Helicopter: reject only if full; Speedboat: reject if already has driver
-        if (bt.type === 'helicopter' ? bt.occupantCount >= 5 : bt.driver) {
+        // Reject if vehicle is full
+        const maxOcc = bt.type === 'helicopter' ? 5 : bt.type === 'speedboat' ? 3 : 1;
+        if ((bt.occupantCount || (bt.driver ? 1 : 0)) >= maxOcc) {
             this._vehicleBoardTarget = null;
             this._vehicleShoreApproach = null;
             return BTState.FAILURE;
@@ -1606,10 +1650,15 @@ export class AIController {
             this.vehicle = this._vehicleBoardTarget;
             // AI soldiers always visible in vehicles (positioned at cockpit/door slots)
             this.soldier.mesh.visible = true;
-            // Helicopter pilot: start waiting for passengers immediately on boarding
-            if (this.vehicle.type === 'helicopter' && this.vehicle.driver === this.soldier) {
-                this._heliWaitingForPassengers = true;
-                this._heliWaitTimer = 10;
+            // Pilot: start waiting for passengers immediately on boarding
+            if (this.vehicle.driver === this.soldier) {
+                if (this.vehicle.type === 'helicopter') {
+                    this._heliWaitingForPassengers = true;
+                    this._heliWaitTimer = 10;
+                } else if (this.vehicle.type === 'speedboat') {
+                    this._boatWaitingForPassengers = true;
+                    this._boatWaitTimer = 10;
+                }
             }
             this._vehicleBoardTarget = null;
             this._vehicleShoreApproach = null;
@@ -1661,6 +1710,18 @@ export class AIController {
         }
 
         // Speedboat: drive to destination, then disembark
+        // Pilot wait logic: wait for first passenger, then 10s countdown
+        if (v.driver === this.soldier) {
+            if (v.passengers.length === 0) {
+                this._boatWaitingForPassengers = true;
+                this._boatWaitTimer = 10;
+            } else if (this._boatWaitTimer > 0) {
+                this._boatWaitingForPassengers = true;
+            } else {
+                this._boatWaitingForPassengers = false;
+            }
+        }
+
         const vPos = v.mesh.position;
         const target = this._vehicleMoveTarget || (this.targetFlag ? this.targetFlag.position : null);
         if (!target) {
@@ -1700,6 +1761,15 @@ export class AIController {
 
     _updateSpeedboatDriving(dt) {
         const v = this.vehicle;
+
+        // Wait on water until passengers board + grace period expires
+        if (this._boatWaitingForPassengers) {
+            if (v.passengers.length > 0) {
+                this._boatWaitTimer -= dt;
+            }
+            return; // no input — boat stays still
+        }
+
         const vPos = v.mesh.position;
         const target = this._vehicleMoveTarget || (this.targetFlag ? this.targetFlag.position : null);
         if (!target) return;
