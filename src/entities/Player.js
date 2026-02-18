@@ -10,6 +10,7 @@ const _right = new THREE.Vector3();
 const _yawQuat = new THREE.Quaternion();
 const _moveDir = new THREE.Vector3();
 const _yAxis = new THREE.Vector3(0, 1, 0);
+const _seatPos = new THREE.Vector3();
 
 /**
  * First-person player controller.
@@ -479,9 +480,19 @@ export class Player {
         if (this.input.isPointerLocked) {
             this._handleMouseLook();
             this._handleVehicleControls(dt);
-            // Helicopter pilot cannot shoot; passengers and speedboat drivers can
+            // Helicopter pilot cannot shoot; passengers only on their side
             const isHeliPilot = this.vehicle && this.vehicle.type === 'helicopter' && this.vehicle.driver === this;
-            if (!isHeliPilot) {
+            let sideBlocked = false;
+            if (this.vehicle && this.vehicle.type === 'helicopter' && !isHeliPilot) {
+                const slotIdx = this.vehicle.passengers.indexOf(this);
+                const isLeftSeat = slotIdx >= 0 && slotIdx < 2;
+                const aimDir = this.getAimDirection();
+                const rY = this.vehicle.rotationY;
+                // Cross product: helicopter forward × aim direction
+                const cross = Math.sin(rY) * aimDir.z - Math.cos(rY) * aimDir.x;
+                sideBlocked = isLeftSeat ? cross < 0 : cross > 0;
+            }
+            if (!isHeliPilot && !sideBlocked) {
                 this._handleShooting(dt);
             }
         }
@@ -526,23 +537,21 @@ export class Player {
         let camX = vp.x, camY = vp.y, camZ = vp.z;
 
         if (v.type === 'helicopter') {
-            const rotY = v.rotationY;
-            const cosR = Math.cos(rotY), sinR = Math.sin(rotY);
-
             if (v.driver === this) {
                 // Pilot: cockpit position
-                const p = HELI_PILOT_OFFSET;
-                camX = vp.x + p.x * cosR + p.z * sinR;
-                camZ = vp.z - p.x * sinR + p.z * cosR;
-                camY = vp.y + p.y + 1.6; // eye height above seat
+                v.getWorldSeatPos(_seatPos, HELI_PILOT_OFFSET);
+                camX = _seatPos.x;
+                camZ = _seatPos.z;
+                camY = _seatPos.y + 1.6; // eye height above seat
             } else {
                 // Passenger: door slot
                 const slotIdx = v.passengers ? v.passengers.indexOf(this) : -1;
                 if (slotIdx >= 0 && slotIdx < HELI_PASSENGER_SLOTS.length) {
                     const slot = HELI_PASSENGER_SLOTS[slotIdx];
-                    camX = vp.x + slot.x * cosR + slot.z * sinR;
-                    camZ = vp.z - slot.x * sinR + slot.z * cosR;
-                    camY = vp.y + slot.y + 1.6; // eye height above slot
+                    v.getWorldSeatPos(_seatPos, slot);
+                    camX = _seatPos.x;
+                    camZ = _seatPos.z;
+                    camY = _seatPos.y + 1.6; // eye height above slot
                 } else {
                     camY = vp.y + 0.5;
                 }

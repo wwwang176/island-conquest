@@ -568,21 +568,20 @@ export class AIController {
             if (this.vehicle.mesh) {
                 const vp = this.vehicle.mesh.position;
                 const rotY = this.vehicle.rotationY;
-                const cosR = Math.cos(rotY), sinR = Math.sin(rotY);
 
                 if (this.vehicle.type === 'helicopter') {
-                    if (this.vehicle.driver === this.soldier) {
+                    const heli = this.vehicle;
+                    if (heli.driver === this.soldier) {
                         // Pilot: cockpit position (seated)
-                        const p = HELI_PILOT_OFFSET;
-                        const wx = vp.x + p.x * cosR + p.z * sinR;
-                        const wz = vp.z - p.x * sinR + p.z * cosR;
-                        this.soldier.body.position.set(wx, vp.y + p.y, wz);
-                        this.soldier.mesh.position.set(wx, vp.y + p.y, wz);
-                        this.soldier.mesh.rotation.y = 0;
-                        // Whole body faces helicopter forward (model faces -Z, +PI to face +Z)
-                        if (this.soldier.lowerBody) this.soldier.lowerBody.rotation.y = rotY + Math.PI;
+                        heli.getWorldSeatPos(_tmpVec, HELI_PILOT_OFFSET);
+                        this.soldier.body.position.set(_tmpVec.x, _tmpVec.y, _tmpVec.z);
+                        this.soldier.mesh.position.copy(_tmpVec);
+                        // Tilt with helicopter (yaw+pitch+roll via quaternion)
+                        heli._attitudeGroup.getWorldQuaternion(this.soldier.mesh.quaternion);
+                        // Body faces forward relative to helicopter
+                        if (this.soldier.lowerBody) this.soldier.lowerBody.rotation.y = Math.PI;
                         if (this.soldier.upperBody) {
-                            this.soldier.upperBody.rotation.y = rotY + Math.PI;
+                            this.soldier.upperBody.rotation.y = Math.PI;
                             if (this.soldier.shoulderPivot) this.soldier.shoulderPivot.rotation.x = 0;
                         }
                         // Legs forward 45°
@@ -590,36 +589,37 @@ export class AIController {
                         if (this.soldier.rightLeg) this.soldier.rightLeg.rotation.x = Math.PI / 4;
                     } else {
                         // Passenger: door slot (seated, legs face outward)
-                        const slotIdx = this.vehicle.passengers.indexOf(this.soldier);
+                        const slotIdx = heli.passengers.indexOf(this.soldier);
                         if (slotIdx >= 0 && slotIdx < HELI_PASSENGER_SLOTS.length) {
                             const slot = HELI_PASSENGER_SLOTS[slotIdx];
-                            const wx = vp.x + slot.x * cosR + slot.z * sinR;
-                            const wz = vp.z - slot.x * sinR + slot.z * cosR;
-                            this.soldier.body.position.set(wx, vp.y + slot.y, wz);
-                            this.soldier.mesh.position.set(wx, vp.y + slot.y, wz);
-                            // Root neutral — upper/lower body rotated separately
-                            this.soldier.mesh.rotation.y = 0;
-                            // Lower body faces outward (door direction)
+                            heli.getWorldSeatPos(_tmpVec, slot);
+                            this.soldier.body.position.set(_tmpVec.x, _tmpVec.y, _tmpVec.z);
+                            this.soldier.mesh.position.copy(_tmpVec);
+                            // Update facingDir for upper body aiming (world space)
                             const outward = rotY + slot.facingOffset;
-                            if (this.soldier.lowerBody) {
-                                this.soldier.lowerBody.rotation.y = outward;
+                            if (this.targetEnemy && this.targetEnemy.alive && this.hasReacted) {
+                                const sp = this.soldier.getPosition();
+                                const adx = this.aimPoint.x - sp.x;
+                                const adz = this.aimPoint.z - sp.z;
+                                const hd = Math.sqrt(adx * adx + adz * adz);
+                                if (hd > 0.1) this.facingDir.set(adx / hd, 0, adz / hd);
+                            } else {
+                                this.facingDir.set(-Math.sin(outward), 0, -Math.cos(outward));
                             }
-                            // Upper body faces aim target or outward
+                            this._updateUpperBodyAim(dt);
+                            // Tilt with helicopter (yaw+pitch+roll via quaternion)
+                            heli._attitudeGroup.getWorldQuaternion(this.soldier.mesh.quaternion);
+                            // Lower body: outward relative to helicopter
+                            if (this.soldier.lowerBody) {
+                                this.soldier.lowerBody.rotation.y = slot.facingOffset;
+                            }
+                            // Upper body: convert world aim to helicopter-relative
                             if (this.soldier.upperBody) {
-                                if (this.targetEnemy && this.targetEnemy.alive && this.hasReacted) {
-                                    const sp = this.soldier.getPosition();
-                                    const adx = this.aimPoint.x - sp.x;
-                                    const adz = this.aimPoint.z - sp.z;
-                                    this.soldier.upperBody.rotation.y = Math.atan2(-adx, -adz);
-                                    if (this.soldier.shoulderPivot) {
-                                        const ady = this.aimPoint.y - (sp.y + 1.35);
-                                        const hd = Math.sqrt(adx * adx + adz * adz);
-                                        this.soldier.shoulderPivot.rotation.x = hd > 0.1 ? Math.atan2(ady, hd) : 0;
-                                    }
-                                } else {
-                                    this.soldier.upperBody.rotation.y = outward;
-                                    if (this.soldier.shoulderPivot) this.soldier.shoulderPivot.rotation.x = 0;
-                                }
+                                this.soldier.upperBody.rotation.y -= rotY;
+                            }
+                            // Compensate shoulder pitch for helicopter tilt
+                            if (this.soldier.shoulderPivot) {
+                                this.soldier.shoulderPivot.rotation.x -= heli._visualPitch;
                             }
                             // Legs forward 45° (sitting pose)
                             if (this.soldier.leftLeg) this.soldier.leftLeg.rotation.x = Math.PI / 4;
@@ -632,14 +632,26 @@ export class AIController {
                     this.soldier.mesh.position.set(vp.x, vp.y, vp.z);
                 }
             }
-            // Helicopter passengers (not pilot) can aim and shoot
+            // Helicopter passengers (not pilot) can aim and shoot — only on their side
             if (this.vehicle.type === 'helicopter' && this.vehicle.driver !== this.soldier) {
-                // Force hasReacted since BT combat nodes don't run in vehicle mode
+                let canFire = false;
                 if (this.targetEnemy && this.targetEnemy.alive) {
-                    this.hasReacted = true;
+                    // Check if target is on this passenger's side
+                    const slotIdx = this.vehicle.passengers.indexOf(this.soldier);
+                    const isLeftSeat = slotIdx >= 0 && slotIdx < 2; // slots 0,1 = left
+                    const ep = this.targetEnemy.getPosition();
+                    const hx = this.vehicle.mesh.position.x;
+                    const hz = this.vehicle.mesh.position.z;
+                    const rY = this.vehicle.rotationY;
+                    // Cross product: forward × toTarget → positive = left, negative = right
+                    const cross = Math.sin(rY) * (ep.z - hz) - Math.cos(rY) * (ep.x - hx);
+                    canFire = isLeftSeat ? cross > 0 : cross < 0;
                 }
-                this._updateAiming(dt);
-                this._updateShooting(dt);
+                if (canFire) {
+                    this.hasReacted = true;
+                    this._updateAiming(dt);
+                    this._updateShooting(dt);
+                }
             }
             return;
         }
@@ -669,21 +681,25 @@ export class AIController {
             myEyeY = tm.heightGrid[myGrid.row * tm.cols + myGrid.col] + EYE_HEIGHT;
         }
 
+        const inHeli = this.vehicle && this.vehicle.type === 'helicopter';
+
         for (const enemy of this.enemies) {
             if (!enemy.alive) continue;
             const ePos = enemy.getPosition();
             const dist = myPos.distanceTo(ePos);
 
-            if (dist > 80) continue; // max vision range
+            if (dist > (inHeli ? 120 : 80)) continue; // extended range from air
 
-            // FOV check (120°)
-            _v1.subVectors(ePos, myPos).normalize();
-            const dot = this.facingDir.dot(_v1);
-            if (dot < -0.2) continue; // behind us (~120° FOV)
+            // FOV check (120°) — skip in helicopter (360° awareness)
+            if (!inHeli) {
+                _v1.subVectors(ePos, myPos).normalize();
+                const dot = this.facingDir.dot(_v1);
+                if (dot < -0.2) continue; // behind us (~120° FOV)
+            }
 
-            // Line of sight check — use fast grid Bresenham instead of raycaster
-            let losLevel = 1; // default: fully visible (no grid LOS available)
-            if (useGridLOS) {
+            // Line of sight check — skip in helicopter (aerial view clears terrain)
+            let losLevel = 1;
+            if (!inHeli && useGridLOS) {
                 const eGrid = tm._worldToGrid(ePos.x, ePos.z);
                 losLevel = _hasGridLOS(tm, myGrid.col, myGrid.row, myEyeY, eGrid.col, eGrid.row);
                 if (losLevel === 0) continue;
@@ -1680,7 +1696,7 @@ export class AIController {
         while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
 
         const input = {
-            thrust: 0.8,
+            thrust: 1.0,
             brake: 0,
             steerLeft: angleDiff > 0.1,
             steerRight: angleDiff < -0.1,
@@ -1689,8 +1705,8 @@ export class AIController {
         };
 
         // Slow down when approaching target
-        if (dist < 25) {
-            input.thrust = Math.max(0.2, (dist / 25) * 0.8);
+        if (dist < 10) {
+            input.thrust = Math.max(0.3, dist / 10);
         }
 
         // Terrain avoidance with inflation buffer
@@ -2859,16 +2875,22 @@ export class AIController {
 
     _updateSoldierVisual(dt) {
         if (!this.soldier.alive) return;
+        this._updateUpperBodyAim(dt);
+        this._updateLowerBodyMove(dt);
+        this._updateTacLabel();
+    }
 
+    /**
+     * Upper body aiming — universal (ground + vehicle passengers).
+     * Uses this.facingDir for yaw, this.aimPoint for pitch.
+     * Caller must update facingDir before calling.
+     */
+    _updateUpperBodyAim(dt) {
         const soldier = this.soldier;
         const myPos = soldier.getPosition();
-
-        // Upper body faces aiming direction (facingDir) + pitch
         const aimAngle = Math.atan2(-this.facingDir.x, -this.facingDir.z);
         if (soldier.upperBody) {
             soldier.upperBody.rotation.y = aimAngle;
-            // Compute pitch toward aimPoint when engaging or pre-aiming
-            // Pitch only the shoulder pivot (arms + gun), torso stays upright
             if (soldier.shoulderPivot) {
                 let targetPitch = 0;
                 if (this._grenadeThrowTimer > 0) {
@@ -2880,37 +2902,36 @@ export class AIController {
                     const hDist = Math.sqrt(dx * dx + dz * dz);
                     if (hDist > 0.1) targetPitch = Math.atan2(dy, hDist);
                 }
-                // Smooth aim pitch independently, then add reload tilt
                 if (this._smoothAimPitch === undefined) this._smoothAimPitch = 0;
                 this._smoothAimPitch += (targetPitch - this._smoothAimPitch) * 0.15;
                 soldier.shoulderPivot.rotation.x = this._smoothAimPitch + (soldier._gunReloadTilt || 0);
             }
         }
+        soldier.mesh.rotation.set(0, 0, 0);
+    }
 
-        // Lower body faces movement direction
-        if (soldier.lowerBody) {
-            // Compute movement direction from lastPos → currentPos
-            const dx = myPos.x - this.lastPos.x;
-            const dz = myPos.z - this.lastPos.z;
-            const moveSpeed = Math.sqrt(dx * dx + dz * dz) / Math.max(dt, 0.001);
+    /**
+     * Lower body movement — ground soldiers only.
+     * Rotates lower body toward movement direction (or idle → aim direction).
+     * Drives walk animation.
+     */
+    _updateLowerBodyMove(dt) {
+        const soldier = this.soldier;
+        if (!soldier.lowerBody) return;
+        const myPos = soldier.getPosition();
+        const dx = myPos.x - this.lastPos.x;
+        const dz = myPos.z - this.lastPos.z;
+        const moveSpeed = Math.sqrt(dx * dx + dz * dz) / Math.max(dt, 0.001);
 
-            if (moveSpeed > 0.3) {
-                const moveAngle = Math.atan2(-dx, -dz);
-                soldier.lowerBody.rotation.y = _lerpAngle(soldier.lowerBody.rotation.y, moveAngle, 1 - Math.exp(-10 * dt));
-            } else {
-                // Idle: gradually align lower body to upper body
-                soldier.lowerBody.rotation.y = _lerpAngle(soldier.lowerBody.rotation.y, aimAngle, 1 - Math.exp(-5 * dt));
-            }
-
-            // Drive walk animation
-            soldier.animateWalk(dt, moveSpeed);
+        if (moveSpeed > 0.3) {
+            const moveAngle = Math.atan2(-dx, -dz);
+            soldier.lowerBody.rotation.y = _lerpAngle(soldier.lowerBody.rotation.y, moveAngle, 1 - Math.exp(-10 * dt));
+        } else {
+            const aimAngle = Math.atan2(-this.facingDir.x, -this.facingDir.z);
+            soldier.lowerBody.rotation.y = _lerpAngle(soldier.lowerBody.rotation.y, aimAngle, 1 - Math.exp(-5 * dt));
         }
 
-        // No need to rotate the root mesh — upper/lower body handle it
-        soldier.mesh.rotation.y = 0;
-
-        // Tactical label above head
-        this._updateTacLabel();
+        soldier.animateWalk(dt, moveSpeed);
     }
 
     /** Set references for player damage. */

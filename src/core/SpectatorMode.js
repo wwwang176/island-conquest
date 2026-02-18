@@ -157,8 +157,11 @@ export class SpectatorMode {
         const { soldier, controller } = target;
         const pos = soldier.getPosition();
 
-        // Head position
-        const headPos = _v.set(pos.x, pos.y + 1.6, pos.z);
+        // Head position — localToWorld handles helicopter tilt automatically
+        _v.set(0, 1.6, 0);
+        soldier.mesh.updateWorldMatrix(true, false);
+        soldier.mesh.localToWorld(_v);
+        const headPos = _v;
 
         // Yaw from facing direction (camera faces -Z, so negate)
         const yaw = Math.atan2(-controller.facingDir.x, -controller.facingDir.z);

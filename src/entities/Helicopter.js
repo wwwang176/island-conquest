@@ -32,7 +32,7 @@ export class Helicopter extends Vehicle {
     constructor(scene, team, spawnPosition) {
         super(scene, team, 'helicopter', spawnPosition);
 
-        this.maxHP = 3000;
+        this.maxHP = 6000;
         this.hp = this.maxHP;
 
         // Multi-passenger
@@ -40,8 +40,8 @@ export class Helicopter extends Vehicle {
         this.maxPassengers = 4;
 
         // Flight parameters
-        this.maxHSpeed = 30;    // horizontal m/s
-        this.maxVSpeed = 10;    // vertical m/s
+        this.maxHSpeed = 45;    // horizontal m/s
+        this.maxVSpeed = 8;     // vertical m/s
         this.hAccel = 14;       // horizontal acceleration
         this.vAccel = 14;       // vertical acceleration
         this.hDrag = 3;         // horizontal drag
@@ -50,9 +50,17 @@ export class Helicopter extends Vehicle {
         this.minAltitude = WATER_Y + 1;
         this.maxAltitude = 30;
 
-        // State
+        // Velocity vector (inertial flight model)
+        this.velX = 0;
+        this.velZ = 0;
         this.velocityY = 0;
+        this.speed = 0;             // derived: magnitude of (velX, velZ)
         this.altitude = spawnPosition.y;
+
+        // Visual attitude (smoothed)
+        this._visualPitch = 0;   // rotation.x — nose down/up
+        this._visualRoll = 0;    // rotation.z — bank left/right
+        this._yawRate = 0;       // smoothed yaw angular velocity (rad/s)
 
         // Crash state
         this._crashing = false;
@@ -109,6 +117,17 @@ export class Helicopter extends Vehicle {
         physics.addBody(this.body);
     }
 
+    /**
+     * Transform a local-space offset to world position using the mesh's full rotation.
+     * @param {THREE.Vector3} out - output vector (modified in place)
+     * @param {{x:number,y:number,z:number}} offset - local offset
+     */
+    getWorldSeatPos(out, offset) {
+        out.set(offset.x, offset.y, offset.z);
+        this._attitudeGroup.updateWorldMatrix(true, false);
+        this._attitudeGroup.localToWorld(out);
+    }
+
     /** Sync CANNON body position/rotation to mesh. */
     _syncBody() {
         if (!this.body) return;
@@ -126,9 +145,12 @@ export class Helicopter extends Vehicle {
         const mat = (c, opts) => new THREE.MeshLambertMaterial({ color: c, flatShading: true, ...opts });
 
         const group = new THREE.Group();
+        // Attitude group: pitch + roll (nested under yaw mesh)
+        this._attitudeGroup = new THREE.Group();
+        group.add(this._attitudeGroup);
         const hull = new THREE.Group();
         hull.rotation.y = Math.PI; // -Z local = nose → +Z world
-        group.add(hull);
+        this._attitudeGroup.add(hull);
 
         // ── Cabin (open sides — only floor, roof, back wall) ──
         const floorGeo = new THREE.BoxGeometry(1.8, 0.12, 2.6);
@@ -334,9 +356,9 @@ export class Helicopter extends Vehicle {
             this.body.updateMassProperties();
             // Initial velocity from flight
             this.body.velocity.set(
-                Math.sin(this.rotationY) * this.speed,
+                this.velX,
                 this.velocityY || 0,
-                Math.cos(this.rotationY) * this.speed
+                this.velZ
             );
             // Random tumble
             this.body.angularVelocity.set(
@@ -378,11 +400,13 @@ export class Helicopter extends Vehicle {
             this.mesh.position.set(p.x, p.y, p.z);
             this.mesh.quaternion.set(q.x, q.y, q.z, q.w);
         }
+        // Reset attitude group — full rotation is on mesh from CANNON
+        this._attitudeGroup.rotation.set(0, 0, 0);
 
         // Slow rotor
         this._rotorAngle += 3 * dt;
         if (this._rotorMesh) this._rotorMesh.rotation.y = this._rotorAngle;
-        if (this._tailRotorMesh) this._tailRotorMesh.rotation.z = this._rotorAngle;
+        if (this._tailRotorMesh) this._tailRotorMesh.rotation.x = this._rotorAngle;
 
         // Wreckage timer
         this._wreckageTimer += dt;
@@ -422,9 +446,10 @@ export class Helicopter extends Vehicle {
 
         // Drag when no one aboard
         if (!this.driver && this.passengers.length === 0) {
-            this.speed *= Math.max(0, 1 - this.hDrag * dt);
+            const hDragFactor = Math.max(0, 1 - this.hDrag * dt);
+            this.velX *= hDragFactor;
+            this.velZ *= hDragFactor;
             this.velocityY *= Math.max(0, 1 - this.vDrag * dt);
-            if (Math.abs(this.speed) < 0.1) this.speed = 0;
 
             // Gravity when empty — slowly descend
             if (this.mesh.position.y > this.minAltitude + 1) {
@@ -432,11 +457,14 @@ export class Helicopter extends Vehicle {
             }
         }
 
-        // Apply velocity
-        if (Math.abs(this.speed) > 0.01) {
-            this.mesh.position.x += Math.sin(this.rotationY) * this.speed * dt;
-            this.mesh.position.z += Math.cos(this.rotationY) * this.speed * dt;
-        }
+        // Derive scalar speed (forward component along heading)
+        const fwdX = Math.sin(this.rotationY);
+        const fwdZ = Math.cos(this.rotationY);
+        this.speed = this.velX * fwdX + this.velZ * fwdZ; // signed forward speed
+
+        // Apply velocity vector
+        this.mesh.position.x += this.velX * dt;
+        this.mesh.position.z += this.velZ * dt;
         this.mesh.position.y += this.velocityY * dt;
 
         // Altitude constraints — respect actual terrain height
@@ -454,13 +482,13 @@ export class Helicopter extends Vehicle {
             if (this.velocityY > 0) this.velocityY = 0;
         }
 
-        // Map boundary clamp
+        // Map boundary clamp — kill velocity component into wall
         const px = this.mesh.position.x;
         const pz = this.mesh.position.z;
-        if (px < -MAP_HALF_W) { this.mesh.position.x = -MAP_HALF_W; this.speed *= 0.5; }
-        if (px >  MAP_HALF_W) { this.mesh.position.x =  MAP_HALF_W; this.speed *= 0.5; }
-        if (pz < -MAP_HALF_D) { this.mesh.position.z = -MAP_HALF_D; this.speed *= 0.5; }
-        if (pz >  MAP_HALF_D) { this.mesh.position.z =  MAP_HALF_D; this.speed *= 0.5; }
+        if (px < -MAP_HALF_W) { this.mesh.position.x = -MAP_HALF_W; if (this.velX < 0) this.velX = 0; }
+        if (px >  MAP_HALF_W) { this.mesh.position.x =  MAP_HALF_W; if (this.velX > 0) this.velX = 0; }
+        if (pz < -MAP_HALF_D) { this.mesh.position.z = -MAP_HALF_D; if (this.velZ < 0) this.velZ = 0; }
+        if (pz >  MAP_HALF_D) { this.mesh.position.z =  MAP_HALF_D; if (this.velZ > 0) this.velZ = 0; }
 
         // Store altitude
         this.altitude = this.mesh.position.y;
@@ -468,9 +496,32 @@ export class Helicopter extends Vehicle {
         // Apply rotation
         this.mesh.rotation.y = this.rotationY;
 
-        // Tilt based on speed (visual only)
-        const tiltAmount = (this.speed / this.maxHSpeed) * 0.15;
-        this.mesh.rotation.x = -tiltAmount;
+        // ── Visual attitude ──
+        // Pitch: based on forward speed component (dot product with heading)
+        const pitchMax = 0.90;  // ~52°
+        const targetPitch = (this.speed / this.maxHSpeed) * pitchMax
+            - (this.velocityY / this.maxVSpeed) * 0.08; // slight nose-up on ascend
+
+        // Roll: bank from yaw rate + lateral drift
+        // Lateral speed = cross product of heading × velocity
+        const lateralSpeed = -this.velX * fwdZ + this.velZ * fwdX;
+        const rollMax = Math.PI / 3;  // 60°
+        const hSpeedMag = Math.sqrt(this.velX * this.velX + this.velZ * this.velZ);
+        const speedFactor = Math.min(1, hSpeedMag / (this.maxHSpeed * 0.25));
+        const yawNorm = Math.min(Math.max(this._yawRate / this.turnSpeed, -1), 1);
+        const driftRoll = (lateralSpeed / this.maxHSpeed) * rollMax * 0.5;
+        const targetRoll = -yawNorm * speedFactor * rollMax + driftRoll;
+
+        // Smooth interpolation (faster to tilt, slower to recover → natural sway)
+        const tiltLerp = 1 - Math.exp(-6 * dt);
+        const recoverLerp = 1 - Math.exp(-3 * dt);
+        const pitchLerp = Math.abs(targetPitch) > Math.abs(this._visualPitch) ? tiltLerp : recoverLerp;
+        const rollLerp = Math.abs(targetRoll) > Math.abs(this._visualRoll) ? tiltLerp : recoverLerp;
+        this._visualPitch += (targetPitch - this._visualPitch) * pitchLerp;
+        this._visualRoll += (targetRoll - this._visualRoll) * rollLerp;
+
+        this._attitudeGroup.rotation.x = this._visualPitch;
+        this._attitudeGroup.rotation.z = this._visualRoll;
 
         // Rotor animation
         const rotorSpeed = this.driver ? 25 : 8; // faster when piloted
@@ -479,7 +530,7 @@ export class Helicopter extends Vehicle {
             this._rotorMesh.rotation.y = this._rotorAngle;
         }
         if (this._tailRotorMesh) {
-            this._tailRotorMesh.rotation.z = this._rotorAngle * 1.5;
+            this._tailRotorMesh.rotation.x = this._rotorAngle * 1.5;
         }
 
         // Sync physics body
@@ -489,30 +540,52 @@ export class Helicopter extends Vehicle {
     applyInput(input, dt) {
         if (!this.alive) return;
 
-        // Thrust / brake (forward/back)
+        const fwdX = Math.sin(this.rotationY);
+        const fwdZ = Math.cos(this.rotationY);
+
+        // Thrust: add force along current heading
         if (input.thrust > 0) {
-            this.speed = Math.min(this.maxHSpeed, this.speed + this.hAccel * input.thrust * dt);
+            this.velX += fwdX * this.hAccel * input.thrust * dt;
+            this.velZ += fwdZ * this.hAccel * input.thrust * dt;
         }
+        // Brake: add force opposite to current heading
         if (input.brake > 0) {
-            this.speed = Math.max(-this.maxHSpeed * 0.3, this.speed - this.hAccel * input.brake * dt);
+            this.velX -= fwdX * this.hAccel * input.brake * dt;
+            this.velZ -= fwdZ * this.hAccel * input.brake * dt;
         }
 
-        // Horizontal drag
-        this.speed *= Math.max(0, 1 - this.hDrag * 0.3 * dt);
+        // Horizontal drag (applied to velocity vector)
+        const hDragFactor = Math.max(0, 1 - this.hDrag * 0.3 * dt);
+        this.velX *= hDragFactor;
+        this.velZ *= hDragFactor;
 
-        // Steering
-        if (input.steerLeft) this.rotationY += this.turnSpeed * dt;
-        if (input.steerRight) this.rotationY -= this.turnSpeed * dt;
+        // Clamp horizontal speed
+        const hSpd = Math.sqrt(this.velX * this.velX + this.velZ * this.velZ);
+        if (hSpd > this.maxHSpeed) {
+            const scale = this.maxHSpeed / hSpd;
+            this.velX *= scale;
+            this.velZ *= scale;
+        }
 
-        // Ascend / descend
+        // Steering — smooth yaw rate
+        let targetYaw = 0;
+        if (input.steerLeft) targetYaw = this.turnSpeed;
+        if (input.steerRight) targetYaw = -this.turnSpeed;
+        const yawLerp = 1 - Math.exp(-5 * dt);
+        this._yawRate += (targetYaw - this._yawRate) * yawLerp;
+        this.rotationY += this._yawRate * dt;
+
+        // Ascend / descend (inertial)
         if (input.ascend) {
-            this.velocityY = Math.min(this.maxVSpeed, this.velocityY + this.vAccel * dt);
+            this.velocityY += this.vAccel * dt;
         } else if (input.descend) {
-            this.velocityY = Math.max(-this.maxVSpeed, this.velocityY - this.vAccel * dt);
+            this.velocityY -= this.vAccel * dt;
         } else {
             // Auto-stabilize vertical velocity
             this.velocityY *= Math.max(0, 1 - this.vDrag * dt);
         }
+        // Clamp vertical speed
+        this.velocityY = Math.max(-this.maxVSpeed, Math.min(this.maxVSpeed, this.velocityY));
     }
 
     /**
@@ -531,13 +604,16 @@ export class Helicopter extends Vehicle {
         this.alive = true;
         this.hp = this.maxHP;
         this.speed = 0;
-        this.velocityX = 0;
-        this.velocityZ = 0;
+        this.velX = 0;
+        this.velZ = 0;
         this.velocityY = 0;
         this.altitude = this.spawnPosition.y;
         this.rotationY = this.spawnRotationY;
         this._crashing = false;
         this._wreckageTimer = 0;
+        this._visualPitch = 0;
+        this._visualRoll = 0;
+        this._yawRate = 0;
         this.passengers = [];
 
         if (this.mesh) {
@@ -545,6 +621,7 @@ export class Helicopter extends Vehicle {
             this.mesh.position.copy(this.spawnPosition);
             this.mesh.position.y = this.spawnPosition.y + 1.1;
             this.mesh.rotation.set(0, this.rotationY, 0);
+            this._attitudeGroup.rotation.set(0, 0, 0);
         }
 
         // Ensure body is kinematic for normal flight
