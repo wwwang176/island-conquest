@@ -13,7 +13,7 @@ const _cannonYAxis = new CANNON.Vec3(0, 1, 0);
  * Hull is rotated PI internally, so hull-local (x,y,z) → world (-x,y,-z).
  * Cabin sides at world x≈±0.9, cabin floor at y≈-0.55, cabin z from -1.3 to +1.3.
  */
-const PILOT_OFFSET = { x: 0, y: -1.05, z: 1.4 }; // cockpit (nose area, sunk into seat)
+const PILOT_OFFSET = { x: 0, y: -1.15, z: 1.4 }; // cockpit (nose area, sunk into seat)
 
 const PASSENGER_SLOTS = [
     { x: -0.75, y: -1.2, z:  0.2, facingOffset:  Math.PI / 2 },  // left front  → face -X (outward)
@@ -290,10 +290,10 @@ export class Helicopter extends Vehicle {
         this._stripeMat = mat(teamColor);
         this._attitudeGroup.add(new THREE.Mesh(stripeGeo, this._stripeMat));
 
-        // ── Nose glass (merged, inside metal belt frame, 1.6m wide) ──
-        const upperGlass = wedge(1.6, 0.54, 0.32);
+        // ── Nose glass (merged, flush with cabin width 1.8m) ──
+        const upperGlass = wedge(1.8, 0.54, 0.32);
         place(upperGlass, 0, 0.32, noseCZ);
-        const lowerGlass = wedge(1.6, 0.44, -0.27);
+        const lowerGlass = wedge(1.8, 0.44, -0.27);
         place(lowerGlass, 0, -0.27, noseCZ);
         const glassMerged = mergeGeometries([upperGlass, lowerGlass]);
         this._attitudeGroup.add(new THREE.Mesh(glassMerged,
