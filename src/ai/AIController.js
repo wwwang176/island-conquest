@@ -241,6 +241,7 @@ export class AIController {
         this._vehicleOrbitAngle = 0;     // helicopter orbit angle
         this._heliWaitingForPassengers = false;
         this._heliWaitTimer = 0;      // countdown after first passenger boards
+        this._vehicleFireBlocked = false;
         this.vehicleManager = null;   // set by AIManager
 
         // Build behavior tree
@@ -646,7 +647,6 @@ export class AIController {
             // Helicopter passengers (not pilot) can aim and shoot — only on their side
             const isPassenger = this.vehicle.driver !== this.soldier;
             if (this.vehicle.type === 'helicopter' && isPassenger) {
-                this._updateShooting(dt);
                 let canFire = false;
                 if (this.targetEnemy && this.targetEnemy.alive) {
                     const slotIdx = this.vehicle.passengers.indexOf(this.soldier);
@@ -658,12 +658,14 @@ export class AIController {
                     const cross = Math.sin(rY) * (ep.z - hz) - Math.cos(rY) * (ep.x - hx);
                     canFire = isLeftSeat ? cross > 0 : cross < 0;
                 }
+                this._vehicleFireBlocked = !canFire;
                 if (canFire) {
                     this.hasReacted = true;
                     this._updateAiming(dt);
                 } else {
                     this.hasReacted = false;
                 }
+                this._updateShooting(dt);
             }
             return;
         }
@@ -1645,6 +1647,10 @@ export class AIController {
                     // No passengers yet — wait indefinitely
                     this._heliWaitingForPassengers = true;
                     this._heliWaitTimer = 10;
+                } else if (v.passengers.length >= v.maxPassengers) {
+                    // All seats filled — depart almost immediately
+                    this._heliWaitingForPassengers = true;
+                    this._heliWaitTimer = Math.min(this._heliWaitTimer, 0.5);
                 } else if (this._heliWaitTimer > 0) {
                     // Has passengers but still in grace period
                     this._heliWaitingForPassengers = true;
@@ -1682,9 +1688,16 @@ export class AIController {
         // Wait on ground until passengers board + grace period expires
         if (this._heliWaitingForPassengers) {
             if (v.passengers.length > 0) {
+                // All seats filled — depart almost immediately
+                if (v.passengers.length >= v.maxPassengers) {
+                    this._heliWaitTimer = Math.min(this._heliWaitTimer, 0.5);
+                }
                 this._heliWaitTimer -= dt;
+                if (this._heliWaitTimer <= 0) {
+                    this._heliWaitingForPassengers = false;
+                }
             }
-            return;
+            if (this._heliWaitingForPassengers) return;
         }
 
         const orbitRadius = 35;
@@ -2326,6 +2339,10 @@ export class AIController {
         if (this.weaponDef.aiAimDelay && this._boltAimTimer < this.weaponDef.aiAimDelay) return;
 
         if (this.fireTimer <= 0) {
+            if (this.vehicle && this._vehicleFireBlocked) {
+                this.fireTimer = 0;
+                return;
+            }
             this.fireTimer += this.fireInterval;
             this._fireShot();
             this.currentAmmo--;
