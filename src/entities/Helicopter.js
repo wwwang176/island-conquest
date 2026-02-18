@@ -205,24 +205,6 @@ export class Helicopter extends Vehicle {
         const noseCenterY = 0.0;
         const TAPER = 0.4;
 
-        // Trapezoid builder: box tapers uniformly around noseCenterY
-        const wedge = (w, h, centerY) => {
-            const geo = new THREE.BoxGeometry(w, h, noseLen);
-            const pos = geo.attributes.position;
-            const halfD = noseLen / 2;
-            const relY = noseCenterY - centerY;
-            for (let i = 0; i < pos.count; i++) {
-                const z = pos.getZ(i);
-                const t = (halfD - z) / noseLen; // 0=back(cabin), 1=front
-                pos.setX(i, pos.getX(i) * (1 - t * TAPER));
-                const y = pos.getY(i);
-                pos.setY(i, y + (relY - y) * t * TAPER);
-            }
-            pos.needsUpdate = true;
-            geo.computeVertexNormals();
-            return geo;
-        };
-
         // Metal frame (outline only, not solid)
         // edgeStrip: thin bar at xPos that follows the nose taper
         const edgeStrip = (stripW, h, centerY, xPos) => {
@@ -242,20 +224,20 @@ export class Helicopter extends Vehicle {
             geo.computeVertexNormals();
             return geo;
         };
-        // Horizontal belt: left + right side strips
-        odGeos.push(place(edgeStrip(0.10, 0.10, 0.0, -0.85), 0, 0.0, noseCZ));
-        odGeos.push(place(edgeStrip(0.10, 0.10, 0.0,  0.85), 0, 0.0, noseCZ));
+        // Horizontal belt: left + right side strips (5cm outside glass surface)
+        odGeos.push(place(edgeStrip(0.10, 0.10, 0.0, -0.90), 0, 0.0, noseCZ));
+        odGeos.push(place(edgeStrip(0.10, 0.10, 0.0,  0.90), 0, 0.0, noseCZ));
         // Horizontal belt: front connecting bar
         const frontW = 1.7 * (1 - TAPER);
-        odGeos.push(place(new THREE.BoxGeometry(frontW, 0.10, 0.10), 0, 0.0, -2.75));
-        // Vertical keel: front bar at nose tip (band y=0 → glass bottom y≈-0.29)
-        odGeos.push(place(new THREE.BoxGeometry(0.10, 0.29, 0.10), 0, -0.145, -2.75));
-        // Vertical keel: bottom bar (rectangular prism tilted to follow glass slope)
-        // Glass bottom: y=-0.49 at back → y=-0.294 at front (rise 0.196 over noseLen)
+        odGeos.push(place(new THREE.BoxGeometry(frontW, 0.10, 0.10), 0, 0.0, -2.80));
+        // Vertical keel: front bar at nose tip
+        odGeos.push(place(new THREE.BoxGeometry(0.10, 0.29, 0.10), 0, -0.145, -2.80));
+        // Vertical keel: bottom bar (5cm below glass bottom surface)
+        // Glass bottom: y=-0.49 at back → y=-0.294 at front
         const kbGeo = new THREE.BoxGeometry(0.15, 0.06, noseLen);
         kbGeo.applyMatrix4(new THREE.Matrix4().makeRotationX(
             Math.atan2(0.196, noseLen)));
-        odGeos.push(place(kbGeo, 0, -0.392, noseCZ));
+        odGeos.push(place(kbGeo, 0, -0.442, noseCZ));
 
         // Tail boom
         odGeos.push(place(new THREE.BoxGeometry(0.35, 0.35, 3.5), 0, 0.1, 3.2));
@@ -290,14 +272,34 @@ export class Helicopter extends Vehicle {
         this._stripeMat = mat(teamColor);
         this._attitudeGroup.add(new THREE.Mesh(stripeGeo, this._stripeMat));
 
-        // ── Nose glass (merged, flush with cabin width 1.8m) ──
-        const upperGlass = wedge(1.8, 0.54, 0.32);
-        place(upperGlass, 0, 0.32, noseCZ);
-        const lowerGlass = wedge(1.8, 0.44, -0.27);
-        place(lowerGlass, 0, -0.27, noseCZ);
-        const glassMerged = mergeGeometries([upperGlass, lowerGlass]);
-        this._attitudeGroup.add(new THREE.Mesh(glassMerged,
-            mat(0x88ccaa, { transparent: true, opacity: 0.2 })));
+        // ── Nose glass: truncated pyramid, 5 faces (no back face at cabin) ──
+        const halfLen = noseLen / 2;
+        const bx = 0.9, bTop = 0.59, bBot = -0.49;       // back (cabin junction)
+        const fx = bx * (1 - TAPER);                       // front X  (0.54)
+        const fTop = bTop * (1 - TAPER);                    // front top (0.354)
+        const fBot = bBot * (1 - TAPER);                    // front bot (-0.294)
+        const glassGeo = new THREE.BufferGeometry();
+        glassGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+            -bx, bBot,  halfLen,   // 0: back-left-bottom
+             bx, bBot,  halfLen,   // 1: back-right-bottom
+            -bx, bTop,  halfLen,   // 2: back-left-top
+             bx, bTop,  halfLen,   // 3: back-right-top
+            -fx, fBot, -halfLen,   // 4: front-left-bottom
+             fx, fBot, -halfLen,   // 5: front-right-bottom
+            -fx, fTop, -halfLen,   // 6: front-left-top
+             fx, fTop, -halfLen,   // 7: front-right-top
+        ]), 3));
+        glassGeo.setIndex([
+            2, 7, 6,  2, 3, 7,    // top
+            0, 4, 5,  0, 5, 1,    // bottom
+            0, 2, 6,  0, 6, 4,    // left
+            3, 1, 5,  3, 5, 7,    // right
+            6, 7, 5,  6, 5, 4,    // front
+        ]);
+        glassGeo.computeVertexNormals();
+        place(glassGeo, 0, 0, noseCZ);
+        this._attitudeGroup.add(new THREE.Mesh(glassGeo,
+            mat(0x111111, { transparent: true, opacity: 0.5 })));
 
         // ── Main rotor (animated — stays separate) ──
         const rotorGeo = new THREE.BoxGeometry(7, 0.04, 0.25);
