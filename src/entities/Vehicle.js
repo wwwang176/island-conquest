@@ -1,7 +1,5 @@
 import * as THREE from 'three';
 
-const WATER_Y = -0.3;
-
 /**
  * Base vehicle class.
  * Handles HP, damage, destroy/respawn cycle, enter/exit.
@@ -10,7 +8,7 @@ export class Vehicle {
     /**
      * @param {THREE.Scene} scene
      * @param {string} team - 'teamA' | 'teamB'
-     * @param {string} type - 'speedboat' | 'helicopter'
+     * @param {string} type - 'helicopter'
      * @param {THREE.Vector3} spawnPosition
      */
     constructor(scene, team, type, spawnPosition) {
@@ -19,7 +17,7 @@ export class Vehicle {
         this.type = type;
 
         // Health
-        this.maxHP = type === 'helicopter' ? 250 : 200;
+        this.maxHP = 250;
         this.hp = this.maxHP;
         this.alive = true;
 

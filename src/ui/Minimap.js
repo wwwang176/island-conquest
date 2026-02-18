@@ -143,22 +143,13 @@ export class Minimap {
                 ctx.fillStyle = vColor;
                 ctx.strokeStyle = 'rgba(255,255,255,0.5)';
                 ctx.lineWidth = 0.8;
-                if (v.type === 'helicopter') {
-                    // Diamond shape
-                    ctx.beginPath();
-                    ctx.moveTo(0, -5);
-                    ctx.lineTo(4, 0);
-                    ctx.lineTo(0, 5);
-                    ctx.lineTo(-4, 0);
-                    ctx.closePath();
-                } else {
-                    // Triangle shape (boat)
-                    ctx.beginPath();
-                    ctx.moveTo(0, -5);
-                    ctx.lineTo(-3, 4);
-                    ctx.lineTo(3, 4);
-                    ctx.closePath();
-                }
+                // Diamond shape (helicopter)
+                ctx.beginPath();
+                ctx.moveTo(0, -5);
+                ctx.lineTo(4, 0);
+                ctx.lineTo(0, 5);
+                ctx.lineTo(-4, 0);
+                ctx.closePath();
                 ctx.fill();
                 ctx.stroke();
                 ctx.restore();

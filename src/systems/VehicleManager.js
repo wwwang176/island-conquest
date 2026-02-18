@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { Speedboat } from '../entities/Speedboat.js';
 import { Helicopter } from '../entities/Helicopter.js';
 
 const WATER_Y = -0.3;
@@ -36,29 +35,14 @@ export class VehicleManager {
         const flagA = this.flags[0];
         const flagB = this.flags[this.flags.length - 1];
 
-        // Team A: 2 speedboats + 1 helicopter near flag 0
+        // Team A: 1 helicopter near flag 0
         this._spawnTeamVehicles('teamA', flagA.position);
-        // Team B: 2 speedboats + 1 helicopter near last flag
+        // Team B: 1 helicopter near last flag
         this._spawnTeamVehicles('teamB', flagB.position);
     }
 
     _spawnTeamVehicles(team, basePos) {
         const baseFlag = team === 'teamA' ? this.flags[0] : this.flags[this.flags.length - 1];
-
-        // Speedboats: find water near the base flag
-        for (let i = 0; i < 2; i++) {
-            const angle = (team === 'teamA' ? Math.PI * 0.7 : Math.PI * 0.3) + (i - 0.5) * 0.6;
-            const pos = this._findWaterSpawn(basePos, angle, 15 + i * 8);
-            if (pos) {
-                const boat = new Speedboat(this.scene, team, pos);
-                // Face toward map center
-                boat.rotationY = team === 'teamA' ? -Math.PI * 0.3 : Math.PI * 0.3;
-                boat.spawnRotationY = boat.rotationY;
-                boat.mesh.rotation.y = boat.rotationY;
-                boat.getHeightAt = this.getHeightAt;
-                this.vehicles.push(boat);
-            }
-        }
 
         // Helicopter: on land near base flag
         const heliPos = this._findLandSpawn(basePos, 8);
@@ -72,26 +56,6 @@ export class VehicleManager {
             heli.initPhysicsBody(this.physics);
             this.vehicles.push(heli);
         }
-    }
-
-    _findWaterSpawn(basePos, angle, radius) {
-        // Walk outward until we hit water (h < -0.3), then place boat
-        // just 2m past the shoreline. Collision threshold is -0.15 so
-        // anything at h < -0.3 is safe to spawn and maneuver.
-        for (let r = radius; r < radius + 50; r += 2) {
-            const x = basePos.x + Math.cos(angle) * r;
-            const z = basePos.z + Math.sin(angle) * r;
-            if (this.getHeightAt(x, z) < -0.3) {
-                // Found water — nudge 2m further to avoid the very edge
-                const bx = basePos.x + Math.cos(angle) * (r + 2);
-                const bz = basePos.z + Math.sin(angle) * (r + 2);
-                return new THREE.Vector3(bx, WATER_Y + 0.3, bz);
-            }
-        }
-        // Fallback
-        const x = basePos.x + Math.cos(angle) * 50;
-        const z = basePos.z + Math.sin(angle) * 50;
-        return new THREE.Vector3(x, WATER_Y + 0.3, z);
     }
 
     _findLandSpawn(basePos, radius) {
@@ -170,17 +134,7 @@ export class VehicleManager {
             if (!isOccupant) continue;
 
             const exitPos = v.exit(entity);
-            if (v.type === 'speedboat') {
-                // For speedboats, find nearest shore to place the exiting entity
-                const shore = this.findNearestShore(v.mesh.position.x, v.mesh.position.z, 15);
-                if (shore) {
-                    exitPos.x = shore.x;
-                    exitPos.z = shore.z;
-                    exitPos.y = shore.y + 0.1;
-                    return exitPos;
-                }
-            }
-            // Non-speedboat or no shore found: use terrain height
+            // Use terrain height for exit position
             const h = this.getHeightAt(exitPos.x, exitPos.z);
             exitPos.y = Math.max(h + 0.1, WATER_Y + 0.5);
             return exitPos;
@@ -204,8 +158,6 @@ export class VehicleManager {
             // Check if vehicle has room
             if (v.type === 'helicopter') {
                 if (v.occupantCount >= 5) continue;
-            } else if (v.type === 'speedboat') {
-                if (v.occupantCount >= 3) continue;
             } else {
                 if (v.driver) continue;
             }
@@ -218,40 +170,6 @@ export class VehicleManager {
             }
         }
         return closest;
-    }
-
-    /**
-     * Find the nearest land point (height > 0.1) near a water position.
-     * Used for shore approach / exit from speedboats.
-     * @param {number} x
-     * @param {number} z
-     * @param {number} maxRadius
-     * @returns {THREE.Vector3|null}
-     */
-    findNearestShore(x, z, maxRadius = 15) {
-        const step = 2;
-        for (let r = step; r <= maxRadius; r += step) {
-            const samples = Math.max(8, Math.floor(r * 2));
-            let bestH = -Infinity;
-            let bestX = x, bestZ = z;
-            let found = false;
-            for (let i = 0; i < samples; i++) {
-                const angle = (i / samples) * Math.PI * 2;
-                const sx = x + Math.cos(angle) * r;
-                const sz = z + Math.sin(angle) * r;
-                const h = this.getHeightAt(sx, sz);
-                if (h > 0.1 && h > bestH) {
-                    bestH = h;
-                    bestX = sx;
-                    bestZ = sz;
-                    found = true;
-                }
-            }
-            if (found) {
-                return new THREE.Vector3(bestX, bestH, bestZ);
-            }
-        }
-        return null;
     }
 
     /**

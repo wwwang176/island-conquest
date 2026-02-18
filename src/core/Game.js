@@ -856,17 +856,11 @@ export class Game {
         const hpPct = Math.max(0, v.hp / v.maxHP * 100);
         const hpColor = hpPct > 50 ? '#4f4' : hpPct > 25 ? '#ff4' : '#f44';
         const isPilot = v.driver === this.player;
-        let typeName, controls;
-        if (v.type === 'helicopter') {
-            const occ = v.occupantCount || 1;
-            typeName = `HELICOPTER [${occ}/4]` + (isPilot ? ' PILOT' : ' GUNNER');
-            controls = isPilot
-                ? 'WASD Move | Space Up | Shift Down | E Exit'
-                : 'Mouse Aim | LMB Fire | E Exit';
-        } else {
-            typeName = 'SPEEDBOAT';
-            controls = 'WS Thrust | AD Steer | E Exit';
-        }
+        const occ = v.occupantCount || 1;
+        const typeName = `HELICOPTER [${occ}/4]` + (isPilot ? ' PILOT' : ' GUNNER');
+        const controls = isPilot
+            ? 'WASD Move | Space Up | Shift Down | E Exit'
+            : 'Mouse Aim | LMB Fire | E Exit';
 
         this.vehicleHUD.innerHTML = `
             <div style="font-size:14px;font-weight:bold;margin-bottom:4px">${typeName}</div>
@@ -1346,7 +1340,7 @@ export class Game {
     }
 
     _onVehicleDestroyed(data) {
-        const typeName = data.vehicleType === 'helicopter' ? 'Helicopter' : 'Speedboat';
+        const typeName = 'Helicopter';
         const teamName = data.vehicleTeam === 'teamA' ? 'A' : 'B';
         this.killFeed.addKill(
             data.destroyerName, data.destroyerTeam,

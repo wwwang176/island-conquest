@@ -4,7 +4,6 @@ import { PersonalityTypes } from './Personality.js';
 import { findFlankPosition, computePreAimPoint, computeSuppressionTarget, findRidgelineAimPoint } from './TacticalActions.js';
 import { WeaponDefs, GunAnim } from '../entities/WeaponDefs.js';
 import { HELI_PASSENGER_SLOTS, HELI_PILOT_OFFSET } from '../entities/Helicopter.js';
-import { BOAT_PASSENGER_SLOTS, BOAT_PILOT_OFFSET } from '../entities/Speedboat.js';
 
 const _grenadeOrigin = new THREE.Vector3();
 const _grenadeDir = new THREE.Vector3();
@@ -237,12 +236,9 @@ export class AIController {
         this.vehicle = null;          // currently driving
         this._vehicleBoardTarget = null; // vehicle we're walking toward
         this._vehicleMoveTarget = null;  // where we're trying to go via vehicle
-        this._vehicleShoreApproach = null; // cached shore point for boat boarding
         this._vehicleOrbitAngle = 0;     // helicopter orbit angle
         this._heliWaitingForPassengers = false;
         this._heliWaitTimer = 0;      // countdown after first passenger boards
-        this._boatWaitingForPassengers = false;
-        this._boatWaitTimer = 0;
         this.vehicleManager = null;   // set by AIManager
 
         // Build behavior tree
@@ -639,67 +635,26 @@ export class AIController {
                             if (this.soldier.rightLeg) this.soldier.rightLeg.rotation.x = Math.PI / 4;
                         }
                     }
-                } else if (this.vehicle.type === 'speedboat') {
-                    const boat = this.vehicle;
-                    if (boat.driver === this.soldier) {
-                        boat.getWorldSeatPos(_tmpVec, BOAT_PILOT_OFFSET);
-                        this.soldier.body.position.set(_tmpVec.x, _tmpVec.y, _tmpVec.z);
-                        this.soldier.mesh.position.copy(_tmpVec);
-                        this.soldier.mesh.rotation.y = rotY + Math.PI;
-                    } else {
-                        const slotIdx = boat.passengers.indexOf(this.soldier);
-                        if (slotIdx >= 0 && slotIdx < BOAT_PASSENGER_SLOTS.length) {
-                            const slot = BOAT_PASSENGER_SLOTS[slotIdx];
-                            boat.getWorldSeatPos(_tmpVec, slot);
-                            this.soldier.body.position.set(_tmpVec.x, _tmpVec.y, _tmpVec.z);
-                            this.soldier.mesh.position.copy(_tmpVec);
-                            // Face outward
-                            const outward = rotY + slot.facingOffset;
-                            if (this.targetEnemy && this.targetEnemy.alive && this.hasReacted) {
-                                const sp = this.soldier.getPosition();
-                                const adx = this.aimPoint.x - sp.x;
-                                const adz = this.aimPoint.z - sp.z;
-                                const hd = Math.sqrt(adx * adx + adz * adz);
-                                if (hd > 0.1) this.facingDir.set(adx / hd, 0, adz / hd);
-                            } else {
-                                this.facingDir.set(-Math.sin(outward), 0, -Math.cos(outward));
-                            }
-                            this._updateUpperBodyAim(dt);
-                            this.soldier.mesh.rotation.y = rotY;
-                            if (this.soldier.lowerBody) {
-                                this.soldier.lowerBody.rotation.y = slot.facingOffset;
-                            }
-                            if (this.soldier.upperBody) {
-                                this.soldier.upperBody.rotation.y -= rotY;
-                            }
-                        }
-                    }
                 } else {
                     // Other vehicle types: center
                     this.soldier.body.position.set(vp.x, vp.y, vp.z);
                     this.soldier.mesh.position.set(vp.x, vp.y, vp.z);
                 }
             }
-            // Passengers (not pilot) can aim and shoot — only on their side
-            const isPassengerVehicle = this.vehicle.type === 'helicopter' || this.vehicle.type === 'speedboat';
-            if (isPassengerVehicle && this.vehicle.driver !== this.soldier) {
+            // Helicopter passengers (not pilot) can aim and shoot — only on their side
+            const isPassenger = this.vehicle.driver !== this.soldier;
+            if (this.vehicle.type === 'helicopter' && isPassenger) {
                 this._updateShooting(dt);
                 let canFire = false;
                 if (this.targetEnemy && this.targetEnemy.alive) {
-                    if (this.vehicle.type === 'helicopter') {
-                        // Helicopter: side-restricted
-                        const slotIdx = this.vehicle.passengers.indexOf(this.soldier);
-                        const isLeftSeat = slotIdx >= 0 && slotIdx < 2;
-                        const ep = this.targetEnemy.getPosition();
-                        const hx = this.vehicle.mesh.position.x;
-                        const hz = this.vehicle.mesh.position.z;
-                        const rY = this.vehicle.rotationY;
-                        const cross = Math.sin(rY) * (ep.z - hz) - Math.cos(rY) * (ep.x - hx);
-                        canFire = isLeftSeat ? cross > 0 : cross < 0;
-                    } else {
-                        // Speedboat: 360° fire
-                        canFire = true;
-                    }
+                    const slotIdx = this.vehicle.passengers.indexOf(this.soldier);
+                    const isLeftSeat = slotIdx >= 0 && slotIdx < 2;
+                    const ep = this.targetEnemy.getPosition();
+                    const hx = this.vehicle.mesh.position.x;
+                    const hz = this.vehicle.mesh.position.z;
+                    const rY = this.vehicle.rotationY;
+                    const cross = Math.sin(rY) * (ep.z - hz) - Math.cos(rY) * (ep.x - hx);
+                    canFire = isLeftSeat ? cross > 0 : cross < 0;
                 }
                 if (canFire) {
                     this.hasReacted = true;
@@ -1566,8 +1521,7 @@ export class AIController {
             if (!ctrl.vehicle) continue;
             const v = ctrl.vehicle;
             if (!v.alive || v.team !== this.team) continue;
-            const maxOcc = v.type === 'helicopter' ? 5 : v.type === 'speedboat' ? 3 : 1;
-            if (v.occupantCount >= maxOcc) continue;
+            if (v.type === 'helicopter' && v.occupantCount >= 5) continue;
             return v;
         }
         return null;
@@ -1611,13 +1565,6 @@ export class AIController {
         const v = this.vehicleManager.findNearestVehicle(this.soldier, 80);
         if (!v) return false;
 
-        // Speedboat must be within 5m of shore (otherwise COM can't reach it)
-        if (v.type === 'speedboat') {
-            const shore = this.vehicleManager.findNearestShore(
-                v.mesh.position.x, v.mesh.position.z, 5);
-            if (!shore) return false;
-        }
-
         this._vehicleBoardTarget = v;
         this._vehicleMoveTarget = this.targetFlag.position.clone();
         return true;
@@ -1627,14 +1574,12 @@ export class AIController {
         const bt = this._vehicleBoardTarget;
         if (!bt || !bt.alive) {
             this._vehicleBoardTarget = null;
-            this._vehicleShoreApproach = null;
             return BTState.FAILURE;
         }
         // Reject if vehicle is full
-        const maxOcc = bt.type === 'helicopter' ? 5 : bt.type === 'speedboat' ? 3 : 1;
+        const maxOcc = bt.type === 'helicopter' ? 5 : 1;
         if ((bt.occupantCount || (bt.driver ? 1 : 0)) >= maxOcc) {
             this._vehicleBoardTarget = null;
-            this._vehicleShoreApproach = null;
             return BTState.FAILURE;
         }
 
@@ -1651,30 +1596,15 @@ export class AIController {
             // AI soldiers always visible in vehicles (positioned at cockpit/door slots)
             this.soldier.mesh.visible = true;
             // Pilot: start waiting for passengers immediately on boarding
-            if (this.vehicle.driver === this.soldier) {
-                if (this.vehicle.type === 'helicopter') {
-                    this._heliWaitingForPassengers = true;
-                    this._heliWaitTimer = 10;
-                } else if (this.vehicle.type === 'speedboat') {
-                    this._boatWaitingForPassengers = true;
-                    this._boatWaitTimer = 10;
-                }
+            if (this.vehicle.driver === this.soldier && this.vehicle.type === 'helicopter') {
+                this._heliWaitingForPassengers = true;
+                this._heliWaitTimer = 10;
             }
             this._vehicleBoardTarget = null;
-            this._vehicleShoreApproach = null;
             return BTState.SUCCESS;
         }
 
-        // For speedboats, walk to nearest shore point instead of the water position
-        if (this._vehicleBoardTarget.type === 'speedboat') {
-            if (!this._vehicleShoreApproach) {
-                const shore = this.vehicleManager.findNearestShore(vPos.x, vPos.z, 15);
-                this._vehicleShoreApproach = shore || new THREE.Vector3(vPos.x, 0, vPos.z);
-            }
-            this.moveTarget = this._vehicleShoreApproach.clone();
-        } else {
-            this.moveTarget = new THREE.Vector3(vPos.x, 0, vPos.z);
-        }
+        this.moveTarget = new THREE.Vector3(vPos.x, 0, vPos.z);
         this.missionPressure = 0.5;
         return BTState.RUNNING;
     }
@@ -1709,39 +1639,9 @@ export class AIController {
             return BTState.RUNNING;
         }
 
-        // Speedboat: drive to destination, then disembark
-        // Pilot wait logic: wait for first passenger, then 10s countdown
-        if (v.driver === this.soldier) {
-            if (v.passengers.length === 0) {
-                this._boatWaitingForPassengers = true;
-                this._boatWaitTimer = 10;
-            } else if (this._boatWaitTimer > 0) {
-                this._boatWaitingForPassengers = true;
-            } else {
-                this._boatWaitingForPassengers = false;
-            }
-        }
-
-        const vPos = v.mesh.position;
-        const target = this._vehicleMoveTarget || (this.targetFlag ? this.targetFlag.position : null);
-        if (!target) {
-            this._exitVehicle();
-            return BTState.SUCCESS;
-        }
-
-        const dx = target.x - vPos.x;
-        const dz = target.z - vPos.z;
-        const dist = Math.sqrt(dx * dx + dz * dz);
-
-        // Close enough — disembark
-        if (dist < 15) {
-            this._exitVehicle();
-            return BTState.SUCCESS;
-        }
-
-        // Actual driving input is applied every frame in _updateVehicleDriving()
-        this.missionPressure = 0.3;
-        return BTState.RUNNING;
+        // Unknown vehicle type — exit
+        this._exitVehicle();
+        return BTState.FAILURE;
     }
 
     /**
@@ -1754,102 +1654,7 @@ export class AIController {
 
         if (v.type === 'helicopter') {
             this._updateHelicopterOrbit(dt);
-        } else {
-            this._updateSpeedboatDriving(dt);
         }
-    }
-
-    _updateSpeedboatDriving(dt) {
-        const v = this.vehicle;
-
-        // Wait on water until passengers board + grace period expires
-        if (this._boatWaitingForPassengers) {
-            if (v.passengers.length > 0) {
-                this._boatWaitTimer -= dt;
-            }
-            return; // no input — boat stays still
-        }
-
-        const vPos = v.mesh.position;
-        const target = this._vehicleMoveTarget || (this.targetFlag ? this.targetFlag.position : null);
-        if (!target) return;
-
-        const dx = target.x - vPos.x;
-        const dz = target.z - vPos.z;
-        const dist = Math.sqrt(dx * dx + dz * dz);
-
-        // Compute steering toward target
-        const targetAngle = Math.atan2(dx, dz);
-        let angleDiff = targetAngle - v.rotationY;
-        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-
-        const input = {
-            thrust: 1.0,
-            brake: 0,
-            steerLeft: angleDiff > 0.1,
-            steerRight: angleDiff < -0.1,
-            ascend: false,
-            descend: false,
-        };
-
-        // Slow down when approaching target
-        if (dist < 10) {
-            input.thrust = Math.max(0.3, dist / 10);
-        }
-
-        // Terrain avoidance with inflation buffer
-        const speed = Math.abs(v.speed);
-        if (speed > 0.3) {
-            const lookDist = Math.max(12, speed * 2.5);
-            const fwdX = Math.sin(v.rotationY);
-            const fwdZ = Math.cos(v.rotationY);
-            const threshold = -1.5; // inflate shoreline ~1.5m depth
-
-            // Probe ahead at two distances
-            const nearH = this.getHeightAt(vPos.x + fwdX * 6, vPos.z + fwdZ * 6);
-            const aheadH = this.getHeightAt(vPos.x + fwdX * lookDist, vPos.z + fwdZ * lookDist);
-            const blocked = nearH > threshold || aheadH > threshold;
-
-            // Side clearance probes (prevent hugging shoreline)
-            const sideL = this.getHeightAt(
-                vPos.x + Math.sin(v.rotationY + Math.PI / 2) * 5,
-                vPos.z + Math.cos(v.rotationY + Math.PI / 2) * 5);
-            const sideR = this.getHeightAt(
-                vPos.x + Math.sin(v.rotationY - Math.PI / 2) * 5,
-                vPos.z + Math.cos(v.rotationY - Math.PI / 2) * 5);
-
-            if (blocked) {
-                // Land ahead — probe left and right to find clear path
-                const probeAngleL = v.rotationY + 0.7;
-                const probeAngleR = v.rotationY - 0.7;
-                const leftH = this.getHeightAt(
-                    vPos.x + Math.sin(probeAngleL) * lookDist,
-                    vPos.z + Math.cos(probeAngleL) * lookDist);
-                const rightH = this.getHeightAt(
-                    vPos.x + Math.sin(probeAngleR) * lookDist,
-                    vPos.z + Math.cos(probeAngleR) * lookDist);
-
-                if (leftH < rightH) {
-                    input.steerLeft = true;
-                    input.steerRight = false;
-                } else {
-                    input.steerLeft = false;
-                    input.steerRight = true;
-                }
-                input.thrust = nearH > threshold ? 0.2 : Math.min(input.thrust, 0.4);
-            } else if (sideL > threshold && sideR <= threshold) {
-                // Shore too close on left — nudge right
-                input.steerRight = true;
-                input.steerLeft = false;
-            } else if (sideR > threshold && sideL <= threshold) {
-                // Shore too close on right — nudge left
-                input.steerLeft = true;
-                input.steerRight = false;
-            }
-        }
-
-        v.applyInput(input, dt);
     }
 
     _updateHelicopterOrbit(dt) {
@@ -1922,19 +1727,7 @@ export class AIController {
         const exitPos = v.exit(this.soldier);
         this.vehicle = null;
         this._vehicleMoveTarget = null;
-        this._vehicleShoreApproach = null;
         this.soldier.mesh.visible = true;
-        // For speedboats, find nearest shore to place soldier on land
-        if (v.type === 'speedboat' && this.vehicleManager) {
-            const shore = this.vehicleManager.findNearestShore(
-                v.mesh.position.x, v.mesh.position.z, 15
-            );
-            if (shore) {
-                this.soldier.body.position.set(shore.x, shore.y + 0.1, shore.z);
-                return;
-            }
-        }
-        // Non-speedboat or no shore found
         if (exitPos) {
             const h = this.getHeightAt(exitPos.x, exitPos.z);
             this.soldier.body.position.set(exitPos.x, Math.max(h + 0.1, exitPos.y), exitPos.z);
