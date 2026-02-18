@@ -589,9 +589,9 @@ export class AIController {
                             this.soldier.upperBody.rotation.y = Math.PI;
                             if (this.soldier.shoulderPivot) this.soldier.shoulderPivot.rotation.x = 0;
                         }
-                        // Legs forward 45°
-                        if (this.soldier.leftLeg) this.soldier.leftLeg.rotation.x = Math.PI / 4;
-                        if (this.soldier.rightLeg) this.soldier.rightLeg.rotation.x = Math.PI / 4;
+                        // Legs forward 90°
+                        if (this.soldier.leftLeg) this.soldier.leftLeg.rotation.x = Math.PI / 2;
+                        if (this.soldier.rightLeg) this.soldier.rightLeg.rotation.x = Math.PI / 2;
                     } else {
                         // Passenger: door slot (seated, legs face outward)
                         const slotIdx = heli.passengers.indexOf(this.soldier);

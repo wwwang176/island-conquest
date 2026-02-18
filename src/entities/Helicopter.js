@@ -13,7 +13,7 @@ const _cannonYAxis = new CANNON.Vec3(0, 1, 0);
  * Hull is rotated PI internally, so hull-local (x,y,z) → world (-x,y,-z).
  * Cabin sides at world x≈±0.9, cabin floor at y≈-0.55, cabin z from -1.3 to +1.3.
  */
-const PILOT_OFFSET = { x: 0, y: -0.85, z: 1.8 }; // cockpit (nose area, sunk into seat)
+const PILOT_OFFSET = { x: 0, y: -1.05, z: 1.8 }; // cockpit (nose area, sunk into seat)
 
 const PASSENGER_SLOTS = [
     { x: -0.75, y: -1.2, z:  0.2, facingOffset:  Math.PI / 2 },  // left front  → face -X (outward)
@@ -197,20 +197,65 @@ export class Helicopter extends Vehicle {
         odGeos.push(place(new THREE.BoxGeometry(0.08, 1.2, 0.08), -0.9, 0.05, -1.25));
         odGeos.push(place(new THREE.BoxGeometry(0.08, 1.2, 0.08), 0.9, 0.05, -1.25));
 
-        // Cockpit nose (tapered egg shape — modify vertices first)
-        const noseGeo = new THREE.BoxGeometry(1.5, 1.0, 1.6);
-        const np = noseGeo.attributes.position;
-        for (let i = 0; i < np.count; i++) {
-            const z = np.getZ(i);
-            if (z < 0) {
-                const t = Math.abs(z) / 0.8;
-                np.setX(i, np.getX(i) * (1 - t * 0.4));
-                if (np.getY(i) < 0) np.setY(i, np.getY(i) * (1 - t * 0.5));
+        // ── Nose: glass cockpit with metal frame ──
+        // Tapered extension of cabin (flush at junction, narrows toward front).
+        // Surface is mostly glass; metal = horizontal band + vertical keel.
+        const noseLen = 1.5;
+        const noseCZ = -2.05; // center Z in hull-local (-1.3 to -2.8)
+        const noseCenterY = 0.0;
+        const TAPER = 0.4;
+
+        // Trapezoid builder: box tapers uniformly around noseCenterY
+        const wedge = (w, h, centerY) => {
+            const geo = new THREE.BoxGeometry(w, h, noseLen);
+            const pos = geo.attributes.position;
+            const halfD = noseLen / 2;
+            const relY = noseCenterY - centerY;
+            for (let i = 0; i < pos.count; i++) {
+                const z = pos.getZ(i);
+                const t = (halfD - z) / noseLen; // 0=back(cabin), 1=front
+                pos.setX(i, pos.getX(i) * (1 - t * TAPER));
+                const y = pos.getY(i);
+                pos.setY(i, y + (relY - y) * t * TAPER);
             }
-        }
-        np.needsUpdate = true;
-        noseGeo.computeVertexNormals();
-        odGeos.push(place(noseGeo, 0, -0.05, -2.0));
+            pos.needsUpdate = true;
+            geo.computeVertexNormals();
+            return geo;
+        };
+
+        // Metal frame (outline only, not solid)
+        // edgeStrip: thin bar at xPos that follows the nose taper
+        const edgeStrip = (stripW, h, centerY, xPos) => {
+            const geo = new THREE.BoxGeometry(stripW, h, noseLen);
+            const pos = geo.attributes.position;
+            const halfD = noseLen / 2;
+            const relY = noseCenterY - centerY;
+            for (let i = 0; i < pos.count; i++) {
+                const z = pos.getZ(i);
+                const t = (halfD - z) / noseLen;
+                const s = 1 - t * TAPER;
+                pos.setX(i, xPos * s + pos.getX(i) * s);
+                const y = pos.getY(i);
+                pos.setY(i, y + (relY - y) * t * TAPER);
+            }
+            pos.needsUpdate = true;
+            geo.computeVertexNormals();
+            return geo;
+        };
+        // Horizontal belt: left + right side strips
+        odGeos.push(place(edgeStrip(0.10, 0.10, 0.0, -0.85), 0, 0.0, noseCZ));
+        odGeos.push(place(edgeStrip(0.10, 0.10, 0.0,  0.85), 0, 0.0, noseCZ));
+        // Horizontal belt: front connecting bar
+        const frontW = 1.7 * (1 - TAPER);
+        odGeos.push(place(new THREE.BoxGeometry(frontW, 0.10, 0.10), 0, 0.0, -2.75));
+        // Vertical keel: front bar at nose tip (band y=0 → glass bottom y≈-0.29)
+        odGeos.push(place(new THREE.BoxGeometry(0.10, 0.29, 0.10), 0, -0.145, -2.75));
+        // Vertical keel: bottom bar (rectangular prism tilted to follow glass slope)
+        // Glass bottom: y=-0.49 at back → y=-0.294 at front (rise 0.196 over noseLen)
+        const kbGeo = new THREE.BoxGeometry(0.15, 0.06, noseLen);
+        kbGeo.applyMatrix4(new THREE.Matrix4().makeRotationX(
+            Math.atan2(0.196, noseLen)));
+        odGeos.push(place(kbGeo, 0, -0.392, noseCZ));
 
         // Tail boom
         odGeos.push(place(new THREE.BoxGeometry(0.35, 0.35, 3.5), 0, 0.1, 3.2));
@@ -245,21 +290,18 @@ export class Helicopter extends Vehicle {
         this._stripeMat = mat(teamColor);
         this._attitudeGroup.add(new THREE.Mesh(stripeGeo, this._stripeMat));
 
-        // ── Cockpit glass (separate — transparent) ──
-        const glassGeo = new THREE.BoxGeometry(1.4, 0.75, 1.3);
-        const gp = glassGeo.attributes.position;
-        for (let i = 0; i < gp.count; i++) {
-            const z = gp.getZ(i);
-            if (z < 0) {
-                const t = Math.abs(z) / 0.65;
-                gp.setX(i, gp.getX(i) * (1 - t * 0.35));
-                if (gp.getY(i) > 0) gp.setY(i, gp.getY(i) * (1 + t * 0.15));
-            }
-        }
-        gp.needsUpdate = true;
-        glassGeo.computeVertexNormals();
-        place(glassGeo, 0, 0.4, -1.7);
-        this._attitudeGroup.add(new THREE.Mesh(glassGeo, mat(0x88ccaa, { transparent: true, opacity: 0.3 })));
+        // ── Nose glass (inside metal belt frame, 1.6m wide) ──
+        // Upper glass: cabin roof (0.59) → band top (0.05)
+        const upperGlass = wedge(1.6, 0.54, 0.32);
+        place(upperGlass, 0, 0.32, noseCZ);
+        this._attitudeGroup.add(new THREE.Mesh(upperGlass,
+            mat(0x88ccaa, { transparent: true, opacity: 0.2 })));
+
+        // Lower glass: band bottom (-0.05) → cabin floor (-0.49)
+        const lowerGlass = wedge(1.6, 0.44, -0.27);
+        place(lowerGlass, 0, -0.27, noseCZ);
+        this._attitudeGroup.add(new THREE.Mesh(lowerGlass,
+            mat(0x88ccaa, { transparent: true, opacity: 0.15 })));
 
         // ── Main rotor (animated — stays separate) ──
         const rotorGeo = new THREE.BoxGeometry(7, 0.04, 0.25);

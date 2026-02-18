@@ -11,6 +11,7 @@ const _yawQuat = new THREE.Quaternion();
 const _moveDir = new THREE.Vector3();
 const _yAxis = new THREE.Vector3(0, 1, 0);
 const _seatPos = new THREE.Vector3();
+const _eyeOffset = { x: 0, y: 0, z: 0 };
 const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
 const _aimDir = new THREE.Vector3();
 const _shotOrigin = new THREE.Vector3();
@@ -549,20 +550,26 @@ export class Player {
 
         if (v.type === 'helicopter') {
             if (v.driver === this) {
-                // Pilot: cockpit position (yaw-only to avoid pitch/roll jitter)
-                v.getYawSeatPos(_seatPos, HELI_PILOT_OFFSET);
+                // Pilot: full world-space transform (eye offset baked in)
+                _eyeOffset.x = HELI_PILOT_OFFSET.x;
+                _eyeOffset.y = HELI_PILOT_OFFSET.y + 1.6;
+                _eyeOffset.z = HELI_PILOT_OFFSET.z;
+                v.getWorldSeatPos(_seatPos, _eyeOffset);
                 camX = _seatPos.x;
+                camY = _seatPos.y;
                 camZ = _seatPos.z;
-                camY = _seatPos.y + 1.6; // eye height above seat
             } else {
-                // Passenger: door slot (yaw-only to avoid pitch/roll jitter)
+                // Passenger: full world-space transform (eye offset baked in)
                 const slotIdx = v.passengers ? v.passengers.indexOf(this) : -1;
                 if (slotIdx >= 0 && slotIdx < HELI_PASSENGER_SLOTS.length) {
                     const slot = HELI_PASSENGER_SLOTS[slotIdx];
-                    v.getYawSeatPos(_seatPos, slot);
+                    _eyeOffset.x = slot.x;
+                    _eyeOffset.y = slot.y + 1.6;
+                    _eyeOffset.z = slot.z;
+                    v.getWorldSeatPos(_seatPos, _eyeOffset);
                     camX = _seatPos.x;
+                    camY = _seatPos.y;
                     camZ = _seatPos.z;
-                    camY = _seatPos.y + 1.6; // eye height above slot
                 } else {
                     camY = vp.y + 0.5;
                 }
