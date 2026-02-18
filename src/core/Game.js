@@ -1419,6 +1419,9 @@ export class Game {
         // Update impact particles
         this.impactVFX.update(dt);
 
+        // Update vehicles FIRST so AI passengers read current helicopter position
+        this.vehicleManager.update(dt);
+
         // Update AI — include vehicle meshes in collidables for hitscan
         if (!this._aiCollidablesBuf) this._aiCollidablesBuf = [];
         const aiCollidables = this._aiCollidablesBuf;
@@ -1441,9 +1444,6 @@ export class Game {
 
         // Update dropped guns
         this.droppedGunManager.update(dt);
-
-        // Update vehicles
-        this.vehicleManager.update(dt);
 
         if (this.gameMode === 'spectator' || this.gameMode === 'joining') {
             // Spectator camera
