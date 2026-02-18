@@ -11,6 +11,13 @@ const _yawQuat = new THREE.Quaternion();
 const _moveDir = new THREE.Vector3();
 const _yAxis = new THREE.Vector3(0, 1, 0);
 const _seatPos = new THREE.Vector3();
+const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
+const _aimDir = new THREE.Vector3();
+const _shotOrigin = new THREE.Vector3();
+const _dmgPos = new THREE.Vector3();
+const _dmgFrom = new THREE.Vector3();
+const _dmgFwd = new THREE.Vector3();
+const _dmgQuat = new THREE.Quaternion();
 
 /**
  * First-person player controller.
@@ -48,6 +55,9 @@ export class Player {
         this.respawnDelay = 5;
         this.team = null; // set when joining a team
         this.selectedWeaponId = 'AR15';
+
+        // Position cache (avoid per-frame allocation in getPosition)
+        this._posCache = new THREE.Vector3();
 
         // Vehicle state
         this.vehicle = null;
@@ -343,7 +353,8 @@ export class Player {
         }
 
         if (this.input.mouseDown) {
-            const origin = this.camera.position.clone();
+            _shotOrigin.copy(this.camera.position);
+            const origin = _shotOrigin;
             const dir = this.getAimDirection();
             const hit = this.weapon.fire(origin, dir, this.shootTargets);
             if (hit) {
@@ -381,8 +392,8 @@ export class Player {
         const pos = this.body.position;
         this.mesh.position.set(pos.x, pos.y, pos.z);
         this.camera.position.set(pos.x, pos.y + this.cameraHeight, pos.z);
-        const euler = new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ');
-        this.camera.quaternion.setFromEuler(euler);
+        _euler.set(this.pitch, this.yaw, 0);
+        this.camera.quaternion.setFromEuler(_euler);
     }
 
     takeDamage(amount, fromPosition, hitY = null) {
@@ -397,10 +408,10 @@ export class Player {
 
         // Damage direction for HUD indicator
         if (fromPosition) {
-            const myPos = new THREE.Vector3(this.body.position.x, 0, this.body.position.z);
-            this.lastDamageDirection = new THREE.Vector3()
-                .subVectors(new THREE.Vector3(fromPosition.x, 0, fromPosition.z), myPos)
-                .normalize();
+            _dmgPos.set(this.body.position.x, 0, this.body.position.z);
+            _dmgFrom.set(fromPosition.x, 0, fromPosition.z);
+            if (!this.lastDamageDirection) this.lastDamageDirection = new THREE.Vector3();
+            this.lastDamageDirection.subVectors(_dmgFrom, _dmgPos).normalize();
             this.damageIndicatorTimer = 1.0;
         }
 
@@ -459,13 +470,13 @@ export class Player {
     }
 
     getPosition() {
-        return new THREE.Vector3(this.body.position.x, this.body.position.y, this.body.position.z);
+        return this._posCache.set(this.body.position.x, this.body.position.y, this.body.position.z);
     }
 
     getAimDirection() {
-        const dir = new THREE.Vector3(0, 0, -1);
-        dir.applyQuaternion(this.camera.quaternion);
-        return dir;
+        _aimDir.set(0, 0, -1);
+        _aimDir.applyQuaternion(this.camera.quaternion);
+        return _aimDir;
     }
 
     // ───── Vehicle Controls ─────
@@ -564,8 +575,8 @@ export class Player {
         this.camera.position.set(camX, camY, camZ);
 
         // Use player's own yaw/pitch for free look
-        const euler = new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ');
-        this.camera.quaternion.setFromEuler(euler);
+        _euler.set(this.pitch, this.yaw, 0);
+        this.camera.quaternion.setFromEuler(_euler);
 
         // Sync physics body to vehicle position
         this.body.position.set(camX, vp.y, camZ);

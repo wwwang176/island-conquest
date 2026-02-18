@@ -261,8 +261,11 @@ export class AIManager {
         this.threatMapB.update(dt, allA);
 
         // Calculate flag deficit per team (positive = behind)
-        const aFlags = this.flags.filter(f => f.owner === 'teamA').length;
-        const bFlags = this.flags.filter(f => f.owner === 'teamB').length;
+        let aFlags = 0, bFlags = 0;
+        for (const f of this.flags) {
+            if (f.owner === 'teamA') aFlags++;
+            else if (f.owner === 'teamB') bFlags++;
+        }
 
         // Pass deficit to controllers
         for (const ctrl of this.teamA.controllers) ctrl.flagDeficit = bFlags - aFlags;

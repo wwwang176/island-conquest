@@ -2627,9 +2627,9 @@ export class AIController {
 
     _getWorldNormal(hit) {
         if (!hit.face) return null;
-        const normal = hit.face.normal.clone();
-        normal.transformDirection(hit.object.matrixWorld);
-        return normal;
+        _tmpVec.copy(hit.face.normal);
+        _tmpVec.transformDirection(hit.object.matrixWorld);
+        return _tmpVec;
     }
 
     _getSurfaceType(obj) {

@@ -22,6 +22,11 @@ import { KillFeed } from '../ui/KillFeed.js';
 import { SpectatorMode } from './SpectatorMode.js';
 import Stats from 'three/addons/libs/stats.module.js';
 
+// Module-level reusable objects for hot paths
+const _gDmgFwd = new THREE.Vector3();
+const _gDmgQuat = new THREE.Quaternion();
+const _gYAxis = new THREE.Vector3(0, 1, 0);
+
 export class Game {
     constructor() {
         this.eventBus = new EventBus();
@@ -1119,8 +1124,11 @@ export class Game {
 
     _updateScoreHUD() {
         const s = this.scoreManager.scores;
-        const aFlagCount = this.flags.filter(f => f.owner === 'teamA').length;
-        const bFlagCount = this.flags.filter(f => f.owner === 'teamB').length;
+        let aFlagCount = 0, bFlagCount = 0;
+        for (const f of this.flags) {
+            if (f.owner === 'teamA') aFlagCount++;
+            else if (f.owner === 'teamB') bFlagCount++;
+        }
         if (s.teamA === this._lastScoreA && s.teamB === this._lastScoreB &&
             aFlagCount === this._lastFlagsA && bFlagCount === this._lastFlagsB) return;
         this._lastScoreA = s.teamA;
@@ -1157,9 +1165,9 @@ export class Game {
         if (timer > 0 && dmgDir) {
             const opacity = Math.min(1, timer) * 0.6;
 
-            const forward = new THREE.Vector3(0, 0, -1);
-            const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), camYaw);
-            forward.applyQuaternion(yawQuat);
+            _gDmgFwd.set(0, 0, -1);
+            _gDmgQuat.setFromAxisAngle(_gYAxis, camYaw);
+            const forward = _gDmgFwd.applyQuaternion(_gDmgQuat);
 
             const angle = Math.atan2(dmgDir.x, dmgDir.z) - Math.atan2(forward.x, forward.z);
 

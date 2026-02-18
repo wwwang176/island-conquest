@@ -6,6 +6,8 @@ import { WeaponDefs, GunAnim } from './WeaponDefs.js';
 const WATER_Y = -0.3;
 const _splashPos = new THREE.Vector3();
 const _upDir = new THREE.Vector3(0, 1, 0);
+const _sdmgPos = new THREE.Vector3();
+const _sdmgDir = new THREE.Vector3();
 
 /** Create a trapezoid stock from a BoxGeometry: flat top, bottom slopes down toward back. */
 function trapezoidGeo(w, frontH, backH, depth, cx, topY, zFront) {
@@ -391,10 +393,9 @@ export class Soldier {
 
         // Track damage direction for HUD
         if (fromPosition) {
-            const myPos = new THREE.Vector3(this.body.position.x, 0, this.body.position.z);
-            this.lastDamageDirection = new THREE.Vector3()
-                .subVectors(fromPosition, myPos)
-                .normalize();
+            _sdmgPos.set(this.body.position.x, 0, this.body.position.z);
+            if (!this.lastDamageDirection) this.lastDamageDirection = new THREE.Vector3();
+            this.lastDamageDirection.copy(_sdmgDir.set(fromPosition.x, 0, fromPosition.z).sub(_sdmgPos)).normalize();
             this.damageIndicatorTimer = 1.0; // show for 1 second
         }
 

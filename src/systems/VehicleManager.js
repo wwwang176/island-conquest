@@ -253,11 +253,19 @@ export class VehicleManager {
      * @returns {THREE.Mesh[]}
      */
     getVehicleMeshes() {
-        const meshes = [];
+        if (!this._meshBuf) this._meshBuf = [];
+        const meshes = this._meshBuf;
+        meshes.length = 0;
         for (const v of this.vehicles) {
             // Include alive vehicles and crashing helicopters (still collidable)
             const visible = v.alive || (v._crashing && v.mesh && v.mesh.visible);
-            if (visible && v.mesh) meshes.push(v.mesh);
+            if (!visible || !v.mesh) continue;
+            // Use collision proxy for helicopters (single box vs ~7 children)
+            if (v._collisionProxy) {
+                meshes.push(v._collisionProxy);
+            } else {
+                meshes.push(v.mesh);
+            }
         }
         return meshes;
     }

@@ -6,6 +6,7 @@ import { Vehicle } from './Vehicle.js';
 const WATER_Y = -0.3;
 const MAP_HALF_W = 150;  // island.width / 2
 const MAP_HALF_D = 60;   // island.depth / 2
+const _cannonYAxis = new CANNON.Vec3(0, 1, 0);
 
 /**
  * World-space offsets from helicopter mesh center (rotY=0, facing +Z).
@@ -68,6 +69,7 @@ export class Helicopter extends Vehicle {
 
         // getHeightAt — set by VehicleManager after construction
         this.getHeightAt = null;
+        this._groundY = 0; // cached terrain height for idle check
 
         // Spawn flag — set by VehicleManager; used to switch team on respawn
         this.spawnFlag = null;
@@ -84,6 +86,7 @@ export class Helicopter extends Vehicle {
         // Build mesh
         this.mesh = this._createMesh();
         this.mesh.userData.vehicle = this;
+        if (this._collisionProxy) this._collisionProxy.userData.vehicle = this;
         scene.add(this.mesh);
 
         // Position
@@ -128,7 +131,13 @@ export class Helicopter extends Vehicle {
      */
     getWorldSeatPos(out, offset) {
         out.set(offset.x, offset.y, offset.z);
-        this._attitudeGroup.updateWorldMatrix(true, false);
+        // Cache world matrix once per frame — avoid repeated ancestor traversal
+        const frame = this._matrixFrame || 0;
+        const now = this._frameCounter || 0;
+        if (frame !== now) {
+            this._attitudeGroup.updateWorldMatrix(true, false);
+            this._matrixFrame = now;
+        }
         this._attitudeGroup.localToWorld(out);
     }
 
@@ -152,9 +161,7 @@ export class Helicopter extends Vehicle {
         if (!this.body) return;
         const p = this.mesh.position;
         this.body.position.set(p.x, p.y, p.z);
-        this.body.quaternion.setFromAxisAngle(
-            new CANNON.Vec3(0, 1, 0), this.rotationY
-        );
+        this.body.quaternion.setFromAxisAngle(_cannonYAxis, this.rotationY);
     }
 
     _createMesh() {
@@ -167,36 +174,30 @@ export class Helicopter extends Vehicle {
         // Attitude group: pitch + roll (nested under yaw mesh)
         this._attitudeGroup = new THREE.Group();
         group.add(this._attitudeGroup);
-        const hull = new THREE.Group();
-        hull.rotation.y = Math.PI; // -Z local = nose → +Z world
-        this._attitudeGroup.add(hull);
 
-        // ── Cabin (open sides — only floor, roof, back wall) ──
-        const floorGeo = new THREE.BoxGeometry(1.8, 0.12, 2.6);
-        const floor = new THREE.Mesh(floorGeo, mat(OD));
-        floor.position.set(0, -0.55, 0);
-        floor.castShadow = true;
-        hull.add(floor);
+        // Hull rotation matrix (PI around Y): -Z local = nose → +Z world
+        const hullRot = new THREE.Matrix4().makeRotationY(Math.PI);
+        // Helper: bake hull rotation + local position into geometry
+        const place = (geo, x, y, z) => {
+            const m = new THREE.Matrix4().makeTranslation(x, y, z);
+            m.premultiply(hullRot);
+            return geo.applyMatrix4(m);
+        };
 
-        const roofGeo = new THREE.BoxGeometry(1.8, 0.12, 2.6);
-        const roof = new THREE.Mesh(roofGeo, mat(OD));
-        roof.position.set(0, 0.65, 0);
-        hull.add(roof);
+        // ── Collect geometries by material ──
+        const odGeos = [];  // olive drab
+        const dkGeos = [];  // dark grey
 
-        const backGeo = new THREE.BoxGeometry(1.8, 1.2, 0.12);
-        const back = new THREE.Mesh(backGeo, mat(OD));
-        back.position.set(0, 0.05, 1.3);
-        hull.add(back);
+        // Cabin: floor, roof, back wall
+        odGeos.push(place(new THREE.BoxGeometry(1.8, 0.12, 2.6), 0, -0.55, 0));
+        odGeos.push(place(new THREE.BoxGeometry(1.8, 0.12, 2.6), 0, 0.65, 0));
+        odGeos.push(place(new THREE.BoxGeometry(1.8, 1.2, 0.12), 0, 0.05, 1.3));
 
-        // Thin door-frame pillars at the cabin opening edges
-        for (const side of [-1, 1]) {
-            const pillarGeo = new THREE.BoxGeometry(0.08, 1.2, 0.08);
-            const pillar = new THREE.Mesh(pillarGeo, mat(OD));
-            pillar.position.set(side * 0.9, 0.05, -1.25);
-            hull.add(pillar);
-        }
+        // Door-frame pillars
+        odGeos.push(place(new THREE.BoxGeometry(0.08, 1.2, 0.08), -0.9, 0.05, -1.25));
+        odGeos.push(place(new THREE.BoxGeometry(0.08, 1.2, 0.08), 0.9, 0.05, -1.25));
 
-        // ── Cockpit nose (tapered egg shape) ──
+        // Cockpit nose (tapered egg shape — modify vertices first)
         const noseGeo = new THREE.BoxGeometry(1.5, 1.0, 1.6);
         const np = noseGeo.attributes.position;
         for (let i = 0; i < np.count; i++) {
@@ -209,12 +210,42 @@ export class Helicopter extends Vehicle {
         }
         np.needsUpdate = true;
         noseGeo.computeVertexNormals();
-        const nose = new THREE.Mesh(noseGeo, mat(OD));
-        nose.position.set(0, -0.05, -2.0);
-        nose.castShadow = true;
-        hull.add(nose);
+        odGeos.push(place(noseGeo, 0, -0.05, -2.0));
 
-        // ── Cockpit glass (semi-transparent bubble) ──
+        // Tail boom
+        odGeos.push(place(new THREE.BoxGeometry(0.35, 0.35, 3.5), 0, 0.1, 3.2));
+        // Vertical tail fin
+        odGeos.push(place(new THREE.BoxGeometry(0.1, 1.0, 0.7), 0, 0.7, 4.9));
+        // Horizontal stabilizer
+        odGeos.push(place(new THREE.BoxGeometry(1.4, 0.08, 0.5), 0, 0.15, 4.9));
+        // Rotor mast
+        odGeos.push(place(new THREE.CylinderGeometry(0.06, 0.06, 0.35, 6), 0, 0.8, 0));
+
+        // Landing skids + struts
+        for (const side of [-1, 1]) {
+            dkGeos.push(place(new THREE.BoxGeometry(0.08, 0.08, 3.0), side * 0.95, -1.0, -0.2));
+            for (const zOff of [-0.8, 0.6]) {
+                dkGeos.push(place(new THREE.BoxGeometry(0.06, 0.45, 0.06), side * 0.95, -0.75, zOff));
+            }
+        }
+
+        // ── Merged static hull (OD + DK) ──
+        const odMerged = mergeGeometries(odGeos);
+        const odMesh = new THREE.Mesh(odMerged, mat(OD));
+        odMesh.castShadow = true;
+        this._attitudeGroup.add(odMesh);
+
+        const dkMerged = mergeGeometries(dkGeos);
+        const dkMesh = new THREE.Mesh(dkMerged, mat(DK));
+        this._attitudeGroup.add(dkMesh);
+
+        // ── Team stripe (separate — color changes on flag capture) ──
+        const stripeGeo = new THREE.BoxGeometry(0.36, 0.36, 0.8);
+        place(stripeGeo, 0, 0.1, 4.0);
+        this._stripeMat = mat(teamColor);
+        this._attitudeGroup.add(new THREE.Mesh(stripeGeo, this._stripeMat));
+
+        // ── Cockpit glass (separate — transparent) ──
         const glassGeo = new THREE.BoxGeometry(1.4, 0.75, 1.3);
         const gp = glassGeo.attributes.position;
         for (let i = 0; i < gp.count; i++) {
@@ -227,71 +258,32 @@ export class Helicopter extends Vehicle {
         }
         gp.needsUpdate = true;
         glassGeo.computeVertexNormals();
-        const glass = new THREE.Mesh(glassGeo, mat(0x88ccaa, { transparent: true, opacity: 0.3 }));
-        glass.position.set(0, 0.4, -1.7);
-        hull.add(glass);
+        place(glassGeo, 0, 0.4, -1.7);
+        this._attitudeGroup.add(new THREE.Mesh(glassGeo, mat(0x88ccaa, { transparent: true, opacity: 0.3 })));
 
-        // ── Tail boom ──
-        const tailGeo = new THREE.BoxGeometry(0.35, 0.35, 3.5);
-        const tail = new THREE.Mesh(tailGeo, mat(OD));
-        tail.position.set(0, 0.1, 3.2);
-        tail.castShadow = true;
-        hull.add(tail);
-
-        // Team stripe on tail boom
-        const stripeGeo = new THREE.BoxGeometry(0.36, 0.36, 0.8);
-        this._stripeMat = mat(teamColor);
-        const stripe = new THREE.Mesh(stripeGeo, this._stripeMat);
-        stripe.position.set(0, 0.1, 4.0);
-        hull.add(stripe);
-
-        // Vertical tail fin
-        const finGeo = new THREE.BoxGeometry(0.1, 1.0, 0.7);
-        const fin = new THREE.Mesh(finGeo, mat(OD));
-        fin.position.set(0, 0.7, 4.9);
-        hull.add(fin);
-
-        // Horizontal stabilizer
-        const hStabGeo = new THREE.BoxGeometry(1.4, 0.08, 0.5);
-        const hStab = new THREE.Mesh(hStabGeo, mat(OD));
-        hStab.position.set(0, 0.15, 4.9);
-        hull.add(hStab);
-
-        // ── Landing skids ──
-        for (const side of [-1, 1]) {
-            const skidGeo = new THREE.BoxGeometry(0.08, 0.08, 3.0);
-            const skid = new THREE.Mesh(skidGeo, mat(DK));
-            skid.position.set(side * 0.95, -1.0, -0.2);
-            hull.add(skid);
-            // Cross-tube struts
-            for (const zOff of [-0.8, 0.6]) {
-                const strutGeo = new THREE.BoxGeometry(0.06, 0.45, 0.06);
-                const strut = new THREE.Mesh(strutGeo, mat(DK));
-                strut.position.set(side * 0.95, -0.75, zOff);
-                hull.add(strut);
-            }
-        }
-
-        // ── Main rotor (2-blade) ──
+        // ── Main rotor (animated — stays separate) ──
         const rotorGeo = new THREE.BoxGeometry(7, 0.04, 0.25);
         this._rotorMesh = new THREE.Mesh(rotorGeo, mat(DK, { transparent: true, opacity: 0.7 }));
         this._rotorMesh.position.y = 0.95;
-        hull.add(this._rotorMesh);
+        this._attitudeGroup.add(this._rotorMesh);
         const rotor2Geo = new THREE.BoxGeometry(0.25, 0.04, 7);
-        const rotor2 = new THREE.Mesh(rotor2Geo, mat(DK, { transparent: true, opacity: 0.7 }));
-        this._rotorMesh.add(rotor2);
+        this._rotorMesh.add(new THREE.Mesh(rotor2Geo, mat(DK, { transparent: true, opacity: 0.7 })));
 
-        // Rotor mast
-        const mastGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.35, 6);
-        const mast = new THREE.Mesh(mastGeo, mat(DK));
-        mast.position.y = 0.8;
-        hull.add(mast);
-
-        // ── Tail rotor ──
+        // ── Tail rotor (animated — stays separate) ──
+        // Hull-local (0.22, 0.7, 4.9) → after PI rotation: (-0.22, 0.7, -4.9)
         const trGeo = new THREE.BoxGeometry(0.04, 1.8, 0.15);
         this._tailRotorMesh = new THREE.Mesh(trGeo, mat(DK, { transparent: true, opacity: 0.7 }));
-        this._tailRotorMesh.position.set(0.22, 0.7, 4.9);
-        hull.add(this._tailRotorMesh);
+        this._tailRotorMesh.position.set(-0.22, 0.7, -4.9);
+        this._attitudeGroup.add(this._tailRotorMesh);
+
+        // ── Raycast collision proxy (single box for fast hitscan) ──
+        // Covers fuselage + tail boom: ~10m long, 2m wide, 2m tall
+        const proxyGeo = new THREE.BoxGeometry(2.0, 2.0, 10.0);
+        const proxyMat = new THREE.MeshBasicMaterial({ visible: false });
+        this._collisionProxy = new THREE.Mesh(proxyGeo, proxyMat);
+        this._collisionProxy.position.z = -1.0; // offset to center on fuselage+tail
+        this._collisionProxy.userData.vehicle = null; // set in constructor after mesh assignment
+        this._attitudeGroup.add(this._collisionProxy);
 
         return group;
     }
@@ -449,6 +441,9 @@ export class Helicopter extends Vehicle {
     // ───── Update ─────
 
     update(dt) {
+        // Increment frame counter for matrix cache
+        this._frameCounter = (this._frameCounter || 0) + 1;
+
         // Crash animation takes priority
         if (this._crashing) {
             this._updateCrash(dt);
@@ -490,8 +485,8 @@ export class Helicopter extends Vehicle {
         // Altitude constraints — respect actual terrain height
         let floorY = this.minAltitude;
         if (this.getHeightAt) {
-            const groundY = this.getHeightAt(this.mesh.position.x, this.mesh.position.z);
-            floorY = Math.max(floorY, groundY + 1.1); // skid bottom at local y=-1.04
+            this._groundY = this.getHeightAt(this.mesh.position.x, this.mesh.position.z);
+            floorY = Math.max(floorY, this._groundY + 1.1); // skid bottom at local y=-1.04
         }
         if (this.mesh.position.y <= floorY) {
             this.mesh.position.y = floorY;
@@ -553,8 +548,10 @@ export class Helicopter extends Vehicle {
             this._tailRotorMesh.rotation.x = this._rotorAngle * 1.5;
         }
 
-        // Sync physics body
-        this._syncBody();
+        // Sync physics body (skip when idle — no occupants and on ground)
+        if (this.driver || this.passengers.length > 0 || this.altitude > this._groundY + 1) {
+            this._syncBody();
+        }
     }
 
     applyInput(input, dt) {
