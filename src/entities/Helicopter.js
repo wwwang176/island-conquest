@@ -86,7 +86,7 @@ export class Helicopter extends Vehicle {
         // Build mesh
         this.mesh = this._createMesh();
         this.mesh.userData.vehicle = this;
-        if (this._collisionProxy) this._collisionProxy.userData.vehicle = this;
+        this.mesh.userData.surfaceType = 'rock'; // spark particles on bullet hit
         scene.add(this.mesh);
 
         // Position
@@ -316,14 +316,9 @@ export class Helicopter extends Vehicle {
         this._tailRotorMesh.position.set(-0.22, 0.7, -4.9);
         this._attitudeGroup.add(this._tailRotorMesh);
 
-        // ── Raycast collision proxy (single box for fast hitscan) ──
-        // Covers fuselage + tail boom: ~10m long, 2m wide, 2m tall
-        const proxyGeo = new THREE.BoxGeometry(2.0, 2.0, 10.0);
-        const proxyMat = new THREE.MeshBasicMaterial({ visible: false });
-        this._collisionProxy = new THREE.Mesh(proxyGeo, proxyMat);
-        this._collisionProxy.position.z = -1.0; // offset to center on fuselage+tail
-        this._collisionProxy.userData.vehicle = null; // set in constructor after mesh assignment
-        this._attitudeGroup.add(this._collisionProxy);
+        // Exclude rotors from raycasting (thin spinning blades shouldn't block bullets)
+        this._rotorMesh.raycast = () => {};
+        this._tailRotorMesh.raycast = () => {};
 
         return group;
     }
@@ -406,17 +401,13 @@ export class Helicopter extends Vehicle {
             this.body.linearDamping = 0.1;
             this.body.angularDamping = 0.3;
             this.body.updateMassProperties();
-            // Initial velocity from flight
-            this.body.velocity.set(
-                this.velX,
-                this.velocityY || 0,
-                this.velZ
-            );
-            // Random tumble
+            // Carry over flight velocity
+            this.body.velocity.set(this.velX, this.velocityY || 0, this.velZ);
+            // Carry over angular velocity (yaw → Y axis) + random tumble
             this.body.angularVelocity.set(
-                (Math.random() - 0.5) * 6,
-                (Math.random() - 0.5) * 4,
-                (Math.random() - 0.5) * 6
+                (Math.random() - 0.5) * 3,
+                this._yawRate + (Math.random() - 0.5) * 2,
+                (Math.random() - 0.5) * 3
             );
         }
 

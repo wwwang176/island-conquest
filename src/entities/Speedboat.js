@@ -26,6 +26,7 @@ export class Speedboat extends Vehicle {
         // Build mesh
         this.mesh = this._createMesh();
         this.mesh.userData.vehicle = this;
+        this.mesh.userData.surfaceType = 'rock'; // spark particles on bullet hit
         scene.add(this.mesh);
 
         // Set initial position

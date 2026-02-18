@@ -260,12 +260,7 @@ export class VehicleManager {
             // Include alive vehicles and crashing helicopters (still collidable)
             const visible = v.alive || (v._crashing && v.mesh && v.mesh.visible);
             if (!visible || !v.mesh) continue;
-            // Use collision proxy for helicopters (single box vs ~7 children)
-            if (v._collisionProxy) {
-                meshes.push(v._collisionProxy);
-            } else {
-                meshes.push(v.mesh);
-            }
+            meshes.push(v.mesh);
         }
         return meshes;
     }

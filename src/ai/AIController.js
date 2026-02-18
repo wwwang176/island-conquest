@@ -85,6 +85,11 @@ export class AIController {
         this.teamIntel = teamIntel || null;
         this.eventBus = eventBus || null;
 
+        // Per-frame references (set by update(), used by updateContinuous())
+        this.enemies = [];
+        this.allies = [];
+        this.collidables = [];
+
         // Squad (set externally by AIManager)
         this.squad = null;
         this.flankSide = 1;
@@ -756,7 +761,7 @@ export class AIController {
                     const p = this.personality;
                     const distFactor = p.nearReaction + (p.farReaction - p.nearReaction) * t;
                     // Exposure penalty: head-only target is harder to identify
-                    const losFactor = losLevel === 2 ? 1.4 : 1.0;
+                    const losFactor = this._targetLOSLevel === 2 ? 1.4 : 1.0;
                     this.reactionTimer = p.reactionTime / 1000 * distFactor * losFactor +
                         (Math.random() * 0.15);
                     // Initial aim offset — smaller at close range (target fills FOV)
