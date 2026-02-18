@@ -277,16 +277,7 @@ export class AIManager {
 
         // Add player to appropriate enemy list
         const playerAsEnemy = this.player && this.player.alive && this.player.team
-            ? {
-                alive: this.player.alive,
-                hp: this.player.hp,
-                maxHP: this.player.maxHP,
-                mesh: this.player.mesh,
-                body: this.player.body,
-                getPosition: () => this.player.getPosition(),
-                takeDamage: (amt, from, hitY) => this.player.takeDamage(amt, from, hitY),
-            }
-            : null;
+            ? this.player : null;
 
         // Build enemy/ally lists (reuse pre-allocated buffers)
         const teamAEnemies = this._teamAEnemies;
