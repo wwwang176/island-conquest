@@ -1546,6 +1546,11 @@ export class AIController {
         // Priority: if a squad mate is already in a helicopter, join them
         const squadHeli = this._findSquadHelicopter();
         if (squadHeli) {
+            // Skip if helicopter is already airborne (too high above ground to board)
+            const hPos = squadHeli.mesh.position;
+            const hGround = this.getHeightAt(hPos.x, hPos.z);
+            if (hPos.y - hGround > squadHeli.enterRadius) return false;
+
             this._vehicleBoardTarget = squadHeli;
             this._vehicleMoveTarget = this.targetFlag ? this.targetFlag.position.clone() : null;
             return true;
@@ -1581,6 +1586,14 @@ export class AIController {
         if ((bt.occupantCount || (bt.driver ? 1 : 0)) >= maxOcc) {
             this._vehicleBoardTarget = null;
             return BTState.FAILURE;
+        }
+        // Abort if helicopter took off while we were walking toward it
+        if (bt.type === 'helicopter') {
+            const bPos = bt.mesh.position;
+            if (bPos.y - this.getHeightAt(bPos.x, bPos.z) > bt.enterRadius) {
+                this._vehicleBoardTarget = null;
+                return BTState.FAILURE;
+            }
         }
 
         const myPos = this.soldier.getPosition();
