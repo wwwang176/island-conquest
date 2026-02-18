@@ -46,11 +46,11 @@ export function generateFortifications(island, flagPositions) {
         for (const g of battlementGeos) g.dispose();
         const mesh = new THREE.Mesh(
             merged,
-            new THREE.MeshLambertMaterial({ color: 0x999999, flatShading: true })
+            new THREE.MeshLambertMaterial({ color: 0xB5A278, flatShading: true })
         );
         mesh.castShadow = true;
         mesh.receiveShadow = true;
-        mesh.userData.surfaceType = 'rock';
+        mesh.userData.surfaceType = 'sand';
         island.scene.add(mesh);
         island.collidables.push(mesh);
     }
@@ -62,7 +62,7 @@ function _buildBattlement(island, battlementGeos, cx, cz, groundY, faceAngle, fl
     // A battlement segment: 3 merlons with 2 gaps
     const merlonW = 0.8;
     const merlonH = 1.2;
-    const merlonD = 0.4;
+    const merlonD = 0.8;
     const gapW = 0.3;
     const merlonCount = 3;
 
