@@ -58,8 +58,9 @@ function computeThreat(enemies) {
 
                 if (!hasLOS(eCol, eRow, enemyEyeY, c, r)) continue;
 
-                const dist = Math.sqrt(dist2) * cellSize;
-                threat[r * cols + c] += 1 / (1 + dist * dist * 0.001);
+                const dy = enemyEyeY - (heightGrid[r * cols + c] + EYE_HEIGHT);
+                const dist3Dsq = dist2 * cellSize * cellSize + dy * dy;
+                threat[r * cols + c] += 1 / (1 + dist3Dsq * 0.001);
             }
         }
     }
