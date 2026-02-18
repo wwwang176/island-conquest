@@ -256,10 +256,6 @@ export class AIManager {
         this.intelA.update(dt);
         this.intelB.update(dt);
 
-        // Update threat maps: teamA's threats come from teamB soldiers and vice versa
-        this.threatMapA.update(dt, allB);
-        this.threatMapB.update(dt, allA);
-
         // Calculate flag deficit per team (positive = behind)
         let aFlags = 0, bFlags = 0;
         for (const f of this.flags) {
@@ -293,6 +289,10 @@ export class AIManager {
         } else if (playerAsEnemy && this.player.team === 'teamB') {
             teamAEnemies.push(playerAsEnemy);
         }
+
+        // Update threat maps: teamA's threats come from teamB soldiers (+ player) and vice versa
+        this.threatMapA.update(dt, teamAEnemies);
+        this.threatMapB.update(dt, teamBEnemies);
 
         // Staggered AI controller updates: update 8 AIs per frame (BT + movement)
         const updatesPerFrame = 8;
