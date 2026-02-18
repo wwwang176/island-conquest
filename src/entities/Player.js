@@ -333,7 +333,7 @@ export class Player {
 
     }
 
-    _handleShooting(dt) {
+    _handleShooting(dt, canFire = true) {
         this.weapon.triggerHeld = this.input.mouseDown;
 
         // Block fire & scope during grenade throw
@@ -353,7 +353,7 @@ export class Player {
             this.weapon.setScoped(false);
         }
 
-        if (this.input.mouseDown) {
+        if (canFire && this.input.mouseDown) {
             _shotOrigin.copy(this.camera.position);
             const origin = _shotOrigin;
             const dir = this.getAimDirection();
@@ -504,8 +504,8 @@ export class Player {
                 const cross = Math.sin(rY) * aimDir.z - Math.cos(rY) * aimDir.x;
                 sideBlocked = isLeftSeat ? cross < 0 : cross > 0;
             }
-            if (!isPilot && !sideBlocked) {
-                this._handleShooting(dt);
+            if (!isPilot) {
+                this._handleShooting(dt, !sideBlocked);
             }
         }
         this._syncCameraToVehicle();
