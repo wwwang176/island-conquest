@@ -208,6 +208,17 @@ export class Game {
         for (let i = 0; i < flagPositions.length; i++) {
             this.flags.push(new FlagPoint(this.scene, flagPositions[i], names[i], i, (x, z) => this.island.getHeightAt(x, z)));
         }
+
+        // Pre-capture base flags so spawn anchors exist from the start
+        const first = this.flags[0];
+        first.owner = 'teamA';
+        first.captureProgress = 1;
+        first.capturingTeam = 'teamA';
+
+        const last = this.flags[this.flags.length - 1];
+        last.owner = 'teamB';
+        last.captureProgress = 1;
+        last.capturingTeam = 'teamB';
     }
 
     async _initNavGrid() {
