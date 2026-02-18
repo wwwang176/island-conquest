@@ -43,6 +43,8 @@ export class VehicleManager {
     }
 
     _spawnTeamVehicles(team, basePos) {
+        const baseFlag = team === 'teamA' ? this.flags[0] : this.flags[this.flags.length - 1];
+
         // Speedboats: find water near the base flag
         for (let i = 0; i < 2; i++) {
             const angle = (team === 'teamA' ? Math.PI * 0.7 : Math.PI * 0.3) + (i - 0.5) * 0.6;
@@ -53,6 +55,7 @@ export class VehicleManager {
                 boat.rotationY = team === 'teamA' ? -Math.PI * 0.3 : Math.PI * 0.3;
                 boat.spawnRotationY = boat.rotationY;
                 boat.mesh.rotation.y = boat.rotationY;
+                boat.getHeightAt = this.getHeightAt;
                 this.vehicles.push(boat);
             }
         }
@@ -65,6 +68,7 @@ export class VehicleManager {
             heli.spawnRotationY = heli.rotationY;
             heli.mesh.rotation.y = heli.rotationY;
             heli.getHeightAt = this.getHeightAt;
+            heli.spawnFlag = baseFlag;
             heli.initPhysicsBody(this.physics);
             this.vehicles.push(heli);
         }

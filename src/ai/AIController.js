@@ -189,6 +189,7 @@ export class AIController {
         this._pathCooldown = Math.random() * 0.5; // stagger initial A* across COMs
         this._lastRiskLevel = 0;     // for detecting risk spikes (under attack)
         this._noPathFound = false;   // true when A* fails — blocks direct movement
+        this._hitStaggerTimer = 0;   // freezes movement briefly when hit
 
         // Tactical state
         this.riskLevel = 0;
@@ -448,6 +449,10 @@ export class AIController {
      */
     onDamaged() {
         this.btTimer = this.btInterval; // triggers BT on next update()
+        // Stagger: freeze movement briefly (skip if already in vehicle)
+        if (!this.vehicle) {
+            this._hitStaggerTimer = 0.25 + Math.random() * 0.1; // 0.25-0.35s
+        }
         // Clear current path so cover-seek recalculates from current position
         if (!this.seekingCover) {
             this.currentPath = [];
@@ -634,23 +639,25 @@ export class AIController {
             }
             // Helicopter passengers (not pilot) can aim and shoot — only on their side
             if (this.vehicle.type === 'helicopter' && this.vehicle.driver !== this.soldier) {
+                // Always tick shooting systems (reload, bolt cycle, scope, spread)
+                this._updateShooting(dt);
+                // Only aim and fire if target is on this passenger's side
                 let canFire = false;
                 if (this.targetEnemy && this.targetEnemy.alive) {
-                    // Check if target is on this passenger's side
                     const slotIdx = this.vehicle.passengers.indexOf(this.soldier);
                     const isLeftSeat = slotIdx >= 0 && slotIdx < 2; // slots 0,1 = left
                     const ep = this.targetEnemy.getPosition();
                     const hx = this.vehicle.mesh.position.x;
                     const hz = this.vehicle.mesh.position.z;
                     const rY = this.vehicle.rotationY;
-                    // Cross product: forward × toTarget → positive = left, negative = right
                     const cross = Math.sin(rY) * (ep.z - hz) - Math.cos(rY) * (ep.x - hx);
                     canFire = isLeftSeat ? cross > 0 : cross < 0;
                 }
                 if (canFire) {
                     this.hasReacted = true;
                     this._updateAiming(dt);
-                    this._updateShooting(dt);
+                } else {
+                    this.hasReacted = false;
                 }
             }
             return;
@@ -893,6 +900,13 @@ export class AIController {
 
     _shouldThrowGrenade() {
         if (!this.grenadeManager) return false;
+
+        // Don't throw grenades at airborne targets (helicopter passengers — can't reach)
+        if (!this.vehicle && this.targetEnemy && this.targetEnemy.alive) {
+            const ePos = this.targetEnemy.getPosition();
+            const groundY = this.getHeightAt(ePos.x, ePos.z);
+            if (ePos.y - groundY > 5) return false;
+        }
 
         // Safety: don't throw if nearest enemy is too close (blast would hit self)
         if (this.targetEnemy && this.targetEnemy.alive && this._enemyDist() < 8) return false;
@@ -1948,6 +1962,17 @@ export class AIController {
         const myPos = this.soldier.getPosition();
         const groundY = this.getHeightAt(myPos.x, myPos.z);
 
+        // Hit stagger: freeze in place for a short duration after being hit
+        if (this._hitStaggerTimer > 0) {
+            this._hitStaggerTimer -= dt;
+            // Still snap to ground and decelerate inertia
+            if (!this.isJumping) body.position.y = groundY + 0.05;
+            this._velX *= Math.max(0, 1 - 15 * dt);
+            this._velZ *= Math.max(0, 1 - 15 * dt);
+            this.lastPos.copy(myPos);
+            return;
+        }
+
         // Handle jumping (manual parabola)
         if (this.isJumping) {
             this.jumpVelY -= 9.8 * dt; // gravity
@@ -2648,6 +2673,7 @@ export class AIController {
         this.crossfirePos = null;
         this._reflexDodgeTimer = 0;
         this._prevTargetedByCount = 0;
+        this._hitStaggerTimer = 0;
         if (this._tacLabel) this._tacLabel.visible = false;
         this._tacLabelText = '';
         this._previouslyVisible.clear();

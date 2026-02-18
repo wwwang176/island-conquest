@@ -538,17 +538,17 @@ export class Player {
 
         if (v.type === 'helicopter') {
             if (v.driver === this) {
-                // Pilot: cockpit position
-                v.getWorldSeatPos(_seatPos, HELI_PILOT_OFFSET);
+                // Pilot: cockpit position (yaw-only to avoid pitch/roll jitter)
+                v.getYawSeatPos(_seatPos, HELI_PILOT_OFFSET);
                 camX = _seatPos.x;
                 camZ = _seatPos.z;
                 camY = _seatPos.y + 1.6; // eye height above seat
             } else {
-                // Passenger: door slot
+                // Passenger: door slot (yaw-only to avoid pitch/roll jitter)
                 const slotIdx = v.passengers ? v.passengers.indexOf(this) : -1;
                 if (slotIdx >= 0 && slotIdx < HELI_PASSENGER_SLOTS.length) {
                     const slot = HELI_PASSENGER_SLOTS[slotIdx];
-                    v.getWorldSeatPos(_seatPos, slot);
+                    v.getYawSeatPos(_seatPos, slot);
                     camX = _seatPos.x;
                     camZ = _seatPos.z;
                     camY = _seatPos.y + 1.6; // eye height above slot

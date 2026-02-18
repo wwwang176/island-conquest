@@ -3,6 +3,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Vehicle } from './Vehicle.js';
 
 const WATER_Y = -0.3;
+const MAP_HALF_W = 150;
+const MAP_HALF_D = 60;
 
 /**
  * Speedboat vehicle — water surface transport.
@@ -12,11 +14,14 @@ export class Speedboat extends Vehicle {
     constructor(scene, team, spawnPosition) {
         super(scene, team, 'speedboat', spawnPosition);
 
-        this.maxSpeed = 15;     // m/s
-        this.acceleration = 8;  // m/s²
+        this.maxSpeed = 11;     // m/s
+        this.acceleration = 10; // m/s²
         this.turnSpeed = 1.8;   // rad/s
-        this.drag = 2.5;        // deceleration coefficient
+        this.drag = 2.0;        // deceleration coefficient
         this.enterRadius = 5;   // wider radius so shore units can board
+
+        // getHeightAt — set by VehicleManager after construction
+        this.getHeightAt = null;
 
         // Build mesh
         this.mesh = this._createMesh();
@@ -104,6 +109,31 @@ export class Speedboat extends Vehicle {
         if (Math.abs(this.speed) > 0.01) {
             this.mesh.position.x += Math.sin(this.rotationY) * this.speed * dt;
             this.mesh.position.z += Math.cos(this.rotationY) * this.speed * dt;
+        }
+
+        // Terrain collision — stop at shoreline
+        if (this.getHeightAt && Math.abs(this.speed) > 0.1) {
+            const h = this.getHeightAt(this.mesh.position.x, this.mesh.position.z);
+            if (h > -0.5) {
+                // Push back to previous position and stop
+                this.mesh.position.x -= Math.sin(this.rotationY) * this.speed * dt;
+                this.mesh.position.z -= Math.cos(this.rotationY) * this.speed * dt;
+                this.speed = 0;
+            }
+        }
+
+        // Map boundary — reflect heading off walls
+        const px = this.mesh.position.x;
+        const pz = this.mesh.position.z;
+        if (px < -MAP_HALF_W || px > MAP_HALF_W) {
+            this.mesh.position.x = Math.max(-MAP_HALF_W, Math.min(MAP_HALF_W, px));
+            this.rotationY = Math.PI - this.rotationY; // reflect across Z axis
+            this.speed *= 0.6;
+        }
+        if (pz < -MAP_HALF_D || pz > MAP_HALF_D) {
+            this.mesh.position.z = Math.max(-MAP_HALF_D, Math.min(MAP_HALF_D, pz));
+            this.rotationY = -this.rotationY; // reflect across X axis
+            this.speed *= 0.6;
         }
 
         // Constrain to water surface

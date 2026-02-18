@@ -123,7 +123,7 @@ export class ThreatMap {
         for (const enemy of enemies) {
             if (!enemy.alive) continue;
             const pos = enemy.getPosition();
-            enemyData.push({ x: pos.x, z: pos.z });
+            enemyData.push({ x: pos.x, y: pos.y, z: pos.z });
         }
 
         this._workerBusy = true;

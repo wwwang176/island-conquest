@@ -37,7 +37,10 @@ function computeThreat(enemies) {
     for (const enemy of enemies) {
         const eCol = Math.max(0, Math.min(Math.floor((enemy.x - originX) / cellSize), cols - 1));
         const eRow = Math.max(0, Math.min(Math.floor((enemy.z - originZ) / cellSize), rows - 1));
-        const enemyEyeY = heightGrid[eRow * cols + eCol] + EYE_HEIGHT;
+        // Use actual Y position if above terrain (e.g. helicopter passengers)
+        const terrainEyeY = heightGrid[eRow * cols + eCol] + EYE_HEIGHT;
+        const actualEyeY = (enemy.y !== undefined) ? enemy.y + EYE_HEIGHT : terrainEyeY;
+        const enemyEyeY = Math.max(terrainEyeY, actualEyeY);
 
         const radius = 160;
         const radius2 = radius * radius;

@@ -69,6 +69,9 @@ export class Helicopter extends Vehicle {
         // getHeightAt — set by VehicleManager after construction
         this.getHeightAt = null;
 
+        // Spawn flag — set by VehicleManager; used to switch team on respawn
+        this.spawnFlag = null;
+
         // Physics collision body — created by initPhysicsBody()
         this.body = null;
         this._physics = null;
@@ -118,7 +121,8 @@ export class Helicopter extends Vehicle {
     }
 
     /**
-     * Transform a local-space offset to world position using the mesh's full rotation.
+     * Transform a local-space offset to world position using the mesh's full rotation
+     * (yaw + pitch + roll). Used for AI soldier positioning.
      * @param {THREE.Vector3} out - output vector (modified in place)
      * @param {{x:number,y:number,z:number}} offset - local offset
      */
@@ -126,6 +130,21 @@ export class Helicopter extends Vehicle {
         out.set(offset.x, offset.y, offset.z);
         this._attitudeGroup.updateWorldMatrix(true, false);
         this._attitudeGroup.localToWorld(out);
+    }
+
+    /**
+     * Transform a local-space offset using yaw-only rotation (ignores pitch/roll).
+     * Used for player camera to avoid jitter from attitude changes.
+     * @param {THREE.Vector3} out - output vector (modified in place)
+     * @param {{x:number,y:number,z:number}} offset - local offset
+     */
+    getYawSeatPos(out, offset) {
+        const c = Math.cos(this.rotationY);
+        const s = Math.sin(this.rotationY);
+        const vp = this.mesh.position;
+        out.x = vp.x + offset.x * c + offset.z * s;
+        out.y = vp.y + offset.y;
+        out.z = vp.z - offset.x * s + offset.z * c;
     }
 
     /** Sync CANNON body position/rotation to mesh. */
@@ -221,7 +240,8 @@ export class Helicopter extends Vehicle {
 
         // Team stripe on tail boom
         const stripeGeo = new THREE.BoxGeometry(0.36, 0.36, 0.8);
-        const stripe = new THREE.Mesh(stripeGeo, mat(teamColor));
+        this._stripeMat = mat(teamColor);
+        const stripe = new THREE.Mesh(stripeGeo, this._stripeMat);
         stripe.position.set(0, 0.1, 4.0);
         hull.add(stripe);
 
@@ -268,9 +288,9 @@ export class Helicopter extends Vehicle {
         hull.add(mast);
 
         // ── Tail rotor ──
-        const trGeo = new THREE.BoxGeometry(0.04, 1.2, 0.12);
+        const trGeo = new THREE.BoxGeometry(0.04, 1.8, 0.15);
         this._tailRotorMesh = new THREE.Mesh(trGeo, mat(DK, { transparent: true, opacity: 0.7 }));
-        this._tailRotorMesh.position.set(0.22, 0.6, 4.9);
+        this._tailRotorMesh.position.set(0.22, 0.7, 4.9);
         hull.add(this._tailRotorMesh);
 
         return group;
@@ -601,6 +621,16 @@ export class Helicopter extends Vehicle {
     }
 
     respawn() {
+        // Switch team based on spawn flag ownership
+        if (this.spawnFlag && this.spawnFlag.owner !== 'neutral' && this.spawnFlag.owner !== this.team) {
+            this.team = this.spawnFlag.owner;
+            // Update team stripe color
+            if (this._stripeMat) {
+                const teamColor = this.team === 'teamA' ? 0x3366cc : 0xcc3333;
+                this._stripeMat.color.setHex(teamColor);
+            }
+        }
+
         this.alive = true;
         this.hp = this.maxHP;
         this.speed = 0;
