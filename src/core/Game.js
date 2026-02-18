@@ -400,14 +400,15 @@ export class Game {
         const mult = WeaponDefs[this.player.selectedWeaponId].moveSpeedMult || 1.0;
         this.player.moveSpeed = 6 * mult;
 
-        // Spawn at team flag
-        const spawnFlag = team === 'teamA' ? this.flags[0] : this.flags[this.flags.length - 1];
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 5 + Math.random() * 5;
-        const sx = spawnFlag.position.x + Math.cos(angle) * dist;
-        const sz = spawnFlag.position.z + Math.sin(angle) * dist;
-        const sy = this.island.getHeightAt(sx, sz) + 2;
-        this.player.body.position.set(sx, sy, sz);
+        // Spawn at a safe position (owned flag + walkability check)
+        const spawnPos = this.aiManager.findSafeSpawn(team);
+        if (spawnPos) {
+            this.player.body.position.set(spawnPos.x, spawnPos.y + 1, spawnPos.z);
+        } else {
+            const spawnFlag = team === 'teamA' ? this.flags[0] : this.flags[this.flags.length - 1];
+            const sy = this.island.getHeightAt(spawnFlag.position.x, spawnFlag.position.z) + 2;
+            this.player.body.position.set(spawnFlag.position.x, sy, spawnFlag.position.z);
+        }
         this.player.body.velocity.set(0, 0, 0);
         this.player._prevSpace = true; // suppress jump from Space used to join
 
