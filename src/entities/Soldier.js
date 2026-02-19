@@ -537,6 +537,8 @@ export class Soldier {
                 ).normalize();
             }
 
+            // Hide muzzle flash before cloning so the dropped gun doesn't keep it
+            if (this._muzzleFlash) this._muzzleFlash.visible = false;
             this.droppedGunManager.spawn(this.gunMesh, worldPos, worldQuat, vel, impulseDir);
             this.gunMesh.visible = false;
         }
