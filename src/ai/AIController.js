@@ -16,6 +16,8 @@ const _origin = new THREE.Vector3();
 const _target = new THREE.Vector3();
 const _strafeDir = new THREE.Vector3();
 const _tmpVec = new THREE.Vector3();
+const _tmpQuat = new THREE.Quaternion();
+const _aimDirVec = new THREE.Vector3();
 const _targetMeshes = [];
 const _fireCollidables = [];
 
@@ -617,13 +619,30 @@ export class AIController {
                             if (this.soldier.lowerBody) {
                                 this.soldier.lowerBody.rotation.y = slot.facingOffset;
                             }
-                            // Upper body: convert world aim to helicopter-relative
+                            // Convert world-space aim to helicopter-local space
+                            // (accounts for yaw + pitch + roll simultaneously)
                             if (this.soldier.upperBody) {
-                                this.soldier.upperBody.rotation.y -= rotY;
-                            }
-                            // Compensate shoulder pitch for helicopter tilt
-                            if (this.soldier.shoulderPivot) {
-                                this.soldier.shoulderPivot.rotation.x -= heli._visualPitch;
+                                const worldYaw = this.soldier.upperBody.rotation.y;
+                                const worldPitch = this._smoothAimPitch || 0;
+                                const cp = Math.cos(worldPitch);
+                                _aimDirVec.set(
+                                    -Math.sin(worldYaw) * cp,
+                                    Math.sin(worldPitch),
+                                    -Math.cos(worldYaw) * cp
+                                );
+                                _tmpQuat.copy(heli._cachedWorldQuat).invert();
+                                _aimDirVec.applyQuaternion(_tmpQuat);
+                                this.soldier.upperBody.rotation.y =
+                                    Math.atan2(-_aimDirVec.x, -_aimDirVec.z);
+                                if (this.soldier.shoulderPivot) {
+                                    const hd = Math.sqrt(
+                                        _aimDirVec.x * _aimDirVec.x +
+                                        _aimDirVec.z * _aimDirVec.z
+                                    );
+                                    this.soldier.shoulderPivot.rotation.x =
+                                        Math.atan2(_aimDirVec.y, hd) +
+                                        (this.soldier._gunReloadTilt || 0);
+                                }
                             }
                             // Legs forward 45° (sitting pose)
                             if (this.soldier.leftLeg) this.soldier.leftLeg.rotation.x = Math.PI / 4;
