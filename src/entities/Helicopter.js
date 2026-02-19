@@ -45,7 +45,7 @@ export class Helicopter extends Vehicle {
         this.maxVSpeed = 8;     // vertical m/s
         this.hAccel = 14;       // horizontal acceleration
         this.vAccel = 14;       // vertical acceleration
-        this.hDrag = 3;         // horizontal drag
+        this.hDrag = 2.2;       // horizontal drag
         this.vDrag = 4;         // vertical drag
         this.turnSpeed = 2.2;   // rad/s
         this.minAltitude = WATER_Y + 1;
@@ -62,6 +62,8 @@ export class Helicopter extends Vehicle {
         this._visualPitch = 0;   // rotation.x — nose down/up
         this._visualRoll = 0;    // rotation.z — bank left/right
         this._yawRate = 0;       // smoothed yaw angular velocity (rad/s)
+        this._inputThrust = 0;   // cached for visual pitch anticipation
+        this._inputBrake = 0;
 
         // Crash state
         this._crashing = false;
@@ -554,7 +556,9 @@ export class Helicopter extends Vehicle {
         // ── Visual attitude ──
         // Pitch: based on forward speed component (dot product with heading)
         const pitchMax = 0.90;  // ~52°
-        const targetPitch = (this.speed / this.maxHSpeed) * pitchMax
+        const speedPitch = (this.speed / this.maxHSpeed) * pitchMax * 0.7;
+        const inputPitch = (this._inputThrust - this._inputBrake) * pitchMax * 0.3;
+        const targetPitch = speedPitch + inputPitch
             - (this.velocityY / this.maxVSpeed) * 0.08; // slight nose-up on ascend
 
         // Roll: bank from yaw rate + lateral drift
@@ -603,6 +607,10 @@ export class Helicopter extends Vehicle {
 
         const fwdX = Math.sin(this.rotationY);
         const fwdZ = Math.cos(this.rotationY);
+
+        // Cache input for visual pitch anticipation
+        this._inputThrust = input.thrust || 0;
+        this._inputBrake = input.brake || 0;
 
         // Thrust: add force along current heading
         if (input.thrust > 0) {
