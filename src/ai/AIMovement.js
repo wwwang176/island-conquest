@@ -23,56 +23,59 @@ export function validateMoveTarget(ctx) {
     }
 }
 
-/** Request A* path from current position to moveTarget. */
+/** Request A* path from current position to moveTarget (async via Worker). */
 export function requestPath(ctx, forceAStar = false) {
     if (!ctx.navGrid || !ctx.moveTarget) return;
 
     if (!forceAStar) {
         if (ctx._pathCooldown > 0) return;
     }
+    if (ctx._waitingForPath) return; // prevent duplicate requests
 
     const myPos = ctx.soldier.getPosition();
 
     // Pass threat grid directly (avoid per-neighbour callback overhead)
     const tm = ctx.threatMap;
-    const threatGrid = tm ? tm.threat : null;
-    const threatCols = tm ? tm.cols : 0;
-    const path = ctx.navGrid.findPath(
+
+    ctx._waitingForPath = true;
+    ctx._pathCooldown = 99; // lock until callback sets real cooldown
+
+    ctx.navGrid.findPathAsync(
         myPos.x, myPos.z, ctx.moveTarget.x, ctx.moveTarget.z,
-        threatGrid, threatCols,
-    );
+        tm ? tm.threat : null, tm ? tm.cols : 0,
+        (path) => {
+            ctx._waitingForPath = false;
 
-    // Adaptive cooldown: 0.5s near obstacles/stuck, 1.5s open terrain
-    // Jitter ±0.2s to spread A* calls across frames
-    const jitter = (Math.random() - 0.5) * 0.4;
-    let cooldown = 1.5;
-    if (ctx.stuckTimer > 0) {
-        cooldown = 0.5;
-    } else if (path && path.length > 0) {
-        const ng = ctx.navGrid;
-        for (let i = 0, len = Math.min(path.length, 6); i < len; i++) {
-            const g = ng.worldToGrid(path[i].x, path[i].z);
-            const idx = g.row * ng.cols + g.col;
-            if (ng.proxCost[idx] > 1) { cooldown = 0.5; break; }
+            // Adaptive cooldown: 0.5s near obstacles/stuck, 1.5s open terrain
+            // Jitter ±0.2s to spread A* calls across frames
+            const jitter = (Math.random() - 0.5) * 0.4;
+            let cooldown = 1.5;
+
+            if (path === null) {
+                ctx.currentPath = [];
+                ctx.pathIndex = 0;
+                ctx._pathCooldown = 0.5 + jitter;
+                ctx._noPathFound = true;
+            } else {
+                // Near obstacles → shorten cooldown
+                if (path.length > 0 && ctx.stuckTimer <= 0) {
+                    const ng = ctx.navGrid;
+                    for (let i = 0, len = Math.min(path.length, 6); i < len; i++) {
+                        const g = ng.worldToGrid(path[i].x, path[i].z);
+                        if (ng.proxCost[g.row * ng.cols + g.col] > 1) {
+                            cooldown = 0.5; break;
+                        }
+                    }
+                }
+                if (ctx.stuckTimer > 0) cooldown = 0.5;
+
+                ctx.currentPath = path;
+                ctx.pathIndex = 0;
+                ctx._pathCooldown = cooldown + jitter;
+                ctx._noPathFound = false;
+            }
         }
-    }
-
-    if (path === null) {
-        ctx.currentPath = [];
-        ctx.pathIndex = 0;
-        ctx._pathCooldown = 0.5 + jitter;
-        ctx._noPathFound = true;
-    } else if (path.length === 0) {
-        ctx.currentPath = [];
-        ctx.pathIndex = 0;
-        ctx._pathCooldown = cooldown + jitter;
-        ctx._noPathFound = false;
-    } else {
-        ctx.currentPath = path;
-        ctx.pathIndex = 0;
-        ctx._pathCooldown = cooldown + jitter;
-        ctx._noPathFound = false;
-    }
+    );
 }
 
 /** Main movement update — kinematic terrain-snapping + inertia + A* path following. */

@@ -368,6 +368,44 @@ export class NavGrid {
         return top;
     }
 
+    // ───── Async Pathfinding (Web Worker) ─────
+
+    initPathWorker() {
+        this._pathWorker = new Worker('src/workers/pathfind-worker.js');
+        this._nextReqId = 0;
+        this._pendingCallbacks = new Map();
+        this._pathWorker.onmessage = (e) => {
+            const cb = this._pendingCallbacks.get(e.data.id);
+            if (cb) {
+                this._pendingCallbacks.delete(e.data.id);
+                cb(e.data.path);
+            }
+        };
+        this._pathWorker.postMessage({
+            type: 'init',
+            grid: this.grid,
+            proxCost: this.proxCost,
+            cols: this.cols,
+            rows: this.rows,
+            cellSize: this.cellSize,
+            originX: this.originX,
+            originZ: this.originZ,
+        });
+    }
+
+    findPathAsync(startX, startZ, goalX, goalZ, threatGrid, threatCols, callback) {
+        const id = this._nextReqId++;
+        this._pendingCallbacks.set(id, callback);
+        this._pathWorker.postMessage({
+            type: 'findPath',
+            id,
+            startX, startZ,
+            goalX, goalZ,
+            threatGrid: threatGrid ? new Float32Array(threatGrid) : null,
+            threatCols,
+        });
+    }
+
     // ───── Debug Visualization ─────
 
     /**

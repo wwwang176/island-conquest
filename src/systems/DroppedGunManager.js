@@ -34,13 +34,9 @@ export class DroppedGunManager {
         clone.position.copy(worldPos);
         clone.quaternion.copy(worldQuat);
 
-        // Measure bounding box for physics shape
-        const box = new THREE.Box3().setFromObject(clone);
-        const size = new THREE.Vector3();
-        box.getSize(size);
-        const hx = Math.max(size.x, 0.05) / 2;
-        const hy = Math.min(Math.max(size.y, 0.05) / 2, 0.03);
-        const hz = Math.max(size.z, 0.05) / 2;
+        // All weapon meshes are similar size — use fixed half-extents
+        // to avoid expensive Box3.setFromObject traversal
+        const hx = 0.15, hy = 0.03, hz = 0.25;
 
         // Physics body
         const body = new CANNON.Body({

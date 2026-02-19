@@ -174,6 +174,9 @@ export class Game {
             }
         });
 
+        // Cached rAF callback (avoids creating a new arrow function per frame)
+        this._boundAnimate = () => this._animate();
+
         // Resize
         window.addEventListener('resize', () => this._onResize());
 
@@ -618,7 +621,7 @@ export class Game {
     // ───── Game Loop ─────
 
     _animate() {
-        requestAnimationFrame(() => this._animate());
+        requestAnimationFrame(this._boundAnimate);
         this.stats.begin();
         if (this.paused) { this.stats.end(); return; }
 

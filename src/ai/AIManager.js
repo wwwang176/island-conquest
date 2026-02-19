@@ -112,6 +112,8 @@ export class AIManager {
         this.threatMapA.navGrid = grid;
         this.threatMapB.navGrid = grid;
         this._navGrid = grid;
+        // Initialize A* pathfinding worker
+        grid.initPathWorker();
         // Build height grid with per-obstacle bounding boxes for accurate LOS
         this.threatMapA.buildHeightGrid(this.getHeightAt, obstacleBounds);
         // Share the same height data but init a separate worker for team B

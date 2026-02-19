@@ -4,6 +4,9 @@ import { Soldier } from './Soldier.js';
 import { applyFalloff } from '../shared/DamageFalloff.js';
 
 const _tracerOrigin = new THREE.Vector3();
+const _spreadDir = new THREE.Vector3();
+const _euler = new THREE.Euler();
+const _fireRaycaster = new THREE.Raycaster();
 
 /**
  * Assault Rifle weapon system.
@@ -138,11 +141,12 @@ export class Weapon {
         this.fireCooldown += this.fireInterval;
 
         // Apply spread
-        const spreadDir = direction.clone();
+        _spreadDir.copy(direction);
         const spreadAngleX = (Math.random() - 0.5) * 2 * this.currentSpread;
         const spreadAngleY = (Math.random() - 0.5) * 2 * this.currentSpread;
-        const euler = new THREE.Euler(spreadAngleY, spreadAngleX, 0, 'YXZ');
-        spreadDir.applyEuler(euler);
+        _euler.set(spreadAngleY, spreadAngleX, 0, 'YXZ');
+        _spreadDir.applyEuler(_euler);
+        const spreadDir = _spreadDir;
 
         // Increase spread (recoil) — negative spreadIncreasePerShot means sustained fire tightens
         if (this.spreadIncreasePerShot >= 0) {
@@ -167,8 +171,10 @@ export class Weapon {
         }
 
         // Hitscan raycast
-        const raycaster = new THREE.Raycaster(origin, spreadDir, 0, this.maxRange);
-        const intersections = raycaster.intersectObjects(targets, true);
+        _fireRaycaster.set(origin, spreadDir);
+        _fireRaycaster.near = 0;
+        _fireRaycaster.far = this.maxRange;
+        const intersections = _fireRaycaster.intersectObjects(targets, true);
 
         if (intersections.length > 0) {
             const hit = intersections[0];

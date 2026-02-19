@@ -324,14 +324,24 @@ export class Soldier {
         return new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ color: 0x333333 }));
     }
 
+    static _gunMeshCache = {};
+
     _createGunMesh(weaponId) {
         if (this.gunMesh) {
             this._gunParent.remove(this.gunMesh);
-            if (this.gunMesh.geometry) this.gunMesh.geometry.dispose();
-            if (this.gunMesh.material) this.gunMesh.material.dispose();
+            // Don't dispose cached prototype geometry/material
+            if (this.gunMesh.geometry && !Soldier._gunMeshCache[weaponId]) {
+                this.gunMesh.geometry.dispose();
+            }
+            if (this.gunMesh.material && !Soldier._gunMeshCache[weaponId]) {
+                this.gunMesh.material.dispose();
+            }
         }
 
-        const gun = Soldier.buildGunMesh(weaponId);
+        if (!Soldier._gunMeshCache[weaponId]) {
+            Soldier._gunMeshCache[weaponId] = Soldier.buildGunMesh(weaponId);
+        }
+        const gun = Soldier._gunMeshCache[weaponId].clone();
         gun.position.set(0.05, -0.05, -0.45);
         gun.castShadow = false;
 

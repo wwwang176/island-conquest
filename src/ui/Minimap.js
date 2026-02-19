@@ -14,6 +14,7 @@ export class Minimap {
         this.enemyFlashes = new Map();
         this.flashDuration = 1.5; // seconds enemy dot stays visible after firing
 
+        this._mapOut = [0, 0]; // reusable output buffer for _worldToMap
         this._createDOM();
     }
 
@@ -44,13 +45,14 @@ export class Minimap {
 
     /**
      * Convert world (x,z) to minimap pixel coords.
+     * Reuses _mapOut to avoid per-call array allocation.
      */
-    _worldToMap(x, z) {
+    _worldToMap(x, z, out) {
         const pad = this.padding;
         const usable = this.size - pad * 2;
-        const mx = pad + ((x + this.mapWidth / 2) / this.mapWidth) * usable;
-        const my = pad + ((z + this.mapDepth / 2) / this.mapDepth) * usable;
-        return [mx, my];
+        out[0] = pad + ((x + this.mapWidth / 2) / this.mapWidth) * usable;
+        out[1] = pad + ((z + this.mapDepth / 2) / this.mapDepth) * usable;
+        return out;
     }
 
     /**
@@ -73,10 +75,11 @@ export class Minimap {
         ctx.clearRect(0, 0, s, s);
 
         // Draw flags
+        const _m = this._mapOut;
         for (const flag of flags) {
-            const [fx, fy] = this._worldToMap(flag.position.x, flag.position.z);
+            this._worldToMap(flag.position.x, flag.position.z, _m);
             ctx.save();
-            ctx.translate(fx, fy);
+            ctx.translate(_m[0], _m[1]);
 
             // Star shape
             const color = flag.owner === 'teamA' ? '#4488ff'
@@ -105,10 +108,10 @@ export class Minimap {
         for (const s of friendlySoldiers) {
             if (!s.alive) continue;
             const pos = s.getPosition();
-            const [sx, sy] = this._worldToMap(pos.x, pos.z);
+            this._worldToMap(pos.x, pos.z, _m);
             ctx.fillStyle = playerTeam === 'teamA' ? '#4488ff' : '#ff4444';
             ctx.beginPath();
-            ctx.arc(sx, sy, 2.5, 0, Math.PI * 2);
+            ctx.arc(_m[0], _m[1], 2.5, 0, Math.PI * 2);
             ctx.fill();
         }
 
@@ -120,12 +123,12 @@ export class Minimap {
             const flashKey = `${enemyTeamKey}_${s.id}`;
             if (!this.enemyFlashes.has(flashKey)) continue;
             const pos = s.getPosition();
-            const [sx, sy] = this._worldToMap(pos.x, pos.z);
+            this._worldToMap(pos.x, pos.z, _m);
             const alpha = Math.min(1, this.enemyFlashes.get(flashKey) / this.flashDuration);
             ctx.fillStyle = enemyColor;
             ctx.globalAlpha = alpha;
             ctx.beginPath();
-            ctx.arc(sx, sy, 2.5, 0, Math.PI * 2);
+            ctx.arc(_m[0], _m[1], 2.5, 0, Math.PI * 2);
             ctx.fill();
             ctx.globalAlpha = 1;
         }
@@ -135,10 +138,10 @@ export class Minimap {
             for (const v of vehicles) {
                 if (!v.alive || !v.mesh) continue;
                 const vp = v.mesh.position;
-                const [vx, vy] = this._worldToMap(vp.x, vp.z);
+                this._worldToMap(vp.x, vp.z, _m);
                 const vColor = v.team === 'teamA' ? '#66aaff' : '#ff6666';
                 ctx.save();
-                ctx.translate(vx, vy);
+                ctx.translate(_m[0], _m[1]);
                 ctx.rotate(-v.rotationY);
                 ctx.fillStyle = vColor;
                 ctx.strokeStyle = 'rgba(255,255,255,0.5)';
@@ -158,9 +161,9 @@ export class Minimap {
 
         // Draw player (white triangle pointing in yaw direction)
         if (playerPos) {
-            const [px, py] = this._worldToMap(playerPos.x, playerPos.z);
+            this._worldToMap(playerPos.x, playerPos.z, _m);
             ctx.save();
-            ctx.translate(px, py);
+            ctx.translate(_m[0], _m[1]);
             // Yaw: 0 = north (-Z), rotate so triangle points in aim direction
             // On minimap, -Z is up (negative Y canvas direction)
             ctx.rotate(-playerYaw);

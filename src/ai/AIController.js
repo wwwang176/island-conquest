@@ -91,6 +91,7 @@ export class AIController {
         this._targetLOSLevel = 1; // 1=body visible, 2=head-only
         this.targetFlag = null;
         this.moveTarget = null;
+        this._moveTargetVec = new THREE.Vector3(); // pre-allocated for moveTarget assignments
 
         // Suppression state (set by SquadCoordinator)
         this.suppressionTarget = null;  // TeamIntel contact
@@ -186,6 +187,7 @@ export class AIController {
         this._pathCooldown = Math.random() * 0.5; // stagger initial A* across COMs
         this._lastRiskLevel = 0;     // for detecting risk spikes (under attack)
         this._noPathFound = false;   // true when A* fails — blocks direct movement
+        this._waitingForPath = false; // true while async A* request is in flight
 
         // Tactical state
         this.riskLevel = 0;
@@ -941,8 +943,7 @@ export class AIController {
                 this.coverSystem.occupy(chosen, this.soldier.id);
                 this.occupiedCover = chosen;
                 // Move to safe side of cover: 5m behind obstacle away from enemy
-                const behindOffset = threatDir.clone().multiplyScalar(-5);
-                this.moveTarget = chosen.position.clone().add(behindOffset);
+                this.moveTarget = this._moveTargetVec.copy(chosen.position).addScaledVector(threatDir, -5);
                 validateMoveTarget(this);
                 this.seekingCover = true;
                 return BTState.RUNNING;
@@ -953,10 +954,11 @@ export class AIController {
         if (this.targetEnemy) {
             const enemyPos = this.targetEnemy.getPosition();
             _v1.subVectors(myPos, enemyPos).normalize();
-            this.moveTarget = myPos.clone().add(
-                _v1.multiplyScalar(8).add(
-                    new THREE.Vector3(_v1.z, 0, -_v1.x).multiplyScalar(5 * (Math.random() > 0.5 ? 1 : -1))
-                )
+            const lateralSign = Math.random() > 0.5 ? 1 : -1;
+            this.moveTarget = this._moveTargetVec.set(
+                myPos.x + _v1.x * 8 + _v1.z * 5 * lateralSign,
+                myPos.y,
+                myPos.z + _v1.z * 8 + (-_v1.x) * 5 * lateralSign
             );
             validateMoveTarget(this);
         }
@@ -1057,7 +1059,7 @@ export class AIController {
         if (!this.squad.rushActive) {
             // Rally phase: move toward flag but don't charge in
             if (dist > 20) {
-                this.moveTarget = this.rushTarget.clone();
+                this.moveTarget = this._moveTargetVec.copy(this.rushTarget);
                 validateMoveTarget(this);
             }
             return BTState.RUNNING;
@@ -1076,7 +1078,7 @@ export class AIController {
             }
 
             // Rush active — charge the flag
-            this.moveTarget = this.rushTarget.clone();
+            this.moveTarget = this._moveTargetVec.copy(this.rushTarget);
             validateMoveTarget(this);
             this.seekingCover = false;
             this.missionPressure = 0.0;
@@ -1119,7 +1121,7 @@ export class AIController {
         }
 
         // Move toward the contact's last known position
-        this.moveTarget = nearest.lastSeenPos.clone();
+        this.moveTarget = this._moveTargetVec.copy(nearest.lastSeenPos);
         validateMoveTarget(this);
 
         // Pre-aim at predicted position
@@ -1157,7 +1159,7 @@ export class AIController {
                 findFlankPosition(
                     myPos, enemyPos, this.coverSystem, this.flankSide, this.navGrid, _tmpVec
                 );
-                this.moveTarget = _tmpVec.clone();
+                this.moveTarget = this._moveTargetVec.copy(_tmpVec);
                 validateMoveTarget(this);
                 this.seekingCover = false;
                 this.missionPressure = 0.5;
@@ -1206,35 +1208,35 @@ export class AIController {
                 _tmpVec.copy(myPos);
                 _tmpVec.x += toEnemy.x * -10 + _strafeDir.x * strafeSide * 6;
                 _tmpVec.z += toEnemy.z * -10 + _strafeDir.z * strafeSide * 6;
-                this.moveTarget = _tmpVec.clone();
+                this.moveTarget = this._moveTargetVec.copy(_tmpVec);
             } else if (dist > idealMax) {
                 // Too far — close distance slightly
                 _tmpVec.copy(enemyPos);
                 _tmpVec.x += toEnemy.x * -idealMin + _strafeDir.x * strafeSide * 8;
                 _tmpVec.z += toEnemy.z * -idealMin + _strafeDir.z * strafeSide * 8;
-                this.moveTarget = _tmpVec.clone();
+                this.moveTarget = this._moveTargetVec.copy(_tmpVec);
             } else {
                 // Sweet spot — strafe only, maintain range
                 _tmpVec.copy(myPos);
                 _tmpVec.x += _strafeDir.x * strafeSide * 8;
                 _tmpVec.z += _strafeDir.z * strafeSide * 8;
-                this.moveTarget = _tmpVec.clone();
+                this.moveTarget = this._moveTargetVec.copy(_tmpVec);
             }
         } else if (dist > 35) {
             // Far away: move toward enemy position directly — let A* handle routing
             _tmpVec.copy(enemyPos);
-            this.moveTarget = _tmpVec.clone();
+            this.moveTarget = this._moveTargetVec.copy(_tmpVec);
         } else if (dist < 10) {
             _tmpVec.copy(myPos);
             _tmpVec.x += toEnemy.x * -3 + _strafeDir.x * strafeSide * 4;
             _tmpVec.z += toEnemy.z * -3 + _strafeDir.z * strafeSide * 4;
-            this.moveTarget = _tmpVec.clone();
+            this.moveTarget = this._moveTargetVec.copy(_tmpVec);
         } else {
             // Medium range: strafe but use a longer offset so A* can route properly
             _tmpVec.copy(enemyPos);
             _tmpVec.x += _strafeDir.x * strafeSide * 8;
             _tmpVec.z += _strafeDir.z * strafeSide * 8;
-            this.moveTarget = _tmpVec.clone();
+            this.moveTarget = this._moveTargetVec.copy(_tmpVec);
         }
         validateMoveTarget(this);
 
@@ -1262,7 +1264,7 @@ export class AIController {
                     formationPos.x += Math.cos(jAngle) * jDist;
                     formationPos.z += Math.sin(jAngle) * jDist;
                 }
-                this.moveTarget = formationPos.clone();
+                this.moveTarget = this._moveTargetVec.copy(formationPos);
                 validateMoveTarget(this);
                 this.missionPressure = 0.5;
                 this.seekingCover = false;
@@ -1279,8 +1281,10 @@ export class AIController {
             const radius = this.weaponId === 'BOLT'
                 ? 20 + Math.random() * 5
                 : 6 + Math.random() * 4;
-            this.moveTarget = flagPos.clone().add(
-                new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius)
+            this.moveTarget = this._moveTargetVec.set(
+                flagPos.x + Math.cos(angle) * radius,
+                flagPos.y,
+                flagPos.z + Math.sin(angle) * radius
             );
             this.missionPressure = 0.0;
         } else {
@@ -1288,11 +1292,13 @@ export class AIController {
             if (this.weaponId === 'BOLT' && dist < 25) {
                 const baseAngle = (this.soldier.id / 12) * Math.PI * 2;
                 const radius = 20 + Math.random() * 5;
-                this.moveTarget = flagPos.clone().add(
-                    new THREE.Vector3(Math.cos(baseAngle) * radius, 0, Math.sin(baseAngle) * radius)
+                this.moveTarget = this._moveTargetVec.set(
+                    flagPos.x + Math.cos(baseAngle) * radius,
+                    flagPos.y,
+                    flagPos.z + Math.sin(baseAngle) * radius
                 );
             } else {
-                this.moveTarget = flagPos.clone();
+                this.moveTarget = this._moveTargetVec.copy(flagPos);
             }
             this.missionPressure = 0.5;
         }
@@ -1306,12 +1312,11 @@ export class AIController {
         const myPos = this.soldier.getPosition();
         if (!this.moveTarget || myPos.distanceTo(this.moveTarget) < 3) {
             const flag = this.targetFlag || this.flags[0];
-            this.moveTarget = flag.position.clone().add(
-                new THREE.Vector3(
-                    (Math.random() - 0.5) * 30,
-                    0,
-                    (Math.random() - 0.5) * 20
-                )
+            const fp = flag.position;
+            this.moveTarget = this._moveTargetVec.set(
+                fp.x + (Math.random() - 0.5) * 30,
+                fp.y,
+                fp.z + (Math.random() - 0.5) * 20
             );
             validateMoveTarget(this);
         }
@@ -1408,6 +1413,7 @@ export class AIController {
         this._pathCooldown = 0;
         this._lastRiskLevel = 0;
         this._noPathFound = false;
+        this._waitingForPath = false;
     }
 
     /** Set references for player damage. */

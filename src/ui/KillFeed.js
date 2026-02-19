@@ -1,6 +1,7 @@
 /**
  * Kill feed HUD — shows recent kills in the top-right corner.
  * Each entry fades out after a few seconds.
+ * Uses pre-built DOM elements instead of innerHTML to reduce GC pressure.
  */
 
 const MAX_ENTRIES = 5;
@@ -8,8 +9,7 @@ const ENTRY_LIFE = 5;  // seconds
 
 export class KillFeed {
     constructor() {
-        this.entries = []; // { killerName, killerTeam, victimName, victimTeam, headshot, weapon, life }
-        this._dirty = false;
+        this.entries = []; // { killerName, killerTeam, victimName, victimTeam, headshot, weapon, life, el }
         this._createDOM();
     }
 
@@ -23,17 +23,50 @@ export class KillFeed {
         this.container = el;
     }
 
+    _createEntryEl(entry) {
+        const wrapper = document.createElement('div');
+        wrapper.style.cssText = 'margin-bottom:3px;display:inline-block;background:rgba(0,0,0,0.45);padding:3px 8px;border-radius:3px;';
+
+        const kColor = entry.killerTeam === 'teamA' ? '#4488ff' : '#ff4444';
+        const vColor = entry.victimTeam === 'teamA' ? '#4488ff' : '#ff4444';
+
+        const killer = document.createElement('span');
+        killer.style.color = kColor;
+        killer.textContent = entry.killerName;
+        wrapper.appendChild(killer);
+
+        const wep = document.createElement('span');
+        if (entry.weapon) {
+            wep.style.cssText = 'color:#aaa;font-size:11px';
+            wep.textContent = ` [${entry.weapon}] `;
+        } else {
+            wep.style.color = '#888';
+            wep.textContent = ' \u2192 ';
+        }
+        wrapper.appendChild(wep);
+
+        const victim = document.createElement('span');
+        victim.style.color = vColor;
+        victim.textContent = entry.victimName;
+        wrapper.appendChild(victim);
+
+        if (entry.headshot) {
+            const hs = document.createElement('span');
+            hs.style.color = '#ffcc00';
+            hs.textContent = ' HS';
+            wrapper.appendChild(hs);
+        }
+
+        const br = document.createElement('br');
+
+        return { wrapper, br };
+    }
+
     /**
      * Add a kill entry.
-     * @param {string} killerName
-     * @param {string} killerTeam - 'teamA' or 'teamB'
-     * @param {string} victimName
-     * @param {string} victimTeam - 'teamA' or 'teamB'
-     * @param {boolean} headshot
-     * @param {string} [weapon] - weapon ID (e.g. 'AR15', 'SMG', 'LMG', 'GRENADE')
      */
     addKill(killerName, killerTeam, victimName, victimTeam, headshot = false, weapon = '') {
-        this.entries.push({
+        const entry = {
             killerName,
             killerTeam,
             victimName,
@@ -41,53 +74,38 @@ export class KillFeed {
             headshot,
             weapon,
             life: ENTRY_LIFE,
-        });
-        this._dirty = true;
+            el: null,
+            br: null,
+        };
+        const { wrapper, br } = this._createEntryEl(entry);
+        entry.el = wrapper;
+        entry.br = br;
+        this.container.appendChild(wrapper);
+        this.container.appendChild(br);
+
+        this.entries.push(entry);
+
         // Trim old entries
         while (this.entries.length > MAX_ENTRIES) {
-            this.entries.shift();
+            const old = this.entries.shift();
+            if (old.el.parentNode) old.el.parentNode.removeChild(old.el);
+            if (old.br.parentNode) old.br.parentNode.removeChild(old.br);
         }
     }
 
     update(dt) {
-        if (this.entries.length === 0) {
-            if (this._dirty) {
-                this.container.innerHTML = '';
-                this._dirty = false;
-            }
-            return;
-        }
-
-        // Decay entries
         for (let i = this.entries.length - 1; i >= 0; i--) {
-            this.entries[i].life -= dt;
-            if (this.entries[i].life <= 0) {
+            const e = this.entries[i];
+            e.life -= dt;
+            if (e.life <= 0) {
+                if (e.el.parentNode) e.el.parentNode.removeChild(e.el);
+                if (e.br.parentNode) e.br.parentNode.removeChild(e.br);
                 this.entries.splice(i, 1);
-                this._dirty = true;
+            } else {
+                // Fade in last 1.5s
+                const opacity = Math.min(1, e.life / 1.5);
+                e.el.style.opacity = opacity;
             }
         }
-
-        // Entries with fading opacity need DOM update each frame
-        if (this.entries.length > 0) this._dirty = true;
-
-        if (!this._dirty) return;
-        this._dirty = false;
-
-        // Render
-        let html = '';
-        for (const e of this.entries) {
-            const opacity = Math.min(1, e.life / 1.5); // fade in last 1.5s
-            const kColor = e.killerTeam === 'teamA' ? '#4488ff' : '#ff4444';
-            const vColor = e.victimTeam === 'teamA' ? '#4488ff' : '#ff4444';
-            const hs = e.headshot ? ' <span style="color:#ffcc00">HS</span>' : '';
-            const wep = e.weapon
-                ? ` <span style="color:#aaa;font-size:11px">[${e.weapon}]</span> `
-                : ' <span style="color:#888"> → </span> ';
-            html += `<div style="opacity:${opacity};margin-bottom:3px;
-                background:rgba(0,0,0,0.45);padding:3px 8px;border-radius:3px;display:inline-block;">
-                <span style="color:${kColor}">${e.killerName}</span>${wep}<span style="color:${vColor}">${e.victimName}</span>${hs}
-            </div><br>`;
-        }
-        this.container.innerHTML = html;
     }
 }
