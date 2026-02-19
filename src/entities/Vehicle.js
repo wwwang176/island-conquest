@@ -28,7 +28,7 @@ export class Vehicle {
         this.spawnPosition = spawnPosition.clone();
         this.spawnRotationY = 0;
         this.respawnTimer = 0;
-        this.respawnDelay = 30;
+        this.respawnDelay = 45;
         this.enterRadius = 3;
 
         // Mesh (set by subclass)
