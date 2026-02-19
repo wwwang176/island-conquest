@@ -224,27 +224,33 @@ export class Soldier {
         geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     }
 
+    /** Shared muzzle flash geometry & material (lazy-initialized). */
+    static _muzzleFlashGeo = null;
+    static _muzzleFlashMat = null;
+
     /** Create a four-pointed-star muzzle flash mesh (shared geometry+material). */
     static createMuzzleFlashMesh() {
-        const outerR = 0.27, innerR = 0.0675;
-        const pts = [];
-        for (let i = 0; i < 8; i++) {
-            const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
-            const r = i % 2 === 0 ? outerR : innerR;
-            pts.push(Math.cos(a) * r, Math.sin(a) * r, 0);
+        if (!Soldier._muzzleFlashGeo) {
+            const outerR = 0.27, innerR = 0.0675;
+            const pts = [];
+            for (let i = 0; i < 8; i++) {
+                const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
+                const r = i % 2 === 0 ? outerR : innerR;
+                pts.push(Math.cos(a) * r, Math.sin(a) * r, 0);
+            }
+            const verts = [];
+            for (let i = 0; i < 8; i++) {
+                const j = (i + 1) % 8;
+                verts.push(0, 0, 0, pts[i * 3], pts[i * 3 + 1], 0, pts[j * 3], pts[j * 3 + 1], 0);
+            }
+            Soldier._muzzleFlashGeo = new THREE.BufferGeometry();
+            Soldier._muzzleFlashGeo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+            Soldier._muzzleFlashMat = new THREE.MeshBasicMaterial({
+                color: 0xffcc44, transparent: true, opacity: 0.9,
+                blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+            });
         }
-        const verts = [];
-        for (let i = 0; i < 8; i++) {
-            const j = (i + 1) % 8;
-            verts.push(0, 0, 0, pts[i * 3], pts[i * 3 + 1], 0, pts[j * 3], pts[j * 3 + 1], 0);
-        }
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-        const mat = new THREE.MeshBasicMaterial({
-            color: 0xffcc44, transparent: true, opacity: 0.9,
-            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
-        });
-        return new THREE.Mesh(geo, mat);
+        return new THREE.Mesh(Soldier._muzzleFlashGeo, Soldier._muzzleFlashMat);
     }
 
     /**
