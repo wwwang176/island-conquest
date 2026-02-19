@@ -47,6 +47,9 @@ export class Soldier {
         this.regenRate = 10;        // HP per second
         this.timeSinceLastDamage = Infinity;
 
+        // Capsule collision radius (subclasses can override before respawn)
+        this.capsuleRadius = 0.35;
+
         // Targeting awareness — how many enemy controllers are aiming at me
         this.targetedByCount = 0;
 
@@ -390,7 +393,7 @@ export class Soldier {
     }
 
     _createPhysicsBody() {
-        return createCapsuleBody(this.physics.defaultMaterial, 0.35, this.cameraHeight, this.kinematic, 80, 2);
+        return createCapsuleBody(this.physics.defaultMaterial, this.capsuleRadius, this.cameraHeight, this.kinematic, 80, 2);
     }
 
     removeFromPhysics() {
@@ -550,7 +553,7 @@ export class Soldier {
         this._walkPhase = 0;
 
         // Restore capsule collision shapes
-        resetCapsuleShapes(this.body, 0.35, this.cameraHeight);
+        resetCapsuleShapes(this.body, this.capsuleRadius, this.cameraHeight);
 
         // Restore kinematic state
         if (this.kinematic) {

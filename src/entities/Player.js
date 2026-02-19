@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
+import { Soldier } from './Soldier.js';
 import { Weapon } from './Weapon.js';
 import { WeaponDefs } from './WeaponDefs.js';
 import { HELI_PASSENGER_SLOTS, HELI_PILOT_OFFSET } from './Helicopter.js';
-import { computeHitDamage, applyHealthRegen } from '../shared/DamageModel.js';
-import { addCapsuleShapes } from '../shared/CapsuleBody.js';
+import { applyHealthRegen } from '../shared/DamageModel.js';
+import { resetCapsuleShapes } from '../shared/CapsuleBody.js';
 
 // Module-level reusable objects (avoid per-frame allocation)
 const _forward = new THREE.Vector3();
@@ -17,50 +17,36 @@ const _eyeOffset = { x: 0, y: 0, z: 0 };
 const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
 const _aimDir = new THREE.Vector3();
 const _shotOrigin = new THREE.Vector3();
-const _dmgPos = new THREE.Vector3();
-const _dmgFrom = new THREE.Vector3();
-const _dmgFwd = new THREE.Vector3();
-const _dmgQuat = new THREE.Quaternion();
 
 /**
  * First-person player controller.
- * Handles FPS camera, WASD movement, jumping, shooting, health, and death.
+ * Extends Soldier with FPS camera, WASD movement, jumping, shooting, and vehicle controls.
  * Movement uses kinematic terrain-snapping (same as COM) for smooth slope climbing.
  */
-export class Player {
+export class Player extends Soldier {
     constructor(scene, camera, physicsWorld, inputManager, eventBus) {
-        this.scene = scene;
+        // Create as kinematic Soldier (body removed from physics by Soldier constructor)
+        super(scene, physicsWorld, null, 'player', true);
+
+        // Player needs physics body in world (unlike kinematic AI which removes it)
+        this.addToPhysics();
+
+        // Wider capsule for Player (Soldier default is 0.35)
+        this.capsuleRadius = 0.4;
+        resetCapsuleShapes(this.body, 0.4, this.cameraHeight);
+
         this.camera = camera;
         this.input = inputManager;
-        this.physicsWorld = physicsWorld;
         this.eventBus = eventBus;
 
         // Settings
         this.moveSpeed = 6;
         this.jumpSpeed = 4;
         this.mouseSensitivity = 0.002;
-        this.cameraHeight = 1.6;
 
         // Camera rotation
         this.pitch = 0;
         this.yaw = 0;
-
-        // Health system
-        this.maxHP = 100;
-        this.hp = this.maxHP;
-        this.regenDelay = 5;
-        this.regenRate = 10;
-        this.timeSinceLastDamage = Infinity;
-
-        // Death / respawn
-        this.alive = true;
-        this.deathTimer = 0;
-        this.respawnDelay = 5;
-        this.team = null; // set when joining a team
-        this.selectedWeaponId = 'AR15';
-
-        // Position cache (avoid per-frame allocation in getPosition)
-        this._posCache = new THREE.Vector3();
 
         // Vehicle state
         this.vehicle = null;
@@ -72,18 +58,10 @@ export class Player {
         this._grenadePrevDown = false;
         this._grenadeThrowTimer = 0; // blocks fire & scope during throw
 
-        // Jump edge detection (prevent jump on spawn frame)
+        // Player-specific state
+        this.selectedWeaponId = 'AR15';
         this._prevSpace = false;
-
-        // Scope state
         this._prevRightMouse = false;
-
-        // Movement velocity (for grenade velocity inheritance)
-        this.lastMoveVelocity = new THREE.Vector3();
-
-        // Damage direction indicator
-        this.lastDamageDirection = null;
-        this.damageIndicatorTimer = 0;
 
         // Terrain helpers (set by Game after creation)
         /** @type {Function|null} */
@@ -99,21 +77,8 @@ export class Player {
         this.isJumping = false;
         this.jumpVelY = 0;
 
-        // Physics body (kinematic — we control position directly)
-        this.body = new CANNON.Body({
-            mass: 0,
-            type: CANNON.Body.KINEMATIC,
-            fixedRotation: true,
-            collisionFilterGroup: 2,
-        });
-        addCapsuleShapes(this.body, 0.4, this.cameraHeight);
-        this.body.position.set(0, 5, 0);
-        physicsWorld.addBody(this.body);
-
-        // Debug mesh (hidden in FPS)
-        this.mesh = this._createDebugMesh();
+        // Hide soldier mesh (FPS mode)
         this.mesh.visible = false;
-        scene.add(this.mesh);
 
         // Weapon
         this.weapon = new Weapon(scene, camera, this.selectedWeaponId);
@@ -145,16 +110,6 @@ export class Player {
         this.weapon = new Weapon(this.scene, this.camera, weaponId, this._getLimbColor());
         this.weapon.tracerSystem = tracerSystem;
         this.weapon.impactVFX = impactVFX;
-    }
-
-    _createDebugMesh() {
-        const group = new THREE.Group();
-        const geo = new THREE.CapsuleGeometry(0.4, this.cameraHeight - 0.8, 4, 8);
-        const mat = new THREE.MeshLambertMaterial({ color: 0x4488ff });
-        const mesh = new THREE.Mesh(geo, mat);
-        mesh.position.y = this.cameraHeight / 2;
-        group.add(mesh);
-        return group;
     }
 
     _tickTimers(dt) {
@@ -390,30 +345,6 @@ export class Player {
         this.camera.quaternion.setFromEuler(_euler);
     }
 
-    takeDamage(amount, fromPosition, hitY = null) {
-        if (!this.alive) return { killed: false, damage: 0, headshot: false };
-
-        const baseY = this.body.position.y;
-        const { actualDamage, headshot } = computeHitDamage(amount, hitY, baseY);
-        this.hp = Math.max(0, this.hp - actualDamage);
-        this.timeSinceLastDamage = 0;
-
-        // Damage direction for HUD indicator
-        if (fromPosition) {
-            _dmgPos.set(this.body.position.x, 0, this.body.position.z);
-            _dmgFrom.set(fromPosition.x, 0, fromPosition.z);
-            if (!this.lastDamageDirection) this.lastDamageDirection = new THREE.Vector3();
-            this.lastDamageDirection.subVectors(_dmgFrom, _dmgPos).normalize();
-            this.damageIndicatorTimer = 1.0;
-        }
-
-        if (this.hp <= 0) {
-            this.die();
-            return { killed: true, damage: actualDamage, headshot };
-        }
-        return { killed: false, damage: actualDamage, headshot };
-    }
-
     die() {
         this.alive = false;
         this.hp = 0;
@@ -429,9 +360,16 @@ export class Player {
     }
 
     respawn(position) {
-        this.alive = true;
-        this.hp = this.maxHP;
-        this.timeSinceLastDamage = Infinity;
+        // Soldier.respawn handles: alive, hp, regen, mesh, physics body, capsule shapes
+        super.respawn(position);
+
+        // Player needs body in physics world (Soldier removes kinematic bodies)
+        this.addToPhysics();
+
+        // Hide mesh in FPS mode (Soldier.respawn sets visible=true)
+        this.mesh.visible = false;
+
+        // Weapon reset
         this.damageIndicatorTimer = 0;
         if (this.weapon.weaponId !== this.selectedWeaponId) {
             this.switchWeapon(this.selectedWeaponId);
@@ -444,8 +382,6 @@ export class Player {
         // Apply weapon move speed multiplier
         const mult = WeaponDefs[this.selectedWeaponId].moveSpeedMult || 1.0;
         this.moveSpeed = 6 * mult;
-        this.body.position.set(position.x, position.y + 1, position.z);
-        this.body.velocity.set(0, 0, 0);
         this.isJumping = false;
         this.jumpVelY = 0;
         this._velX = 0;
@@ -455,14 +391,6 @@ export class Player {
         this.grenadeCooldown = 0;
         this._grenadeThrowTimer = 0;
         this.eventBus.emit('playerRespawned');
-    }
-
-    canRespawn() {
-        return !this.alive && this.deathTimer <= 0;
-    }
-
-    getPosition() {
-        return this._posCache.set(this.body.position.x, this.body.position.y, this.body.position.z);
     }
 
     getAimDirection() {
