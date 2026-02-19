@@ -408,6 +408,13 @@ export class HUDController {
             </div>`;
         document.body.appendChild(el);
         this.joinScreen = el;
+        this._joinWpEls = {
+            AR15: document.getElementById('join-wp-ar'),
+            SMG: document.getElementById('join-wp-smg'),
+            LMG: document.getElementById('join-wp-lmg'),
+            BOLT: document.getElementById('join-wp-bolt'),
+        };
+        this._lastJoinWeapon = null;
     }
 
     _createDeathScreen() {
@@ -435,6 +442,16 @@ export class HUDController {
             </div>`;
         document.body.appendChild(el);
         this.deathScreen = el;
+        this._deathTimer = document.getElementById('respawn-timer');
+        this._deathPrompt = document.getElementById('respawn-prompt');
+        this._deathWeaponSelect = document.getElementById('weapon-select');
+        this._deathWpEls = {
+            AR15: document.getElementById('weapon-ar'),
+            SMG: document.getElementById('weapon-smg'),
+            LMG: document.getElementById('weapon-lmg'),
+            BOLT: document.getElementById('weapon-bolt'),
+        };
+        this._lastDeathWeapon = null;
     }
 
     _createGameOverScreen() {
@@ -498,8 +515,19 @@ export class HUDController {
             color:white;font-family:Consolas,monospace;background:rgba(0,0,0,0.5);
             padding:10px 20px;border-radius:6px;pointer-events:none;z-index:100;
             text-align:center;display:none;`;
+        el.innerHTML = `
+            <div id="vhud-title" style="font-size:14px;font-weight:bold;margin-bottom:4px"></div>
+            <div style="width:200px;height:8px;background:#333;border-radius:4px;margin:4px auto;">
+                <div id="vhud-hp-bar" style="height:100%;border-radius:4px;"></div>
+            </div>
+            <div id="vhud-controls" style="font-size:11px;color:#aaa;margin-top:4px"></div>`;
         document.body.appendChild(el);
         this.vehicleHUD = el;
+        this._vhudTitle = document.getElementById('vhud-title');
+        this._vhudHpBar = document.getElementById('vhud-hp-bar');
+        this._vhudControls = document.getElementById('vhud-controls');
+        this._lastVehicleTitle = null;
+        this._lastVehicleHpPct = -1;
     }
 
     // ───── Per-frame update methods ─────
@@ -518,12 +546,10 @@ export class HUDController {
     _updateJoinScreen() {
         if (this.game.gameMode !== 'joining') return;
         const sel = this.game._pendingWeapon;
-        const ids = [
-            ['join-wp-ar', 'AR15'], ['join-wp-smg', 'SMG'],
-            ['join-wp-lmg', 'LMG'], ['join-wp-bolt', 'BOLT'],
-        ];
-        for (const [id, wep] of ids) {
-            const el = document.getElementById(id);
+        if (sel === this._lastJoinWeapon) return;
+        this._lastJoinWeapon = sel;
+        for (const wep of ['AR15', 'SMG', 'LMG', 'BOLT']) {
+            const el = this._joinWpEls[wep];
             el.style.borderColor = sel === wep ? '#4488ff' : '#888';
             el.style.background = sel === wep ? 'rgba(68,136,255,0.15)' : 'transparent';
         }
@@ -532,28 +558,35 @@ export class HUDController {
     _updateVehicleHUD() {
         const game = this.game;
         if (!game.player || !game.player.vehicle || game.gameMode !== 'playing') {
-            this.vehicleHUD.style.display = 'none';
+            if (this._lastVehicleTitle) {
+                this.vehicleHUD.style.display = 'none';
+                this._lastVehicleTitle = null;
+                this._lastVehicleHpPct = -1;
+            }
             return;
         }
 
         const v = game.player.vehicle;
         this.vehicleHUD.style.display = 'block';
 
-        const hpPct = Math.max(0, v.hp / v.maxHP * 100);
-        const hpColor = hpPct > 50 ? '#4f4' : hpPct > 25 ? '#ff4' : '#f44';
         const isPilot = v.driver === game.player;
         const occ = v.occupantCount || 1;
         const typeName = `HELICOPTER [${occ}/4]` + (isPilot ? ' PILOT' : ' GUNNER');
-        const controls = isPilot
-            ? 'WASD Move | Space Up | Shift Down | E Exit'
-            : 'Mouse Aim | LMB Fire | E Exit';
+        if (typeName !== this._lastVehicleTitle) {
+            this._lastVehicleTitle = typeName;
+            this._vhudTitle.textContent = typeName;
+            this._vhudControls.textContent = isPilot
+                ? 'WASD Move | Space Up | Shift Down | E Exit'
+                : 'Mouse Aim | LMB Fire | E Exit';
+        }
 
-        this.vehicleHUD.innerHTML = `
-            <div style="font-size:14px;font-weight:bold;margin-bottom:4px">${typeName}</div>
-            <div style="width:200px;height:8px;background:#333;border-radius:4px;margin:4px auto;">
-                <div style="width:${hpPct}%;height:100%;background:${hpColor};border-radius:4px;"></div>
-            </div>
-            <div style="font-size:11px;color:#aaa;margin-top:4px">${controls}</div>`;
+        const hpPct = Math.round(Math.max(0, v.hp / v.maxHP * 100));
+        if (hpPct !== this._lastVehicleHpPct) {
+            this._lastVehicleHpPct = hpPct;
+            const hpColor = hpPct > 50 ? '#4f4' : hpPct > 25 ? '#ff4' : '#f44';
+            this._vhudHpBar.style.width = hpPct + '%';
+            this._vhudHpBar.style.background = hpColor;
+        }
     }
 
     _updateReloadIndicator() {
@@ -664,7 +697,6 @@ export class HUDController {
                 game.camera.updateProjectionMatrix();
             }
 
-            this._lastAmmo = undefined;
             this._updateDamageIndicator();
             return;
         }
@@ -801,14 +833,12 @@ export class HUDController {
             if (game.gameMode !== 'dead') {
                 game.gameMode = 'dead';
                 this.applyUIState('dead');
+                this._lastDeathWeapon = null;
             }
-            const timer = document.getElementById('respawn-timer');
-            const prompt = document.getElementById('respawn-prompt');
-            const weaponSelect = document.getElementById('weapon-select');
             if (p.canRespawn()) {
-                timer.textContent = '';
-                prompt.style.display = 'block';
-                weaponSelect.style.display = 'block';
+                this._deathTimer.textContent = '';
+                this._deathPrompt.style.display = 'block';
+                this._deathWeaponSelect.style.display = 'block';
 
                 // Weapon selection via keys
                 if (game.input.isKeyDown('Digit1')) p.selectedWeaponId = 'AR15';
@@ -816,16 +846,15 @@ export class HUDController {
                 if (game.input.isKeyDown('Digit3')) p.selectedWeaponId = 'LMG';
                 if (game.input.isKeyDown('Digit4')) p.selectedWeaponId = 'BOLT';
 
-                // Highlight selected weapon
+                // Highlight selected weapon — only update DOM when selection changes
                 const sel = p.selectedWeaponId;
-                const wepIds = [
-                    ['weapon-ar', 'AR15'], ['weapon-smg', 'SMG'],
-                    ['weapon-lmg', 'LMG'], ['weapon-bolt', 'BOLT'],
-                ];
-                for (const [id, wep] of wepIds) {
-                    const el = document.getElementById(id);
-                    el.style.borderColor = sel === wep ? '#4488ff' : '#888';
-                    el.style.background = sel === wep ? 'rgba(68,136,255,0.15)' : 'transparent';
+                if (sel !== this._lastDeathWeapon) {
+                    this._lastDeathWeapon = sel;
+                    for (const wep of ['AR15', 'SMG', 'LMG', 'BOLT']) {
+                        const el = this._deathWpEls[wep];
+                        el.style.borderColor = sel === wep ? '#4488ff' : '#888';
+                        el.style.background = sel === wep ? 'rgba(68,136,255,0.15)' : 'transparent';
+                    }
                 }
 
                 if (game.input.isKeyDown('Space')) {
@@ -838,9 +867,9 @@ export class HUDController {
                     }
                 }
             } else {
-                timer.textContent = `Respawn in ${Math.ceil(p.deathTimer)}s`;
-                prompt.style.display = 'none';
-                weaponSelect.style.display = 'none';
+                this._deathTimer.textContent = `Respawn in ${Math.ceil(p.deathTimer)}s`;
+                this._deathPrompt.style.display = 'none';
+                this._deathWeaponSelect.style.display = 'none';
             }
         }
     }
