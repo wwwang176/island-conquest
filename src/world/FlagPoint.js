@@ -240,8 +240,9 @@ export class FlagPoint {
         const r2 = this.captureRadius * this.captureRadius;
         for (const s of soldiers) {
             const dx = s.x - this.position.x;
+            const dy = s.y - this.position.y;
             const dz = s.z - this.position.z;
-            if (dx * dx + dz * dz <= r2) count++;
+            if (dx * dx + dy * dy + dz * dz <= r2) count++;
         }
         return count;
     }
