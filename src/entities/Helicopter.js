@@ -305,18 +305,22 @@ export class Helicopter extends Vehicle {
             mat(0x111111, { transparent: true, opacity: 0.5 })));
 
         // ── Main rotor (animated — stays separate) ──
-        const rotorGeo = new THREE.BoxGeometry(7, 0.04, 0.25);
-        this._rotorMesh = new THREE.Mesh(rotorGeo, mat(0x444444));
+        const rotorMat = mat(0x444444, { side: THREE.DoubleSide });
+        const rotorGeo = new THREE.PlaneGeometry(7, 0.25);
+        rotorGeo.rotateX(-Math.PI / 2); // XY plane → XZ plane (horizontal)
+        this._rotorMesh = new THREE.Mesh(rotorGeo, rotorMat);
         this._rotorMesh.position.y = 0.95;
         this._attitudeGroup.add(this._rotorMesh);
-        const rotor2Geo = new THREE.BoxGeometry(0.25, 0.04, 7);
-        const rotor2 = new THREE.Mesh(rotor2Geo, mat(0x444444));
+        const rotor2Geo = new THREE.PlaneGeometry(0.25, 7);
+        rotor2Geo.rotateX(-Math.PI / 2);
+        const rotor2 = new THREE.Mesh(rotor2Geo, rotorMat);
         this._rotorMesh.add(rotor2);
 
         // ── Tail rotor (animated — stays separate) ──
         // Hull-local (0.22, 0.7, 4.9) → after PI rotation: (-0.22, 0.7, -4.9)
-        const trGeo = new THREE.BoxGeometry(0.04, 1.8, 0.15);
-        this._tailRotorMesh = new THREE.Mesh(trGeo, mat(0x444444));
+        const trGeo = new THREE.PlaneGeometry(0.15, 1.8);
+        trGeo.rotateY(-Math.PI / 2); // XY plane → YZ plane (perpendicular to tail boom)
+        this._tailRotorMesh = new THREE.Mesh(trGeo, rotorMat);
         this._tailRotorMesh.position.set(-0.22, 0.7, -4.9);
         this._attitudeGroup.add(this._tailRotorMesh);
 
