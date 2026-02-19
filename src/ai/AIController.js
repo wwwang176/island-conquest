@@ -51,10 +51,9 @@ function _bresenhamClear(tm, c0, r0, eyeY0, c1, r1, targetY1) {
  * Dual-ray: first eye→eye, if blocked try eye→head-top.
  * Returns: 0 = not visible, 1 = body visible, 2 = head-only visible.
  */
-function _hasGridLOS(tm, c0, r0, eyeY0, c1, r1) {
-    const baseY1 = tm.heightGrid[r1 * tm.cols + c1];
-    if (_bresenhamClear(tm, c0, r0, eyeY0, c1, r1, baseY1 + EYE_HEIGHT)) return 1;
-    if (_bresenhamClear(tm, c0, r0, eyeY0, c1, r1, baseY1 + HEAD_TOP_HEIGHT)) return 2;
+function _hasGridLOS(tm, c0, r0, eyeY0, c1, r1, targetY) {
+    if (_bresenhamClear(tm, c0, r0, eyeY0, c1, r1, targetY + EYE_HEIGHT)) return 1;
+    if (_bresenhamClear(tm, c0, r0, eyeY0, c1, r1, targetY + HEAD_TOP_HEIGHT)) return 2;
     return 0;
 }
 
@@ -726,7 +725,7 @@ export class AIController {
             let losLevel = 1;
             if (!inHeli && useGridLOS) {
                 const eGrid = tm._worldToGrid(ePos.x, ePos.z);
-                losLevel = _hasGridLOS(tm, myGrid.col, myGrid.row, myEyeY, eGrid.col, eGrid.row);
+                losLevel = _hasGridLOS(tm, myGrid.col, myGrid.row, myEyeY, eGrid.col, eGrid.row, ePos.y);
                 if (losLevel === 0) continue;
             }
 
