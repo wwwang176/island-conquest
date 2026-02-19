@@ -732,9 +732,15 @@ export class AIController {
 
             currentlyVisible.add(enemy);
 
-            // Report sighting to TeamIntel
+            // Report to TeamIntel: new sighting vs refresh
             if (this.teamIntel) {
-                this.teamIntel.reportSighting(enemy, ePos, enemy.body.velocity, enemy.vehicle !== null);
+                if (this._previouslyVisible.has(enemy)) {
+                    // Continuous observation — update position only, don't change count
+                    this.teamIntel.refreshContact(enemy, ePos, enemy.body.velocity, enemy.vehicle !== null);
+                } else {
+                    // New sighting — increment seenByCount
+                    this.teamIntel.reportSighting(enemy, ePos, enemy.body.velocity, enemy.vehicle !== null);
+                }
             }
 
             if (dist < closestDist) {
@@ -1357,6 +1363,12 @@ export class AIController {
         this._prevTargetedByCount = 0;
         if (this._tacLabel) this._tacLabel.visible = false;
         this._tacLabelText = '';
+        // Flush observed enemies as lost so ref counts are decremented
+        if (this._previouslyVisible.size > 0 && this.teamIntel) {
+            for (const prev of this._previouslyVisible) {
+                this.teamIntel.reportLost(prev);
+            }
+        }
         this._previouslyVisible.clear();
         // Reset timers and cooldowns
         this.btTimer = 0;

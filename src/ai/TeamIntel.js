@@ -49,7 +49,7 @@ export class TeamIntel {
     }
 
     /**
-     * Report a direct visual sighting of an enemy.
+     * Report a new visual sighting of an enemy (increments seenByCount).
      */
     reportSighting(enemy, position, velocity, inVehicle = false) {
         let contact = this.contacts.get(enemy);
@@ -62,10 +62,13 @@ export class TeamIntel {
                 lastSeenVelocity: new THREE.Vector3(),
                 confidence: 1.0,
                 inVehicle: false,
+                seenByCount: 1,
             };
             this.contacts.set(enemy, contact);
+        } else {
+            contact.seenByCount++;
+            contact.status = ContactStatus.VISIBLE;
         }
-        contact.status = ContactStatus.VISIBLE;
         contact.lastSeenPos.copy(position);
         contact.lastSeenTime = 0;
         contact.confidence = 1.0;
@@ -76,11 +79,31 @@ export class TeamIntel {
     }
 
     /**
-     * Report that an enemy was lost (no longer visible).
+     * Refresh an existing contact's position (does NOT change seenByCount).
+     * Used for continuous observation by an AI that already reported sighting.
+     */
+    refreshContact(enemy, position, velocity, inVehicle = false) {
+        const contact = this.contacts.get(enemy);
+        if (!contact) return;
+        contact.lastSeenPos.copy(position);
+        contact.lastSeenTime = 0;
+        contact.confidence = 1.0;
+        contact.inVehicle = inVehicle;
+        if (velocity) {
+            contact.lastSeenVelocity.set(velocity.x, velocity.y, velocity.z);
+        }
+    }
+
+    /**
+     * Report that an enemy was lost by one observer (decrements seenByCount).
+     * Only transitions status when no observers remain.
      */
     reportLost(enemy) {
         const contact = this.contacts.get(enemy);
-        if (!contact || contact.status !== ContactStatus.VISIBLE) return;
+        if (!contact) return;
+        contact.seenByCount = Math.max(0, contact.seenByCount - 1);
+        if (contact.seenByCount > 0) return; // other AIs still observing
+        if (contact.status !== ContactStatus.VISIBLE) return;
         if (contact.inVehicle) {
             this.contacts.delete(enemy);   // vehicle moves too fast, lastSeenPos is stale
         } else {
