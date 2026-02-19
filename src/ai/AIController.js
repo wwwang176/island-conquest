@@ -705,13 +705,15 @@ export class AIController {
         }
 
         const inHeli = this.vehicle && this.vehicle.type === 'helicopter';
+        const myRange = this.vehicle ? this.vehicle.detectionRange : 80;
 
         for (const enemy of this.enemies) {
             if (!enemy.alive) continue;
             const ePos = enemy.getPosition();
             const dist = myPos.distanceTo(ePos);
 
-            if (dist > (inHeli ? 120 : 80)) continue; // extended range from air
+            const targetVis = enemy.vehicle ? enemy.vehicle.visibilityRange : 80;
+            if (dist > Math.max(myRange, targetVis)) continue;
 
             // FOV check (120°) — skip in helicopter (360° awareness)
             if (!inHeli) {

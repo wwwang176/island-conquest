@@ -31,6 +31,10 @@ export class Vehicle {
         this.respawnDelay = 45;
         this.enterRadius = 3;
 
+        // AI perception — how far occupants can detect, and how far this vehicle is visible
+        this.detectionRange = 80;   // scan radius for occupants
+        this.visibilityRange = 80;  // how far away enemies can spot this vehicle
+
         // Mesh (set by subclass)
         this.mesh = null;
 

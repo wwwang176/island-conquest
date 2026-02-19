@@ -38,6 +38,10 @@ export class Helicopter extends Vehicle {
         this.maxHP = 6000;
         this.hp = this.maxHP;
 
+        // Helicopters are large, loud, and unobstructed in the sky
+        this.detectionRange = 120;   // aerial view → see further
+        this.visibilityRange = 120;  // easy to spot from ground
+
         // Multi-passenger
         this.passengers = [];
         this.maxPassengers = 4;
