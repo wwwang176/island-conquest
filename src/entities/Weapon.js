@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { WeaponDefs, GunAnim } from './WeaponDefs.js';
 import { Soldier } from './Soldier.js';
 
+const _tracerOrigin = new THREE.Vector3();
+
 /**
  * Assault Rifle weapon system.
  * Handles firing (hitscan), reloading, recoil spread, and visual feedback.
@@ -178,9 +180,13 @@ export class Weapon {
                 this.impactVFX.spawn(impactType, hit.point, worldNormal);
             }
 
-            // Player tracer
+            // Player tracer — skip past gun model so line starts in front of character
             if (this.tracerSystem) {
-                this.tracerSystem.fire(origin, spreadDir, hit.distance);
+                const tracerSkip = Math.abs(-0.40 + this.def.tpMuzzleZ) * 1.5;
+                if (hit.distance > tracerSkip) {
+                    _tracerOrigin.copy(origin).addScaledVector(spreadDir, tracerSkip);
+                    this.tracerSystem.fire(_tracerOrigin, spreadDir, hit.distance - tracerSkip);
+                }
             }
 
             // Calculate damage with falloff
@@ -200,7 +206,9 @@ export class Weapon {
 
         // No hit — tracer at max range
         if (this.tracerSystem) {
-            this.tracerSystem.fire(origin, spreadDir, this.maxRange);
+            const tracerSkip = Math.abs(-0.40 + this.def.tpMuzzleZ) * 1.5;
+            _tracerOrigin.copy(origin).addScaledVector(spreadDir, tracerSkip);
+            this.tracerSystem.fire(_tracerOrigin, spreadDir, this.maxRange - tracerSkip);
         }
 
         return null;

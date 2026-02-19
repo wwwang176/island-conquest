@@ -15,7 +15,7 @@ let _sharedGeo = null;
 
 function getSharedGeo() {
     if (!_sharedGeo) {
-        _sharedGeo = new THREE.CylinderGeometry(TRACER_RADIUS, TRACER_RADIUS, 1, 3, 1, false);
+        _sharedGeo = new THREE.CylinderGeometry(TRACER_RADIUS, TRACER_RADIUS, 1, 3, 1, true);
     }
     return _sharedGeo;
 }

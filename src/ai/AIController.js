@@ -2435,9 +2435,11 @@ export class AIController {
             tracerDist = hitEnv.distance;
         }
 
-        // Spawn tracer VFX
-        if (this.tracerSystem) {
-            this.tracerSystem.fire(_origin, dir, tracerDist);
+        // Spawn tracer VFX — skip past body so line starts in front of character
+        const TRACER_SKIP = 1.5;
+        if (this.tracerSystem && tracerDist > TRACER_SKIP) {
+            _v2.copy(_origin).addScaledVector(dir, TRACER_SKIP);
+            this.tracerSystem.fire(_v2, dir, tracerDist - TRACER_SKIP);
         }
 
         // Visual recoil kick on gun mesh
