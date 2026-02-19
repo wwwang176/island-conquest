@@ -2,24 +2,21 @@ import * as THREE from 'three';
 import { BTState, Selector, Sequence, Condition, Action } from './BehaviorTree.js';
 import { PersonalityTypes } from './Personality.js';
 import { findFlankPosition, computePreAimPoint, computeSuppressionTarget, findRidgelineAimPoint } from './TacticalActions.js';
-import { WeaponDefs, GunAnim } from '../entities/WeaponDefs.js';
+import { WeaponDefs } from '../entities/WeaponDefs.js';
 import { HELI_PASSENGER_SLOTS, HELI_PILOT_OFFSET } from '../entities/Helicopter.js';
-import { applyFalloff } from '../shared/DamageFalloff.js';
-import { solveGrenadeBallistic, shouldThrowGrenade, actionThrowGrenade } from './AIGrenade.js';
-
-const _heliInput = { thrust: 0, brake: 0, steerLeft: false, steerRight: false, ascend: false, descend: false };
+import { shouldThrowGrenade, actionThrowGrenade } from './AIGrenade.js';
+import { updateMovement, validateMoveTarget } from './AIMovement.js';
+import { updateAiming, updateShooting } from './AIShooter.js';
+import { shouldUseVehicle, actionBoardVehicle, actionDriveVehicle, updateVehicleDriving, exitVehicle as exitVehicleFn } from './AIVehicleController.js';
+import { updateSoldierVisual, updateUpperBodyAim, updateDebugArc } from './AIVisual.js';
 
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
-const _raycaster = new THREE.Raycaster();
-const _origin = new THREE.Vector3();
-const _target = new THREE.Vector3();
 const _strafeDir = new THREE.Vector3();
 const _tmpVec = new THREE.Vector3();
-const _tmpQuat = new THREE.Quaternion();
 const _aimDirVec = new THREE.Vector3();
-const _targetMeshes = [];
-const _fireCollidables = [];
+const _tmpQuat = new THREE.Quaternion();
+const _raycaster = new THREE.Raycaster();
 
 const EYE_HEIGHT = 1.5;
 const HEAD_TOP_HEIGHT = 1.7;
@@ -59,15 +56,6 @@ function _hasGridLOS(tm, c0, r0, eyeY0, c1, r1) {
     if (_bresenhamClear(tm, c0, r0, eyeY0, c1, r1, baseY1 + EYE_HEIGHT)) return 1;
     if (_bresenhamClear(tm, c0, r0, eyeY0, c1, r1, baseY1 + HEAD_TOP_HEIGHT)) return 2;
     return 0;
-}
-
-/** Lerp between two angles handling wraparound. */
-function _lerpAngle(a, b, t) {
-    let diff = b - a;
-    // Wrap to [-PI, PI]
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    return a + diff * t;
 }
 
 /**
@@ -286,13 +274,13 @@ export class AIController {
             // 1b. Currently driving a vehicle — drive toward destination
             new Sequence([
                 new Condition(() => ctx.vehicle !== null),
-                new Action(() => ctx._actionDriveVehicle()),
+                new Action(() => actionDriveVehicle(ctx)),
             ]),
 
             // 1c. Should board a vehicle — walk toward it
             new Sequence([
-                new Condition(() => ctx._shouldUseVehicle()),
-                new Action(() => ctx._actionBoardVehicle()),
+                new Condition(() => shouldUseVehicle(ctx)),
+                new Action(() => actionBoardVehicle(ctx)),
             ]),
 
             // 2. Reloading with nearby threats — seek cover
@@ -411,7 +399,7 @@ export class AIController {
         this._dt = dt; // store for BT actions that need delta time
         if (!this.soldier.alive) {
             // Eject from vehicle on death
-            if (this.vehicle) this._exitVehicle();
+            if (this.vehicle) exitVehicleFn(this);
             return;
         }
 
@@ -568,7 +556,7 @@ export class AIController {
         if (this.vehicle) {
             // Only the pilot drives
             if (this.vehicle.driver === this.soldier) {
-                this._updateVehicleDriving(dt);
+                updateVehicleDriving(this, dt);
             }
             // Sync soldier position to vehicle
             if (this.vehicle.mesh) {
@@ -612,7 +600,7 @@ export class AIController {
                             } else {
                                 this.facingDir.set(-Math.sin(outward), 0, -Math.cos(outward));
                             }
-                            this._updateUpperBodyAim(dt);
+                            updateUpperBodyAim(this, dt);
                             // Tilt with helicopter (yaw+pitch+roll via cached quaternion)
                             this.soldier.mesh.quaternion.copy(heli._cachedWorldQuat);
                             // Lower body: outward relative to helicopter
@@ -672,20 +660,20 @@ export class AIController {
                 this._vehicleFireBlocked = !canFire;
                 if (canFire) {
                     this.hasReacted = true;
-                    this._updateAiming(dt);
+                    updateAiming(this, dt);
                 } else {
                     this.hasReacted = false;
                 }
-                this._updateShooting(dt);
+                updateShooting(this, dt);
             }
             return;
         }
 
-        this._updateMovement(dt);
-        this._updateSoldierVisual(dt);
-        this._updateDebugArc();
-        this._updateAiming(dt);
-        this._updateShooting(dt);
+        updateMovement(this, dt);
+        updateSoldierVisual(this, dt);
+        updateDebugArc(this);
+        updateAiming(this, dt);
+        updateShooting(this, dt);
     }
 
     // ───── Threat Scanning ─────
@@ -935,7 +923,7 @@ export class AIController {
             if (safePos) {
                 this._releaseCover();
                 this.moveTarget = safePos;
-                this._validateMoveTarget();
+                validateMoveTarget(this);
                 this.seekingCover = true;
                 return BTState.RUNNING;
             }
@@ -955,7 +943,7 @@ export class AIController {
                 // Move to safe side of cover: 5m behind obstacle away from enemy
                 const behindOffset = threatDir.clone().multiplyScalar(-5);
                 this.moveTarget = chosen.position.clone().add(behindOffset);
-                this._validateMoveTarget();
+                validateMoveTarget(this);
                 this.seekingCover = true;
                 return BTState.RUNNING;
             }
@@ -970,7 +958,7 @@ export class AIController {
                     new THREE.Vector3(_v1.z, 0, -_v1.x).multiplyScalar(5 * (Math.random() > 0.5 ? 1 : -1))
                 )
             );
-            this._validateMoveTarget();
+            validateMoveTarget(this);
         }
         this.seekingCover = true;
         return BTState.RUNNING;
@@ -1050,7 +1038,7 @@ export class AIController {
         if (dist > 8) {
             // Still far — run toward friendly flag
             this.moveTarget = this.fallbackTarget;
-            this._validateMoveTarget();
+            validateMoveTarget(this);
             this.seekingCover = false;
         } else {
             // Arrived — find nearby cover and hold
@@ -1070,7 +1058,7 @@ export class AIController {
             // Rally phase: move toward flag but don't charge in
             if (dist > 20) {
                 this.moveTarget = this.rushTarget.clone();
-                this._validateMoveTarget();
+                validateMoveTarget(this);
             }
             return BTState.RUNNING;
         }
@@ -1089,7 +1077,7 @@ export class AIController {
 
             // Rush active — charge the flag
             this.moveTarget = this.rushTarget.clone();
-            this._validateMoveTarget();
+            validateMoveTarget(this);
             this.seekingCover = false;
             this.missionPressure = 0.0;
         } else {
@@ -1101,7 +1089,7 @@ export class AIController {
 
     _actionCrossfire() {
         this.moveTarget = this.crossfirePos;
-        this._validateMoveTarget();
+        validateMoveTarget(this);
         this.seekingCover = false;
         this.missionPressure = 0.5;
         return BTState.RUNNING;
@@ -1132,7 +1120,7 @@ export class AIController {
 
         // Move toward the contact's last known position
         this.moveTarget = nearest.lastSeenPos.clone();
-        this._validateMoveTarget();
+        validateMoveTarget(this);
 
         // Pre-aim at predicted position
         computePreAimPoint(nearest, this.aimPoint);
@@ -1170,7 +1158,7 @@ export class AIController {
                     myPos, enemyPos, this.coverSystem, this.flankSide, this.navGrid, _tmpVec
                 );
                 this.moveTarget = _tmpVec.clone();
-                this._validateMoveTarget();
+                validateMoveTarget(this);
                 this.seekingCover = false;
                 this.missionPressure = 0.5;
                 return BTState.RUNNING;
@@ -1248,7 +1236,7 @@ export class AIController {
             _tmpVec.z += _strafeDir.z * strafeSide * 8;
             this.moveTarget = _tmpVec.clone();
         }
-        this._validateMoveTarget();
+        validateMoveTarget(this);
 
         this.missionPressure = 1.0;
         this.seekingCover = false;
@@ -1275,7 +1263,7 @@ export class AIController {
                     formationPos.z += Math.sin(jAngle) * jDist;
                 }
                 this.moveTarget = formationPos.clone();
-                this._validateMoveTarget();
+                validateMoveTarget(this);
                 this.missionPressure = 0.5;
                 this.seekingCover = false;
                 return BTState.RUNNING;
@@ -1308,259 +1296,10 @@ export class AIController {
             }
             this.missionPressure = 0.5;
         }
-        this._validateMoveTarget();
+        validateMoveTarget(this);
 
         this.seekingCover = false;
         return BTState.RUNNING;
-    }
-
-    // ───── Vehicle Actions ─────
-
-    /**
-     * Find a helicopter that a squad mate is already in (with room left).
-     * @returns {import('../entities/Helicopter.js').Helicopter|null}
-     */
-    _findSquadHelicopter() {
-        if (!this.squad || !this.vehicleManager) return null;
-        for (const ctrl of this.squad.controllers) {
-            if (ctrl === this) continue;
-            if (!ctrl.vehicle) continue;
-            const v = ctrl.vehicle;
-            if (!v.alive || v.team !== this.team) continue;
-            if (v.type === 'helicopter' && v.occupantCount >= 5) continue;
-            return v;
-        }
-        return null;
-    }
-
-    /**
-     * Should the AI use a vehicle to reach its target?
-     * Conditions: target flag is far away (>60m) OR A* path failed (cross-water),
-     * no close enemies, and team has an available vehicle.
-     */
-    _shouldUseVehicle() {
-        if (this.vehicle) return false; // already driving
-        if (!this.vehicleManager) return false;
-
-        // Don't board if there's a close enemy
-        if (this.targetEnemy && this.targetEnemy.alive) {
-            const myPos = this.soldier.getPosition();
-            const eDist = myPos.distanceTo(this.targetEnemy.getPosition());
-            if (eDist < 40) return false;
-        }
-
-        // Priority: if a squad mate is already in a helicopter, join them
-        const squadHeli = this._findSquadHelicopter();
-        if (squadHeli) {
-            // Skip if helicopter is already airborne (too high above ground to board)
-            const hPos = squadHeli.mesh.position;
-            const hGround = this.getHeightAt(hPos.x, hPos.z);
-            if (hPos.y - hGround > squadHeli.enterRadius) return false;
-
-            this._vehicleBoardTarget = squadHeli;
-            this._vehicleMoveTarget = this.targetFlag ? this.targetFlag.position.clone() : null;
-            return true;
-        }
-
-        // Check if target flag is far enough to warrant a vehicle
-        if (this.targetFlag) {
-            const myPos = this.soldier.getPosition();
-            const dist = myPos.distanceTo(this.targetFlag.position);
-            const needsVehicle = dist > 60 || this._noPathFound;
-            if (!needsVehicle) return false;
-        } else {
-            return false;
-        }
-
-        // Check for available vehicle
-        const v = this.vehicleManager.findNearestVehicle(this.soldier, 80);
-        if (!v) return false;
-
-        this._vehicleBoardTarget = v;
-        this._vehicleMoveTarget = this.targetFlag.position.clone();
-        return true;
-    }
-
-    _actionBoardVehicle() {
-        const bt = this._vehicleBoardTarget;
-        if (!bt || !bt.alive) {
-            this._vehicleBoardTarget = null;
-            return BTState.FAILURE;
-        }
-        // Reject if vehicle is full
-        const maxOcc = bt.type === 'helicopter' ? 5 : 1;
-        if ((bt.occupantCount || (bt.driver ? 1 : 0)) >= maxOcc) {
-            this._vehicleBoardTarget = null;
-            return BTState.FAILURE;
-        }
-        // Abort if helicopter took off while we were walking toward it
-        if (bt.type === 'helicopter') {
-            const bPos = bt.mesh.position;
-            if (bPos.y - this.getHeightAt(bPos.x, bPos.z) > bt.enterRadius) {
-                this._vehicleBoardTarget = null;
-                return BTState.FAILURE;
-            }
-        }
-
-        const myPos = this.soldier.getPosition();
-        const vPos = this._vehicleBoardTarget.mesh.position;
-        const dx = vPos.x - myPos.x;
-        const dz = vPos.z - myPos.z;
-        const dist = Math.sqrt(dx * dx + dz * dz);
-
-        if (dist < this._vehicleBoardTarget.enterRadius) {
-            // Close enough — enter the vehicle
-            this._releaseCover();
-            this._vehicleBoardTarget.enter(this.soldier);
-            this.vehicle = this._vehicleBoardTarget;
-            // AI soldiers always visible in vehicles (positioned at cockpit/door slots)
-            this.soldier.mesh.visible = true;
-            // Pilot: start waiting for passengers immediately on boarding
-            if (this.vehicle.driver === this.soldier && this.vehicle.type === 'helicopter') {
-                this._heliWaitingForPassengers = true;
-                this._heliWaitTimer = 10;
-            }
-            this._vehicleBoardTarget = null;
-            return BTState.SUCCESS;
-        }
-
-        this.moveTarget = new THREE.Vector3(vPos.x, 0, vPos.z);
-        this.missionPressure = 0.5;
-        return BTState.RUNNING;
-    }
-
-    _actionDriveVehicle() {
-        const v = this.vehicle;
-        if (!v || !v.alive) {
-            this._exitVehicle();
-            return BTState.FAILURE;
-        }
-
-        // Helicopter: air fire support, never disembark
-        if (v.type === 'helicopter') {
-            // Pilot updates orbit target; passengers just ride along
-            if (v.driver === this.soldier && this.targetFlag) {
-                this._vehicleMoveTarget = this.targetFlag.position.clone();
-            }
-            this.missionPressure = 0.3;
-            // Pilot wait logic: wait for first passenger, then 10s extra for more
-            if (v.driver === this.soldier) {
-                if (v.passengers.length === 0) {
-                    // No passengers yet — wait indefinitely
-                    this._heliWaitingForPassengers = true;
-                    this._heliWaitTimer = 10;
-                } else if (v.passengers.length >= v.maxPassengers) {
-                    // All seats filled — depart almost immediately
-                    this._heliWaitingForPassengers = true;
-                    this._heliWaitTimer = Math.min(this._heliWaitTimer, 0.5);
-                } else if (this._heliWaitTimer > 0) {
-                    // Has passengers but still in grace period
-                    this._heliWaitingForPassengers = true;
-                } else {
-                    this._heliWaitingForPassengers = false;
-                }
-            }
-            return BTState.RUNNING;
-        }
-
-        // Unknown vehicle type — exit
-        this._exitVehicle();
-        return BTState.FAILURE;
-    }
-
-    /**
-     * Continuous vehicle driving — called every frame from updateContinuous().
-     * Computes steering input and applies it to the vehicle.
-     */
-    _updateVehicleDriving(dt) {
-        const v = this.vehicle;
-        if (!v || !v.alive) return;
-
-        if (v.type === 'helicopter') {
-            this._updateHelicopterOrbit(dt);
-        }
-    }
-
-    _updateHelicopterOrbit(dt) {
-        const v = this.vehicle;
-        const vPos = v.mesh.position;
-        const target = this._vehicleMoveTarget || (this.targetFlag ? this.targetFlag.position : null);
-        if (!target) return;
-
-        // Wait on ground until passengers board + grace period expires
-        if (this._heliWaitingForPassengers) {
-            if (v.passengers.length > 0) {
-                // All seats filled — depart almost immediately
-                if (v.passengers.length >= v.maxPassengers) {
-                    this._heliWaitTimer = Math.min(this._heliWaitTimer, 0.5);
-                }
-                this._heliWaitTimer -= dt;
-                if (this._heliWaitTimer <= 0) {
-                    this._heliWaitingForPassengers = false;
-                }
-            }
-            if (this._heliWaitingForPassengers) return;
-        }
-
-        const orbitRadius = 35;
-        const desiredAlt = 22;
-        const orbitSpeed = 0.3; // rad/s → ~21s per full orbit
-
-        // Advance orbit angle
-        this._vehicleOrbitAngle += orbitSpeed * dt;
-
-        // Compute orbit waypoint — clamp within map bounds
-        const MAP_HW = 145, MAP_HD = 55; // map half-extents with margin
-        let waypointX = target.x + Math.sin(this._vehicleOrbitAngle) * orbitRadius;
-        let waypointZ = target.z + Math.cos(this._vehicleOrbitAngle) * orbitRadius;
-        waypointX = Math.max(-MAP_HW, Math.min(MAP_HW, waypointX));
-        waypointZ = Math.max(-MAP_HD, Math.min(MAP_HD, waypointZ));
-
-        const dx = waypointX - vPos.x;
-        const dz = waypointZ - vPos.z;
-        const dist = Math.sqrt(dx * dx + dz * dz);
-
-        const waypointAngle = Math.atan2(dx, dz);
-        let angleDiff = waypointAngle - v.rotationY;
-        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-
-        _heliInput.thrust = Math.min(0.7, dist / 20);
-        _heliInput.brake = 0;
-        _heliInput.steerLeft = angleDiff > 0.1;
-        _heliInput.steerRight = angleDiff < -0.1;
-        _heliInput.ascend = vPos.y < desiredAlt;
-        _heliInput.descend = vPos.y > desiredAlt + 5;
-
-        // Terrain clearance: climb if terrain is close below or ahead
-        const groundBelow = this.getHeightAt(vPos.x, vPos.z);
-        const minClearance = 12;
-        if (vPos.y < groundBelow + minClearance) {
-            _heliInput.ascend = true;
-            _heliInput.descend = false;
-        }
-        const aheadX = vPos.x + Math.sin(v.rotationY) * 20;
-        const aheadZ = vPos.z + Math.cos(v.rotationY) * 20;
-        const aheadGround = this.getHeightAt(aheadX, aheadZ);
-        if (vPos.y < aheadGround + minClearance) {
-            _heliInput.ascend = true;
-            _heliInput.descend = false;
-        }
-
-        v.applyInput(_heliInput, dt);
-    }
-
-    _exitVehicle() {
-        if (!this.vehicle) return;
-        const v = this.vehicle;
-        const exitPos = v.exit(this.soldier);
-        this.vehicle = null;
-        this._vehicleMoveTarget = null;
-        this.soldier.mesh.visible = true;
-        if (exitPos) {
-            const h = this.getHeightAt(exitPos.x, exitPos.z);
-            this.soldier.body.position.set(exitPos.x, Math.max(h + 0.1, exitPos.y), exitPos.z);
-        }
     }
 
     _actionPatrol() {
@@ -1574,775 +1313,10 @@ export class AIController {
                     (Math.random() - 0.5) * 20
                 )
             );
-            this._validateMoveTarget();
+            validateMoveTarget(this);
         }
         this.missionPressure = 1.0;
         return BTState.RUNNING;
-    }
-
-    // ───── Move Target Validation ─────
-
-    /**
-     * Ensure moveTarget is on a walkable NavGrid cell.
-     * If not, snap to the nearest walkable cell.
-     */
-    _validateMoveTarget() {
-        if (!this.moveTarget || !this.navGrid) return;
-        const g = this.navGrid.worldToGrid(this.moveTarget.x, this.moveTarget.z);
-        if (!this.navGrid.isWalkable(g.col, g.row)) {
-            const nearest = this.navGrid._findNearestWalkable(g.col, g.row);
-            if (nearest) {
-                const w = this.navGrid.gridToWorld(nearest.col, nearest.row);
-                this.moveTarget.x = w.x;
-                this.moveTarget.z = w.z;
-            }
-        }
-    }
-
-    // ───── Pathfinding ─────
-
-    _requestPath(forceAStar = false) {
-        if (!this.navGrid || !this.moveTarget) return;
-
-        if (!forceAStar) {
-            if (this._pathCooldown > 0) return;
-        }
-
-        const myPos = this.soldier.getPosition();
-
-        // Pass threat grid directly (avoid per-neighbour callback overhead)
-        const tm = this.threatMap;
-        const threatGrid = tm ? tm.threat : null;
-        const threatCols = tm ? tm.cols : 0;
-        const path = this.navGrid.findPath(
-            myPos.x, myPos.z, this.moveTarget.x, this.moveTarget.z,
-            threatGrid, threatCols,
-        );
-
-        // Adaptive cooldown: 0.5s near obstacles/stuck, 1.5s open terrain
-        // Jitter ±0.2s to spread A* calls across frames
-        const jitter = (Math.random() - 0.5) * 0.4;
-        let cooldown = 1.5;
-        if (this.stuckTimer > 0) {
-            cooldown = 0.5;
-        } else if (path && path.length > 0) {
-            const ng = this.navGrid;
-            for (let i = 0, len = Math.min(path.length, 6); i < len; i++) {
-                const g = ng.worldToGrid(path[i].x, path[i].z);
-                const idx = g.row * ng.cols + g.col;
-                if (ng.proxCost[idx] > 1) { cooldown = 0.5; break; }
-            }
-        }
-
-        if (path === null) {
-            this.currentPath = [];
-            this.pathIndex = 0;
-            this._pathCooldown = 0.5 + jitter;
-            this._noPathFound = true;
-        } else if (path.length === 0) {
-            this.currentPath = [];
-            this.pathIndex = 0;
-            this._pathCooldown = cooldown + jitter;
-            this._noPathFound = false;
-        } else {
-            this.currentPath = path;
-            this.pathIndex = 0;
-            this._pathCooldown = cooldown + jitter;
-            this._noPathFound = false;
-        }
-    }
-
-    // ───── Movement ─────
-
-    _updateMovement(dt) {
-        const body = this.soldier.body;
-        const myPos = this.soldier.getPosition();
-        const groundY = this.getHeightAt(myPos.x, myPos.z);
-
-        // Handle jumping (manual parabola)
-        if (this.isJumping) {
-            this.jumpVelY -= 9.8 * dt; // gravity
-            body.position.y += this.jumpVelY * dt;
-            if (body.position.y <= groundY + 0.05) {
-                body.position.y = groundY + 0.05;
-                this.isJumping = false;
-                this.jumpVelY = 0;
-            }
-        }
-
-        // Ground snap — unconditional (fixes floating after respawn)
-        if (!this.isJumping) {
-            body.position.y = groundY + 0.05;
-        }
-
-        // Facing direction — suppression takes priority (body must face where bullets go)
-        if (this.suppressionTarget && this.suppressionTimer > 0) {
-            _v2.subVectors(this.aimPoint, myPos).normalize();
-            _v2.y = 0;
-            this.facingDir.lerp(_v2, 0.3).normalize();
-        } else if (this.targetEnemy && this.targetEnemy.alive) {
-            _v2.subVectors(this.targetEnemy.getPosition(), myPos).normalize();
-            _v2.y = 0;
-            const turnRate = this.hasReacted ? 0.45 : 0.15;
-            this.facingDir.lerp(_v2, turnRate).normalize();
-        }
-
-        // Reflex dodge: lateral movement even without moveTarget
-        if (this._reflexDodgeTimer > 0 && !this.moveTarget) {
-            const speed = this.moveSpeed;
-            const rdx = this._reflexDodgeDirX * speed * dt;
-            const rdz = this._reflexDodgeDirZ * speed * dt;
-            let nx = body.position.x + rdx;
-            let nz = body.position.z + rdz;
-            // NavGrid check
-            let blocked = false;
-            if (this.navGrid) {
-                const g = this.navGrid.worldToGrid(nx, nz);
-                if (!this.navGrid.isWalkable(g.col, g.row)) blocked = true;
-            }
-            if (!blocked) {
-                const gy = this.getHeightAt(nx, nz);
-                body.position.x = nx;
-                body.position.z = nz;
-                if (!this.isJumping) body.position.y = gy + 0.05;
-            }
-            this.lastPos.copy(myPos);
-            return;
-        }
-
-        if (!this.moveTarget) {
-            // No destination — decelerate to zero (inertia slide)
-            const decelRate = 12;
-            const td = Math.min(1, decelRate * dt);
-            this._velX += (0 - this._velX) * td;
-            this._velZ += (0 - this._velZ) * td;
-            if (this._velX * this._velX + this._velZ * this._velZ < 0.01) {
-                this._velX = 0;
-                this._velZ = 0;
-            } else {
-                const nx2 = body.position.x + this._velX * dt;
-                const nz2 = body.position.z + this._velZ * dt;
-                let slideBlocked = false;
-                if (this.navGrid) {
-                    const g = this.navGrid.worldToGrid(nx2, nz2);
-                    if (!this.navGrid.isWalkable(g.col, g.row)) slideBlocked = true;
-                }
-                if (!slideBlocked) {
-                    body.position.x = nx2;
-                    body.position.z = nz2;
-                    if (!this.isJumping) body.position.y = this.getHeightAt(nx2, nz2) + 0.05;
-                }
-            }
-            this.lastPos.copy(myPos);
-            return;
-        }
-
-        // Request A* path if available
-        this._requestPath();
-
-        // If A* failed, don't move — but allow recovery after timeout
-        if (this._noPathFound) {
-            this.btTimer = this.btInterval; // force BT re-tick
-            this.seekingCover = false;      // allow BT to try different action
-            this.stuckTimer += dt;
-            if (this.stuckTimer > 1.0) {
-                // Recovery: clear failure, invalidate target so BT picks fresh
-                this._noPathFound = false;
-                this.stuckTimer = 0;
-                this.moveTarget = null;
-                this.currentPath = [];
-                this.pathIndex = 0;
-                this._pathCooldown = 0;
-            }
-            this.lastPos.copy(myPos);
-            return;
-        }
-
-        // Determine immediate steering target: next waypoint or direct moveTarget
-        let steerTarget = this.moveTarget;
-        if (this.currentPath.length > 0 && this.pathIndex < this.currentPath.length) {
-            const wp = this.currentPath[this.pathIndex];
-            _tmpVec.set(wp.x, 0, wp.z);
-            steerTarget = _tmpVec;
-            // Advance waypoint when close enough
-            const wpDist = Math.sqrt(
-                (myPos.x - wp.x) ** 2 + (myPos.z - wp.z) ** 2
-            );
-            if (wpDist < 1.5) {
-                this.pathIndex++;
-                if (this.pathIndex >= this.currentPath.length) {
-                    // Path completed — will recompute on next cooldown
-                    this._pathCooldown = 0;
-                    steerTarget = this.moveTarget;
-                } else {
-                    const nextWp = this.currentPath[this.pathIndex];
-                    _tmpVec.set(nextWp.x, 0, nextWp.z);
-                    steerTarget = _tmpVec;
-                }
-            }
-        } else {
-            // No A* path — only allow direct movement when close to target
-            const directDist = myPos.distanceTo(this.moveTarget);
-            if (directDist > 5) {
-                this.lastPos.copy(myPos);
-                return; // wait for A* path before moving
-            }
-        }
-
-        _v1.subVectors(steerTarget, myPos);
-        _v1.y = 0;
-        const dist = _v1.length();
-
-        if (dist < 1) {
-            // If following path, advance to next waypoint
-            if (this.currentPath.length > 0 && this.pathIndex < this.currentPath.length) {
-                this.pathIndex++;
-            } else {
-                // Arrived at final destination — clear moveTarget so BT assigns fresh
-                this.moveTarget = null;
-                this.btTimer = this.btInterval;
-            }
-            this.lastPos.copy(myPos);
-            return;
-        }
-
-        _v1.normalize();
-
-        // ── Reflex dodge blend: inject lateral offset while dodging ──
-        if (this._reflexDodgeTimer > 0) {
-            const dodgeWeight = 0.5; // blend 50% dodge into movement
-            _v1.x = _v1.x * (1 - dodgeWeight) + this._reflexDodgeDirX * dodgeWeight;
-            _v1.z = _v1.z * (1 - dodgeWeight) + this._reflexDodgeDirZ * dodgeWeight;
-            const rLen = Math.sqrt(_v1.x * _v1.x + _v1.z * _v1.z);
-            if (rLen > 0.001) { _v1.x /= rLen; _v1.z /= rLen; }
-        }
-
-        // ── Ally separation force ──
-        // Strength scales with context: high risk → strong, combat → moderate, idle → mild
-        let sepWeight;
-        if (this.riskLevel > 0.5)         sepWeight = 0.30;
-        else if (this.targetEnemy !== null) sepWeight = 0.20;
-        else                               sepWeight = 0.08;
-
-        const minSepDist = 3;   // below this distance, repulsion spikes
-        const maxSepRange = 12; // ignore allies farther than this
-        let sepX = 0, sepZ = 0;
-
-        if (this.allies) {
-            for (const a of this.allies) {
-                if (!a.alive || a === this.soldier) continue;
-                const aPos = a.getPosition();
-                const adx = myPos.x - aPos.x;
-                const adz = myPos.z - aPos.z;
-                const aDist = Math.sqrt(adx * adx + adz * adz);
-                if (aDist > maxSepRange || aDist < 0.01) continue;
-                // Weight: 1/dist² — very strong when close
-                const strength = 1 / (Math.max(aDist, minSepDist) * Math.max(aDist, minSepDist));
-                sepX += (adx / aDist) * strength;
-                sepZ += (adz / aDist) * strength;
-            }
-        }
-        const sepLen = Math.sqrt(sepX * sepX + sepZ * sepZ);
-        if (sepLen > 0.001) {
-            sepX /= sepLen;
-            sepZ /= sepLen;
-            _v1.x = _v1.x * (1 - sepWeight) + sepX * sepWeight;
-            _v1.z = _v1.z * (1 - sepWeight) + sepZ * sepWeight;
-            // Re-normalize
-            const rLen = Math.sqrt(_v1.x * _v1.x + _v1.z * _v1.z);
-            if (rLen > 0.001) { _v1.x /= rLen; _v1.z /= rLen; }
-        }
-
-        let movementBlocked = false;
-
-        const speed = this.seekingCover ? this.moveSpeed * 1.2 : this.moveSpeed;
-
-        // Target velocity from direction
-        const targetVX = _v1.x * speed;
-        const targetVZ = _v1.z * speed;
-
-        // Lerp current velocity toward target (inertia)
-        const accelRate = 20;
-        const ta = Math.min(1, accelRate * dt);
-        this._velX += (targetVX - this._velX) * ta;
-        this._velZ += (targetVZ - this._velZ) * ta;
-
-        // Move horizontally using smoothed velocity
-        const dx = this._velX * dt;
-        const dz = this._velZ * dt;
-        const newX = body.position.x + dx;
-        const newZ = body.position.z + dz;
-
-        // NavGrid obstacle check with axis-separated sliding
-        let finalX = newX;
-        let finalZ = newZ;
-        if (this.navGrid) {
-            let g = this.navGrid.worldToGrid(newX, newZ);
-            if (!this.navGrid.isWalkable(g.col, g.row)) {
-                // Try sliding along each axis individually
-                const gX = this.navGrid.worldToGrid(newX, body.position.z);
-                const gZ = this.navGrid.worldToGrid(body.position.x, newZ);
-                if (this.navGrid.isWalkable(gX.col, gX.row)) {
-                    finalX = newX; finalZ = body.position.z;
-                } else if (this.navGrid.isWalkable(gZ.col, gZ.row)) {
-                    finalX = body.position.x; finalZ = newZ;
-                } else {
-                    movementBlocked = true;
-                }
-            }
-        }
-
-        if (!movementBlocked) {
-            const newGroundY = this.getHeightAt(finalX, finalZ);
-            const currentFootY = body.position.y;
-            const slopeRise = newGroundY - currentFootY;
-            const stepX = finalX - body.position.x;
-            const stepZ = finalZ - body.position.z;
-            const slopeRun = Math.sqrt(stepX * stepX + stepZ * stepZ);
-            const slopeAngle = slopeRun > 0.001 ? Math.atan2(slopeRise, slopeRun) : 0;
-            const maxClimbAngle = Math.PI * 0.42; // ~75°
-
-            if (slopeAngle < maxClimbAngle) {
-                body.position.x = finalX;
-                body.position.z = finalZ;
-                if (!this.isJumping) {
-                    body.position.y = newGroundY + 0.05;
-                }
-            } else {
-                // Steep terrain — trigger jump
-                if (!this.isJumping) {
-                    this.isJumping = true;
-                    this.jumpVelY = 2.5;
-                    body.position.x += _v1.x * speed * 0.3 * dt;
-                    body.position.z += _v1.z * speed * 0.3 * dt;
-                } else {
-                    movementBlocked = true;
-                }
-            }
-        }
-
-        // Update facing: pre-aim nearest intel contact, or fall back to movement direction
-        this._preAimActive = false;
-        if (this._grenadeThrowTimer > 0) {
-            // During grenade throw, keep aimPoint on the throw arc — skip pre-aim
-        } else if (!this.targetEnemy || !this.targetEnemy.alive) {
-            let preAimed = false;
-            if (this.teamIntel) {
-                // Re-evaluate intel target only when cooldown expires or current contact is stale
-                let nearest = this._preAimContact;
-                if (nearest && nearest.confidence <= 0) {
-                    nearest = null; // contact expired
-                }
-                if (!nearest || this._preAimCooldown <= 0) {
-                    nearest = null;
-                    let nearestDist = Infinity;
-                    for (const contact of this.teamIntel.contacts.values()) {
-                        if (contact.status === 'visible') continue;
-                        const d = myPos.distanceTo(contact.lastSeenPos);
-                        if (d < this.weaponDef.maxRange && d < nearestDist) {
-                            nearestDist = d;
-                            nearest = contact;
-                        }
-                    }
-                    if (nearest && nearest !== this._preAimContact) {
-                        this._preAimCooldown = 0.5;
-                    }
-                    this._preAimContact = nearest;
-                }
-                if (nearest) {
-                    _v2.subVectors(nearest.lastSeenPos, myPos).normalize();
-                    _v2.y = 0;
-                    this.facingDir.lerp(_v2, 0.12).normalize();
-                    // Set aimPoint — aim at ridgeline if hill blocks view
-                    const eyeY = myPos.y + 1.5;
-                    _v2.set(myPos.x, eyeY, myPos.z);
-                    findRidgelineAimPoint(_v2, nearest.lastSeenPos, this.getHeightAt, this.aimPoint);
-                    this._preAimActive = true;
-                    preAimed = true;
-                }
-            }
-            if (!preAimed) {
-                this.facingDir.lerp(_v1, 0.1).normalize();
-            }
-        }
-
-        // Stuck detection
-        const barelyMoved = myPos.distanceTo(this.lastPos) < 0.1 * dt;
-        if (movementBlocked || barelyMoved) {
-            this.stuckTimer += dt;
-            if (this.stuckTimer > 0.6) {
-                // Force BT to recalculate target on next tick
-                this.seekingCover = false;
-                this.btTimer = this.btInterval;
-                this.stuckTimer = 0;
-                // Clear path — next 0.5s cooldown will recompute from current pos
-                this.currentPath = [];
-                this.pathIndex = 0;
-                this._pathCooldown = 0;
-            }
-        } else {
-            this.stuckTimer = 0;
-        }
-        // Record velocity for death momentum inheritance
-        const invDt = dt > 0.001 ? 1 / dt : 0;
-        this.soldier.lastMoveVelocity.set(
-            (myPos.x - this.lastPos.x) * invDt,
-            0,
-            (myPos.z - this.lastPos.z) * invDt
-        );
-
-        this.lastPos.copy(myPos);
-    }
-
-    // ───── Aiming ─────
-
-    _updateAiming(dt) {
-        // During grenade throw, aimPoint is set to the throw arc — don't overwrite
-        if (this._grenadeThrowTimer > 0) return;
-
-        // For suppression with no visible enemy, aim point is set by _actionSuppress
-        const isSuppressingBlind = this.suppressionTarget && this.suppressionTimer > 0
-            && (!this.targetEnemy || !this.targetEnemy.alive);
-        if (isSuppressingBlind) return;
-
-        if (!this.targetEnemy || !this.targetEnemy.alive || !this.hasReacted) {
-            // Reaction delay
-            if (this.targetEnemy && !this.hasReacted) {
-                this.reactionTimer -= dt;
-                if (this.reactionTimer <= 0) {
-                    this.hasReacted = true;
-                }
-            }
-            return;
-        }
-
-        // Aim at enemy — head-only if only head is exposed, otherwise center mass
-        const enemyPos = this.targetEnemy.getPosition();
-        this.aimPoint.copy(enemyPos);
-        this.aimPoint.y += this._targetLOSLevel === 2 ? 1.6 : 1.2;
-
-        // Gradually reduce aim offset
-        this.aimOffset.multiplyScalar(1 - this.aimCorrectionSpeed * dt);
-
-        // Add tracking lag for moving targets
-        const enemyVel = this.targetEnemy.body.velocity;
-        const lagAmount = (1 - this.personality.aimSkill) * 0.15;
-        this.aimOffset.x += enemyVel.x * lagAmount * dt;
-        this.aimOffset.z += enemyVel.z * lagAmount * dt;
-    }
-
-    // ───── Shooting ─────
-
-    _updateShooting(dt) {
-        this.fireTimer -= dt;
-        this.burstCooldown -= dt;
-
-        // Bolt cycling timer
-        if (this.boltTimer > 0) {
-            this.boltTimer -= dt;
-            if (this.boltTimer <= 0) this.boltTimer = 0;
-        }
-
-        // BOLT aim delay: must aim at target for aiAimDelay seconds before firing
-        if (this.weaponDef.aiAimDelay) {
-            // Unscope during bolt cycling, reloading, or grenade throw
-            if (this.boltTimer > 0 || this.isReloading || this._grenadeThrowTimer > 0) {
-                this.isScoped = false;
-            } else if (this.targetEnemy && this.targetEnemy.alive && this.hasReacted) {
-                if (this.targetEnemy !== this._lastAimTarget) {
-                    // Target changed → unscope and restart full aim delay
-                    this.isScoped = false;
-                    this._boltAimTimer = 0;
-                    this._lastAimTarget = this.targetEnemy;
-                }
-                this._boltAimTimer += dt;
-                // Scope in while aiming
-                this.isScoped = true;
-            } else {
-                this._boltAimTimer = 0;
-                this._lastAimTarget = null;
-                this.isScoped = false;
-            }
-        }
-
-        // Spread recovery during burst cooldown or when not shooting
-        // Recovery moves toward baseSpread (up for LMG after sustained fire, down for others)
-        if (this.burstCooldown > 0 || !this.targetEnemy) {
-            if (this.currentSpread > this.baseSpread) {
-                this.currentSpread = Math.max(this.baseSpread, this.currentSpread - this.spreadRecoveryRate * dt);
-            } else if (this.currentSpread < this.baseSpread) {
-                this.currentSpread = Math.min(this.baseSpread, this.currentSpread + this.spreadRecoveryRate * dt);
-            }
-        }
-
-        // Handle reload
-        if (this.isReloading) {
-            this.reloadTimer -= dt;
-            if (this.reloadTimer <= 0) {
-                this.currentAmmo = this.magazineSize;
-                this.isReloading = false;
-            }
-            this.fireTimer = 0;
-            return;
-        }
-
-        // Auto-reload when empty (immediate — no stagger, can't fight with 0 ammo)
-        if (this.currentAmmo <= 0) {
-            this.isReloading = true;
-            this.reloadTimer = this.reloadTime;
-            this.fireTimer = 0;
-            return;
-        }
-
-        // Tactical reload: proactively reload when safe and ammo below personality threshold
-        const ammoRatio = this.currentAmmo / this.magazineSize;
-        if (ammoRatio < this.personality.tacticalReloadThreshold &&
-            (!this.targetEnemy || !this.targetEnemy.alive)) {
-            if (!this.squad || this.squad.canReload(this)) {
-                this.isReloading = true;
-                this.reloadTimer = this.reloadTime;
-                this.fireTimer = 0;
-                return;
-            }
-        }
-
-        // Allow shooting during suppression
-        const isSuppressing = this.suppressionTarget && this.suppressionTimer > 0;
-
-        if (!isSuppressing) {
-            if (!this.targetEnemy || !this.targetEnemy.alive || !this.hasReacted) {
-                this.fireTimer = 0;
-                return;
-            }
-        }
-        if (this.burstCooldown > 0) {
-            this.fireTimer = 0;
-            return;
-        }
-
-        // Block firing during grenade throw
-        if (this._grenadeThrowTimer > 0) return;
-
-        // Block firing during bolt cycling
-        if (this.boltTimer > 0) return;
-
-        // Block firing during BOLT aim delay
-        if (this.weaponDef.aiAimDelay && this._boltAimTimer < this.weaponDef.aiAimDelay) return;
-
-        if (this.fireTimer <= 0) {
-            if (this.vehicle && this._vehicleFireBlocked) {
-                this.fireTimer = 0;
-                return;
-            }
-            this.fireTimer += this.fireInterval;
-            this._fireShot();
-            this.currentAmmo--;
-            this.burstCount++;
-
-            // Start bolt cycling after firing (BOLT only)
-            if (this.weaponDef.boltTime) {
-                this.boltTimer = this.weaponDef.boltTime;
-            }
-
-            if (this.burstCount >= this.burstMax) {
-                this.burstCount = 0;
-                this.burstMax = this.weaponId === 'BOLT' ? 1
-                    : this.weaponId === 'LMG'
-                        ? 20 + Math.floor(Math.random() * 10)
-                        : 6 + Math.floor(Math.random() * 8);
-                this.burstCooldown = this.weaponId === 'BOLT' ? 0 : 0.08 + Math.random() * 0.2;
-            }
-        }
-    }
-
-    _fireShot() {
-        const myPos = this.soldier.getPosition();
-        _origin.copy(myPos);
-        _origin.y += 1.5;
-
-        // Direction to aim point + offset + random spread
-        _target.copy(this.aimPoint).add(this.aimOffset);
-        const dir = _v1.subVectors(_target, _origin).normalize();
-
-        // Apply current dynamic spread (same model as Player)
-        dir.x += (Math.random() - 0.5) * 2 * this.currentSpread;
-        dir.y += (Math.random() - 0.5) * 2 * this.currentSpread;
-        dir.z += (Math.random() - 0.5) * 2 * this.currentSpread;
-        dir.normalize();
-
-        // Increase spread per shot — negative means sustained fire tightens
-        if (this.spreadIncreasePerShot >= 0) {
-            this.currentSpread = Math.min(this.maxSpread, this.currentSpread + this.spreadIncreasePerShot);
-        } else {
-            this.currentSpread = Math.max(this.weaponDef.minSpread || 0.001, this.currentSpread + this.spreadIncreasePerShot);
-        }
-
-        // Hitscan
-        _raycaster.set(_origin, dir);
-        _raycaster.far = this.weaponDef.maxRange;
-
-        // Check against all enemies
-        _targetMeshes.length = 0;
-        for (const e of this.enemies) {
-            if (e.alive && e.mesh) _targetMeshes.push(e.mesh);
-        }
-        if (this._playerMesh) _targetMeshes.push(this._playerMesh);
-
-        // Build combined collidables (terrain + vehicles) only at fire time
-        _fireCollidables.length = 0;
-        for (let i = 0; i < this.collidables.length; i++) _fireCollidables.push(this.collidables[i]);
-        if (this.vehicleManager) {
-            const vMeshes = this.vehicleManager.getVehicleMeshes();
-            for (let i = 0; i < vMeshes.length; i++) _fireCollidables.push(vMeshes[i]);
-        }
-        const envHits = _raycaster.intersectObjects(_fireCollidables, true);
-        const charHits = _raycaster.intersectObjects(_targetMeshes, true);
-
-        let hitChar = charHits.length > 0 ? charHits[0] : null;
-        let hitEnv = envHits.length > 0 ? envHits[0] : null;
-
-        // Skip raycast hits on own vehicle (passengers firing from inside)
-        if (this.vehicle && hitEnv) {
-            const ownMesh = this.vehicle.mesh;
-            let envIdx = 0;
-            while (envIdx < envHits.length) {
-                let obj = envHits[envIdx].object;
-                let isOwn = false;
-                while (obj) {
-                    if (obj === ownMesh) { isOwn = true; break; }
-                    obj = obj.parent;
-                }
-                if (!isOwn) break;
-                envIdx++;
-            }
-            hitEnv = envIdx < envHits.length ? envHits[envIdx] : null;
-        }
-
-        // Determine closest hit distance for tracer length
-        let tracerDist = this.weaponDef.maxRange;
-        if (hitChar && (!hitEnv || hitChar.distance < hitEnv.distance)) {
-            tracerDist = hitChar.distance;
-        } else if (hitEnv) {
-            tracerDist = hitEnv.distance;
-        }
-
-        // Spawn tracer VFX — skip past body so line starts in front of character
-        const TRACER_SKIP = 1.5;
-        if (this.tracerSystem && tracerDist > TRACER_SKIP) {
-            _v2.copy(_origin).addScaledVector(dir, TRACER_SKIP);
-            this.tracerSystem.fire(_v2, dir, tracerDist - TRACER_SKIP);
-        }
-
-        // Visual recoil kick on gun mesh
-        this.soldier._gunRecoilZ = GunAnim.recoilOffset;
-        this.soldier.showMuzzleFlash();
-
-        // Notify minimap that this AI fired
-        if (this.eventBus) {
-            this.eventBus.emit('aiFired', { team: this.team, soldierId: `${this.team}_${this.soldier.id}` });
-        }
-
-        const myName = `${this.team === 'teamA' ? 'A' : 'B'}-${this.soldier.id}`;
-
-        if (hitChar && (!hitEnv || hitChar.distance < hitEnv.distance)) {
-            // Calculate damage with falloff (same formula as Player)
-            const dmg = applyFalloff(this.weaponDef.damage, hitChar.distance, this.weaponDef.falloffStart, this.weaponDef.falloffEnd, this.weaponDef.falloffMinScale);
-
-            for (const enemy of this.enemies) {
-                if (!enemy.alive) continue;
-                if (this._playerMesh && enemy.mesh === this._playerMesh) continue;
-                if (this._isChildOf(hitChar.object, enemy.mesh)) {
-                    if (this.impactVFX) {
-                        this.impactVFX.spawn('blood', hitChar.point, _v1.copy(dir).negate());
-                    }
-                    const result = enemy.takeDamage(dmg, myPos, hitChar.point.y);
-                    if (this.eventBus) {
-                        this.eventBus.emit('aiHit', { soldier: this.soldier, killed: result.killed });
-                    }
-                    if (result.killed && this.eventBus) {
-                        const vTeam = enemy.team || (this.team === 'teamA' ? 'teamB' : 'teamA');
-                        this.eventBus.emit('kill', {
-                            killerName: myName,
-                            killerTeam: this.team,
-                            victimName: `${vTeam === 'teamA' ? 'A' : 'B'}-${enemy.id}`,
-                            victimTeam: vTeam,
-                            headshot: result.headshot,
-                            weapon: this.weaponId,
-                        });
-                    }
-                    return;
-                }
-            }
-            if (this._playerRef && this._isChildOf(hitChar.object, this._playerMesh)) {
-                if (this.impactVFX) {
-                    this.impactVFX.spawn('blood', hitChar.point, _v1.copy(dir).negate());
-                }
-                const result = this._playerRef.takeDamage(dmg, myPos, hitChar.point.y);
-                if (result.killed && this.eventBus) {
-                    this.eventBus.emit('kill', {
-                        killerName: myName,
-                        killerTeam: this.team,
-                        victimName: 'You',
-                        victimTeam: this._playerRef.team,
-                        headshot: result.headshot,
-                        weapon: this.weaponId,
-                    });
-                }
-            }
-        } else if (hitEnv) {
-            // Check if we hit a vehicle
-            let hitObj = hitEnv.object;
-            while (hitObj) {
-                if (hitObj.userData && hitObj.userData.vehicle) {
-                    const vehicle = hitObj.userData.vehicle;
-                    if (vehicle.alive && vehicle.team !== this.team) {
-                        const dmg = applyFalloff(this.weaponDef.damage, hitEnv.distance, this.weaponDef.falloffStart, this.weaponDef.falloffEnd, this.weaponDef.falloffMinScale);
-                        vehicle.takeDamage(dmg);
-                        if (this.impactVFX) {
-                            this.impactVFX.spawn('spark', hitEnv.point, _v1.copy(dir).negate());
-                        }
-                        return;
-                    }
-                    break;
-                }
-                hitObj = hitObj.parent;
-            }
-            // No vehicle hit — spawn normal impact particles on environment
-            if (this.impactVFX) {
-                const surfaceType = this._getSurfaceType(hitEnv.object);
-                const impactType = surfaceType === 'water' ? 'water'
-                    : (surfaceType === 'rock' ? 'spark' : 'dirt');
-                const worldNormal = this._getWorldNormal(hitEnv);
-                this.impactVFX.spawn(impactType, hitEnv.point, worldNormal);
-            }
-        }
-    }
-
-    _getWorldNormal(hit) {
-        if (!hit.face) return null;
-        _tmpVec.copy(hit.face.normal);
-        _tmpVec.transformDirection(hit.object.matrixWorld);
-        return _tmpVec;
-    }
-
-    _getSurfaceType(obj) {
-        let current = obj;
-        while (current) {
-            if (current.userData && current.userData.surfaceType) {
-                return current.userData.surfaceType;
-            }
-            current = current.parent;
-        }
-        return 'terrain';
-    }
-
-    _isChildOf(obj, parent) {
-        let current = obj;
-        while (current) {
-            if (current === parent) return true;
-            current = current.parent;
-        }
-        return false;
     }
 
     // ───── Cover Management ─────
@@ -2434,222 +1408,6 @@ export class AIController {
         this._pathCooldown = 0;
         this._lastRiskLevel = 0;
         this._noPathFound = false;
-    }
-
-    // ───── Debug Path Line ─────
-
-    _ensureDebugPath(pointCount) {
-        if (this._debugArc && this._debugArcSize >= pointCount) {
-            return this._debugArc;
-        }
-        // (Re)create with enough capacity
-        if (this._debugArc) {
-            this._debugArc.geometry.dispose();
-            this._debugArc.material.dispose();
-            this.soldier.scene.remove(this._debugArc);
-        }
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(pointCount * 3), 3));
-        const mat = new THREE.LineBasicMaterial({ color: 0xffdd00, transparent: true, opacity: 0.7 });
-        const line = new THREE.Line(geo, mat);
-        line.frustumCulled = false;
-        this.soldier.scene.add(line);
-        this._debugArc = line;
-        this._debugArcSize = pointCount;
-        return line;
-    }
-
-    _updateDebugArc() {
-        if (!AIController.debugArcs) {
-            if (this._debugArc) this._debugArc.visible = false;
-            return;
-        }
-
-        if (!this.soldier.alive || !this.moveTarget) {
-            if (this._debugArc) this._debugArc.visible = false;
-            return;
-        }
-
-        // Build key-point list: soldier → remaining waypoints → moveTarget
-        const myPos = this.soldier.getPosition();
-        const keys = [{ x: myPos.x, z: myPos.z }];
-
-        if (this.currentPath.length > 0 && this.pathIndex < this.currentPath.length) {
-            for (let i = this.pathIndex; i < this.currentPath.length; i++) {
-                keys.push(this.currentPath[i]);
-            }
-        }
-        keys.push({ x: this.moveTarget.x, z: this.moveTarget.z });
-
-        // Subdivide each segment so the line hugs terrain (~1.5m steps)
-        const SUB_STEP = 1.5;
-        const groundOffset = 0.3;
-        const verts = [];
-
-        for (let k = 0; k < keys.length - 1; k++) {
-            const ax = keys[k].x, az = keys[k].z;
-            const bx = keys[k + 1].x, bz = keys[k + 1].z;
-            const dx = bx - ax, dz = bz - az;
-            const segLen = Math.sqrt(dx * dx + dz * dz);
-            const steps = Math.max(1, Math.ceil(segLen / SUB_STEP));
-
-            for (let s = 0; s < steps; s++) {
-                const t = s / steps;
-                const px = ax + dx * t;
-                const pz = az + dz * t;
-                verts.push(px, this.getHeightAt(px, pz) + groundOffset, pz);
-            }
-        }
-        // Final point
-        const last = keys[keys.length - 1];
-        verts.push(last.x, this.getHeightAt(last.x, last.z) + groundOffset, last.z);
-
-        const totalPts = verts.length / 3;
-        const line = this._ensureDebugPath(totalPts);
-        line.visible = true;
-
-        const positions = line.geometry.attributes.position;
-        for (let i = 0; i < totalPts; i++) {
-            positions.setXYZ(i, verts[i * 3], verts[i * 3 + 1], verts[i * 3 + 2]);
-        }
-        // Collapse unused
-        for (let i = totalPts; i < this._debugArcSize; i++) {
-            positions.setXYZ(i, verts[verts.length - 3], verts[verts.length - 2], verts[verts.length - 1]);
-        }
-        positions.needsUpdate = true;
-        line.geometry.setDrawRange(0, totalPts);
-    }
-
-    // ───── Tactical Label ─────
-
-    _getTacticText() {
-        if (this.fallbackTarget) return 'FALLBACK';
-        if (this.rushTarget) return this.squad && this.squad.rushActive ? 'RUSH!' : 'RALLY';
-        if (this.suppressionTarget && this.suppressionTimer > 0) return 'SUPPRESS';
-        if (this.crossfirePos) return 'CROSSFIRE';
-        if (this.isReloading) return null; // normal, no label
-        if (this.currentAmmo <= 0 && this.squad && !this.squad.canReload(this)) return 'HOLD';
-        return null;
-    }
-
-    _createTacLabel(text) {
-        const canvas = document.createElement('canvas');
-        canvas.width = 256;
-        canvas.height = 64;
-        const c = canvas.getContext('2d');
-        c.clearRect(0, 0, 256, 64);
-        c.fillStyle = 'rgba(0,0,0,0.5)';
-        c.roundRect(8, 4, 240, 56, 8);
-        c.fill();
-        c.fillStyle = '#ffffff';
-        c.font = 'bold 36px Arial';
-        c.textAlign = 'center';
-        c.textBaseline = 'middle';
-        c.fillText(text, 128, 32);
-
-        const tex = new THREE.CanvasTexture(canvas);
-        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
-        const sprite = new THREE.Sprite(mat);
-        sprite.scale.set(2.7, 0.675, 1);
-        sprite.position.set(0, 2.2, 0);
-        sprite.renderOrder = 999;
-        return sprite;
-    }
-
-    _updateTacLabel() {
-        if (!AIController.showTacLabels) {
-            if (this._tacLabel) this._tacLabel.visible = false;
-            return;
-        }
-
-        const text = this._getTacticText();
-
-        if (!text) {
-            if (this._tacLabel) {
-                this._tacLabel.visible = false;
-                this._tacLabelText = '';
-            }
-            return;
-        }
-
-        if (text === this._tacLabelText && this._tacLabel) {
-            this._tacLabel.visible = true;
-            return;
-        }
-
-        // Create or re-create sprite with new text
-        if (this._tacLabel) {
-            this._tacLabel.material.map.dispose();
-            this._tacLabel.material.dispose();
-            this.soldier.mesh.remove(this._tacLabel);
-        }
-        this._tacLabel = this._createTacLabel(text);
-        this._tacLabel.raycast = () => {}; // exclude from hitscan raycaster
-        this.soldier.mesh.add(this._tacLabel);
-        this._tacLabelText = text;
-    }
-
-    // ───── Visual Sync ─────
-
-    _updateSoldierVisual(dt) {
-        if (!this.soldier.alive) return;
-        this._updateUpperBodyAim(dt);
-        this._updateLowerBodyMove(dt);
-        this._updateTacLabel();
-    }
-
-    /**
-     * Upper body aiming — universal (ground + vehicle passengers).
-     * Uses this.facingDir for yaw, this.aimPoint for pitch.
-     * Caller must update facingDir before calling.
-     */
-    _updateUpperBodyAim(dt) {
-        const soldier = this.soldier;
-        const myPos = soldier.getPosition();
-        const aimAngle = Math.atan2(-this.facingDir.x, -this.facingDir.z);
-        if (soldier.upperBody) {
-            soldier.upperBody.rotation.y = aimAngle;
-            if (soldier.shoulderPivot) {
-                let targetPitch = 0;
-                if (this._grenadeThrowTimer > 0) {
-                    targetPitch = this._grenadeThrowPitch;
-                } else if ((this.targetEnemy && this.targetEnemy.alive && this.hasReacted) || this._preAimActive) {
-                    const dx = this.aimPoint.x - myPos.x;
-                    const dy = this.aimPoint.y - (myPos.y + 1.35);
-                    const dz = this.aimPoint.z - myPos.z;
-                    const hDist = Math.sqrt(dx * dx + dz * dz);
-                    if (hDist > 0.1) targetPitch = Math.atan2(dy, hDist);
-                }
-                if (this._smoothAimPitch === undefined) this._smoothAimPitch = 0;
-                this._smoothAimPitch += (targetPitch - this._smoothAimPitch) * 0.15;
-                soldier.shoulderPivot.rotation.x = this._smoothAimPitch + (soldier._gunReloadTilt || 0);
-            }
-        }
-        soldier.mesh.rotation.set(0, 0, 0);
-    }
-
-    /**
-     * Lower body movement — ground soldiers only.
-     * Rotates lower body toward movement direction (or idle → aim direction).
-     * Drives walk animation.
-     */
-    _updateLowerBodyMove(dt) {
-        const soldier = this.soldier;
-        if (!soldier.lowerBody) return;
-        const myPos = soldier.getPosition();
-        const dx = myPos.x - this.lastPos.x;
-        const dz = myPos.z - this.lastPos.z;
-        const moveSpeed = Math.sqrt(dx * dx + dz * dz) / Math.max(dt, 0.001);
-
-        if (moveSpeed > 0.3) {
-            const moveAngle = Math.atan2(-dx, -dz);
-            soldier.lowerBody.rotation.y = _lerpAngle(soldier.lowerBody.rotation.y, moveAngle, 1 - Math.exp(-10 * dt));
-        } else {
-            const aimAngle = Math.atan2(-this.facingDir.x, -this.facingDir.z);
-            soldier.lowerBody.rotation.y = _lerpAngle(soldier.lowerBody.rotation.y, aimAngle, 1 - Math.exp(-5 * dt));
-        }
-
-        soldier.animateWalk(dt, moveSpeed);
     }
 
     /** Set references for player damage. */
