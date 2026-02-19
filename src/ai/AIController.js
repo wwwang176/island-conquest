@@ -458,6 +458,14 @@ export class AIController {
      */
     updateContinuous(dt) {
         if (!this.soldier.alive) {
+            // Flush tracked enemies as lost so contacts don't stay VISIBLE forever
+            // (runs once — subsequent frames find size === 0)
+            if (this._previouslyVisible.size > 0 && this.teamIntel) {
+                for (const prev of this._previouslyVisible) {
+                    this.teamIntel.reportLost(prev);
+                }
+                this._previouslyVisible.clear();
+            }
             if (this._tacLabel && this._tacLabel.visible) {
                 this._tacLabel.visible = false;
                 this._tacLabelText = '';
@@ -724,7 +732,7 @@ export class AIController {
 
             // Report sighting to TeamIntel
             if (this.teamIntel) {
-                this.teamIntel.reportSighting(enemy, ePos, enemy.body.velocity);
+                this.teamIntel.reportSighting(enemy, ePos, enemy.body.velocity, enemy.vehicle !== null);
             }
 
             if (dist < closestDist) {

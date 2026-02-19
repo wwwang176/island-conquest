@@ -51,7 +51,7 @@ export class TeamIntel {
     /**
      * Report a direct visual sighting of an enemy.
      */
-    reportSighting(enemy, position, velocity) {
+    reportSighting(enemy, position, velocity, inVehicle = false) {
         let contact = this.contacts.get(enemy);
         if (!contact) {
             contact = {
@@ -61,6 +61,7 @@ export class TeamIntel {
                 lastSeenTime: 0,
                 lastSeenVelocity: new THREE.Vector3(),
                 confidence: 1.0,
+                inVehicle: false,
             };
             this.contacts.set(enemy, contact);
         }
@@ -68,6 +69,7 @@ export class TeamIntel {
         contact.lastSeenPos.copy(position);
         contact.lastSeenTime = 0;
         contact.confidence = 1.0;
+        contact.inVehicle = inVehicle;
         if (velocity) {
             contact.lastSeenVelocity.set(velocity.x, velocity.y, velocity.z);
         }
@@ -78,7 +80,10 @@ export class TeamIntel {
      */
     reportLost(enemy) {
         const contact = this.contacts.get(enemy);
-        if (contact && contact.status === ContactStatus.VISIBLE) {
+        if (!contact || contact.status !== ContactStatus.VISIBLE) return;
+        if (contact.inVehicle) {
+            this.contacts.delete(enemy);   // vehicle moves too fast, lastSeenPos is stale
+        } else {
             contact.status = ContactStatus.LOST;
         }
     }

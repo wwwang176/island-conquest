@@ -57,6 +57,7 @@ export class Soldier {
         this.alive = true;
         this.deathTimer = 0;
         this.respawnDelay = 5;      // seconds
+        this.vehicle = null;        // currently riding vehicle reference
 
         // Visual
         this.cameraHeight = 1.6;

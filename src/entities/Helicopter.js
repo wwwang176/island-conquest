@@ -377,6 +377,7 @@ export class Helicopter extends Vehicle {
         } else {
             this.passengers.push(entity);
         }
+        entity.vehicle = this;
         // Disable occupant's collision so their body doesn't push the helicopter
         if (entity.body) {
             entity.body.collisionResponse = false;
@@ -384,6 +385,7 @@ export class Helicopter extends Vehicle {
     }
 
     exit(entity) {
+        entity.vehicle = null;
         // Re-enable occupant's collision before removing them
         if (entity.body) {
             entity.body.collisionResponse = true;
