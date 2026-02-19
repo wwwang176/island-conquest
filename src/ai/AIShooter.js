@@ -228,7 +228,7 @@ export function fireShot(ctx) {
     // Check against all enemies
     _targetMeshes.length = 0;
     for (const e of ctx.enemies) {
-        if (e.alive && e.mesh) _targetMeshes.push(e.mesh);
+        if (e.alive && e.mesh && e.mesh !== ctx._playerMesh) _targetMeshes.push(e.mesh);
     }
     if (ctx._playerMesh) _targetMeshes.push(ctx._playerMesh);
 

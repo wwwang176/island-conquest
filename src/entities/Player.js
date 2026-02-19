@@ -85,6 +85,17 @@ export class Player extends Soldier {
         this.shootTargets = [];
     }
 
+    /** Lightweight capsule — Player mesh is always hidden (FPS), but AI raycast still needs it. */
+    _createMesh() {
+        const group = new THREE.Group();
+        const geo = new THREE.CapsuleGeometry(0.4, this.cameraHeight - 0.8, 4, 8);
+        const mat = new THREE.MeshLambertMaterial({ color: 0x4488ff });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.y = this.cameraHeight / 2;
+        group.add(mesh);
+        return group;
+    }
+
     _getLimbColor() {
         if (!this.team) return 0xddbb99;
         const tc = new THREE.Color(this.team === 'teamA' ? 0x4488ff : 0xff4444);
