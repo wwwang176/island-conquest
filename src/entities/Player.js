@@ -161,6 +161,19 @@ export class Player {
         return group;
     }
 
+    _tickTimers(dt) {
+        // Health regen
+        this.timeSinceLastDamage += dt;
+        if (this.timeSinceLastDamage >= this.regenDelay && this.hp < this.maxHP) {
+            this.hp = Math.min(this.maxHP, this.hp + this.regenRate * dt);
+        }
+        // Damage indicator fade
+        if (this.damageIndicatorTimer > 0) this.damageIndicatorTimer -= dt;
+        // Grenade cooldown
+        if (this.grenadeCooldown > 0) this.grenadeCooldown -= dt;
+        if (this._grenadeThrowTimer > 0) this._grenadeThrowTimer -= dt;
+    }
+
     update(dt) {
         if (!this.alive) {
             this.deathTimer -= dt;
@@ -168,26 +181,13 @@ export class Player {
             return;
         }
 
+        this._tickTimers(dt);
+
         // Vehicle mode: handle driving
         if (this.vehicle) {
             this._handleVehicleUpdate(dt);
             return;
         }
-
-        // Health regen
-        this.timeSinceLastDamage += dt;
-        if (this.timeSinceLastDamage >= this.regenDelay && this.hp < this.maxHP) {
-            this.hp = Math.min(this.maxHP, this.hp + this.regenRate * dt);
-        }
-
-        // Damage indicator fade
-        if (this.damageIndicatorTimer > 0) {
-            this.damageIndicatorTimer -= dt;
-        }
-
-        // Grenade cooldown
-        if (this.grenadeCooldown > 0) this.grenadeCooldown -= dt;
-        if (this._grenadeThrowTimer > 0) this._grenadeThrowTimer -= dt;
 
         if (this.input.isPointerLocked) {
             this._handleMouseLook();
@@ -483,12 +483,6 @@ export class Player {
     // ───── Vehicle Controls ─────
 
     _handleVehicleUpdate(dt) {
-        // Health regen still works in vehicle
-        this.timeSinceLastDamage += dt;
-        if (this.timeSinceLastDamage >= this.regenDelay && this.hp < this.maxHP) {
-            this.hp = Math.min(this.maxHP, this.hp + this.regenRate * dt);
-        }
-
         if (this.input.isPointerLocked) {
             this._handleMouseLook();
             this._handleVehicleControls(dt);
@@ -596,8 +590,8 @@ export class Player {
         this.vehicle = vehicle;
         vehicle.enter(this);
         this.mesh.visible = false;
-        // Face the vehicle direction
-        this.yaw = vehicle.rotationY;
+        // Face the vehicle direction (vehicle forward is +Z, camera forward is -Z)
+        this.yaw = vehicle.rotationY + Math.PI;
         // Unscope
         if (this.weapon.isScoped) this.weapon.setScoped(false);
     }
