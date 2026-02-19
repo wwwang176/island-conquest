@@ -55,10 +55,10 @@ export class Minimap {
 
     /**
      * Main render call.
-     * @param {object} data - { playerPos, playerYaw, playerTeam, flags, teamASoldiers, teamBSoldiers, dt }
+     * @param {object} data - { playerPos, playerYaw, playerTeam, flags, teamASoldiers, teamBSoldiers, dt, vehicles }
      */
     update(data) {
-        const { playerPos, playerYaw, playerTeam, flags, teamASoldiers, teamBSoldiers, dt } = data;
+        const { playerPos, playerYaw, playerTeam, flags, teamASoldiers, teamBSoldiers, dt, vehicles } = data;
         const ctx = this.ctx;
         const s = this.size;
 
@@ -128,6 +128,32 @@ export class Minimap {
             ctx.arc(sx, sy, 2.5, 0, Math.PI * 2);
             ctx.fill();
             ctx.globalAlpha = 1;
+        }
+
+        // Draw vehicles
+        if (vehicles) {
+            for (const v of vehicles) {
+                if (!v.alive || !v.mesh) continue;
+                const vp = v.mesh.position;
+                const [vx, vy] = this._worldToMap(vp.x, vp.z);
+                const vColor = v.team === 'teamA' ? '#66aaff' : '#ff6666';
+                ctx.save();
+                ctx.translate(vx, vy);
+                ctx.rotate(-v.rotationY);
+                ctx.fillStyle = vColor;
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                ctx.lineWidth = 0.8;
+                // Diamond shape (helicopter)
+                ctx.beginPath();
+                ctx.moveTo(0, -5);
+                ctx.lineTo(4, 0);
+                ctx.lineTo(0, 5);
+                ctx.lineTo(-4, 0);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+            }
         }
 
         // Draw player (white triangle pointing in yaw direction)

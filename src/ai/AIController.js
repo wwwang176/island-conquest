@@ -3,9 +3,11 @@ import { BTState, Selector, Sequence, Condition, Action } from './BehaviorTree.j
 import { PersonalityTypes } from './Personality.js';
 import { findFlankPosition, computePreAimPoint, computeSuppressionTarget, findRidgelineAimPoint } from './TacticalActions.js';
 import { WeaponDefs, GunAnim } from '../entities/WeaponDefs.js';
+import { HELI_PASSENGER_SLOTS, HELI_PILOT_OFFSET } from '../entities/Helicopter.js';
 
 const _grenadeOrigin = new THREE.Vector3();
 const _grenadeDir = new THREE.Vector3();
+const _heliInput = { thrust: 0, brake: 0, steerLeft: false, steerRight: false, ascend: false, descend: false };
 
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -15,6 +17,7 @@ const _target = new THREE.Vector3();
 const _strafeDir = new THREE.Vector3();
 const _tmpVec = new THREE.Vector3();
 const _targetMeshes = [];
+const _fireCollidables = [];
 
 const EYE_HEIGHT = 1.5;
 const HEAD_TOP_HEIGHT = 1.7;
@@ -83,6 +86,11 @@ export class AIController {
         this.coverSystem = coverSystem || null;
         this.teamIntel = teamIntel || null;
         this.eventBus = eventBus || null;
+
+        // Per-frame references (set by update(), used by updateContinuous())
+        this.enemies = [];
+        this.allies = [];
+        this.collidables = [];
 
         // Squad (set externally by AIManager)
         this.squad = null;
@@ -188,6 +196,7 @@ export class AIController {
         this._pathCooldown = Math.random() * 0.5; // stagger initial A* across COMs
         this._lastRiskLevel = 0;     // for detecting risk spikes (under attack)
         this._noPathFound = false;   // true when A* fails — blocks direct movement
+        this._hitStaggerTimer = 0;   // freezes movement briefly when hit
 
         // Tactical state
         this.riskLevel = 0;
@@ -225,6 +234,16 @@ export class AIController {
         // Flag deficit (positive = behind, set by AIManager each frame)
         this.flagDeficit = 0;
 
+        // Vehicle state
+        this.vehicle = null;          // currently driving
+        this._vehicleBoardTarget = null; // vehicle we're walking toward
+        this._vehicleMoveTarget = null;  // where we're trying to go via vehicle
+        this._vehicleOrbitAngle = 0;     // helicopter orbit angle
+        this._heliWaitingForPassengers = false;
+        this._heliWaitTimer = 0;      // countdown after first passenger boards
+        this._vehicleFireBlocked = false;
+        this.vehicleManager = null;   // set by AIManager
+
         // Build behavior tree
         this.behaviorTree = this._buildBehaviorTree();
     }
@@ -261,6 +280,18 @@ export class AIController {
             new Sequence([
                 new Condition(() => !ctx.soldier.alive),
                 new Action(() => BTState.SUCCESS),
+            ]),
+
+            // 1b. Currently driving a vehicle — drive toward destination
+            new Sequence([
+                new Condition(() => ctx.vehicle !== null),
+                new Action(() => ctx._actionDriveVehicle()),
+            ]),
+
+            // 1c. Should board a vehicle — walk toward it
+            new Sequence([
+                new Condition(() => ctx._shouldUseVehicle()),
+                new Action(() => ctx._actionBoardVehicle()),
             ]),
 
             // 2. Reloading with nearby threats — seek cover
@@ -377,7 +408,11 @@ export class AIController {
      */
     update(dt, enemies, allies, collidables) {
         this._dt = dt; // store for BT actions that need delta time
-        if (!this.soldier.alive) return;
+        if (!this.soldier.alive) {
+            // Eject from vehicle on death
+            if (this.vehicle) this._exitVehicle();
+            return;
+        }
 
         this.enemies = enemies;
         this.allies = allies;
@@ -421,6 +456,10 @@ export class AIController {
      */
     onDamaged() {
         this.btTimer = this.btInterval; // triggers BT on next update()
+        // Stagger: freeze movement briefly (skip if already in vehicle)
+        if (!this.vehicle) {
+            this._hitStaggerTimer = 0.25 + Math.random() * 0.1; // 0.25-0.35s
+        }
         // Clear current path so cover-seek recalculates from current position
         if (!this.seekingCover) {
             this.currentPath = [];
@@ -531,6 +570,106 @@ export class AIController {
         // Decay reflex dodge timer
         if (this._reflexDodgeTimer > 0) this._reflexDodgeTimer -= dt;
 
+        // In vehicle — drive (if pilot) and/or shoot (if helicopter)
+        if (this.vehicle) {
+            // Only the pilot drives
+            if (this.vehicle.driver === this.soldier) {
+                this._updateVehicleDriving(dt);
+            }
+            // Sync soldier position to vehicle
+            if (this.vehicle.mesh) {
+                const vp = this.vehicle.mesh.position;
+                const rotY = this.vehicle.rotationY;
+
+                if (this.vehicle.type === 'helicopter') {
+                    const heli = this.vehicle;
+                    if (heli.driver === this.soldier) {
+                        // Pilot: cockpit position (seated)
+                        heli.getWorldSeatPos(_tmpVec, HELI_PILOT_OFFSET);
+                        this.soldier.body.position.set(_tmpVec.x, _tmpVec.y, _tmpVec.z);
+                        this.soldier.mesh.position.copy(_tmpVec);
+                        // Tilt with helicopter (yaw+pitch+roll via cached quaternion)
+                        this.soldier.mesh.quaternion.copy(heli._cachedWorldQuat);
+                        // Body faces forward relative to helicopter
+                        if (this.soldier.lowerBody) this.soldier.lowerBody.rotation.y = Math.PI;
+                        if (this.soldier.upperBody) {
+                            this.soldier.upperBody.rotation.y = Math.PI;
+                            if (this.soldier.shoulderPivot) this.soldier.shoulderPivot.rotation.x = 0;
+                        }
+                        // Legs forward 90°
+                        if (this.soldier.leftLeg) this.soldier.leftLeg.rotation.x = Math.PI / 2;
+                        if (this.soldier.rightLeg) this.soldier.rightLeg.rotation.x = Math.PI / 2;
+                    } else {
+                        // Passenger: door slot (seated, legs face outward)
+                        const slotIdx = heli.passengers.indexOf(this.soldier);
+                        if (slotIdx >= 0 && slotIdx < HELI_PASSENGER_SLOTS.length) {
+                            const slot = HELI_PASSENGER_SLOTS[slotIdx];
+                            heli.getWorldSeatPos(_tmpVec, slot);
+                            this.soldier.body.position.set(_tmpVec.x, _tmpVec.y, _tmpVec.z);
+                            this.soldier.mesh.position.copy(_tmpVec);
+                            // Update facingDir for upper body aiming (world space)
+                            const outward = rotY + slot.facingOffset;
+                            if (this.targetEnemy && this.targetEnemy.alive && this.hasReacted) {
+                                const sp = this.soldier.getPosition();
+                                const adx = this.aimPoint.x - sp.x;
+                                const adz = this.aimPoint.z - sp.z;
+                                const hd = Math.sqrt(adx * adx + adz * adz);
+                                if (hd > 0.1) this.facingDir.set(adx / hd, 0, adz / hd);
+                            } else {
+                                this.facingDir.set(-Math.sin(outward), 0, -Math.cos(outward));
+                            }
+                            this._updateUpperBodyAim(dt);
+                            // Tilt with helicopter (yaw+pitch+roll via cached quaternion)
+                            this.soldier.mesh.quaternion.copy(heli._cachedWorldQuat);
+                            // Lower body: outward relative to helicopter
+                            if (this.soldier.lowerBody) {
+                                this.soldier.lowerBody.rotation.y = slot.facingOffset;
+                            }
+                            // Upper body: convert world aim to helicopter-relative
+                            if (this.soldier.upperBody) {
+                                this.soldier.upperBody.rotation.y -= rotY;
+                            }
+                            // Compensate shoulder pitch for helicopter tilt
+                            if (this.soldier.shoulderPivot) {
+                                this.soldier.shoulderPivot.rotation.x -= heli._visualPitch;
+                            }
+                            // Legs forward 45° (sitting pose)
+                            if (this.soldier.leftLeg) this.soldier.leftLeg.rotation.x = Math.PI / 4;
+                            if (this.soldier.rightLeg) this.soldier.rightLeg.rotation.x = Math.PI / 4;
+                        }
+                    }
+                } else {
+                    // Other vehicle types: center
+                    this.soldier.body.position.set(vp.x, vp.y, vp.z);
+                    this.soldier.mesh.position.set(vp.x, vp.y, vp.z);
+                }
+            }
+            // Helicopter passengers (not pilot) can aim and shoot — only on their side
+            const isPassenger = this.vehicle.driver !== this.soldier;
+            if (this.vehicle.type === 'helicopter' && isPassenger) {
+                let canFire = false;
+                if (this.targetEnemy && this.targetEnemy.alive) {
+                    const slotIdx = this.vehicle.passengers.indexOf(this.soldier);
+                    const isLeftSeat = slotIdx >= 0 && slotIdx % 2 === 0;
+                    const ep = this.targetEnemy.getPosition();
+                    const hx = this.vehicle.mesh.position.x;
+                    const hz = this.vehicle.mesh.position.z;
+                    const rY = this.vehicle.rotationY;
+                    const cross = Math.sin(rY) * (ep.z - hz) - Math.cos(rY) * (ep.x - hx);
+                    canFire = isLeftSeat ? cross > 0 : cross < 0;
+                }
+                this._vehicleFireBlocked = !canFire;
+                if (canFire) {
+                    this.hasReacted = true;
+                    this._updateAiming(dt);
+                } else {
+                    this.hasReacted = false;
+                }
+                this._updateShooting(dt);
+            }
+            return;
+        }
+
         this._updateMovement(dt);
         this._updateSoldierVisual(dt);
         this._updateDebugArc();
@@ -556,21 +695,25 @@ export class AIController {
             myEyeY = tm.heightGrid[myGrid.row * tm.cols + myGrid.col] + EYE_HEIGHT;
         }
 
+        const inHeli = this.vehicle && this.vehicle.type === 'helicopter';
+
         for (const enemy of this.enemies) {
             if (!enemy.alive) continue;
             const ePos = enemy.getPosition();
             const dist = myPos.distanceTo(ePos);
 
-            if (dist > 80) continue; // max vision range
+            if (dist > (inHeli ? 120 : 80)) continue; // extended range from air
 
-            // FOV check (120°)
-            _v1.subVectors(ePos, myPos).normalize();
-            const dot = this.facingDir.dot(_v1);
-            if (dot < -0.2) continue; // behind us (~120° FOV)
+            // FOV check (120°) — skip in helicopter (360° awareness)
+            if (!inHeli) {
+                _v1.subVectors(ePos, myPos).normalize();
+                const dot = this.facingDir.dot(_v1);
+                if (dot < -0.2) continue; // behind us (~120° FOV)
+            }
 
-            // Line of sight check — use fast grid Bresenham instead of raycaster
-            let losLevel = 1; // default: fully visible (no grid LOS available)
-            if (useGridLOS) {
+            // Line of sight check — skip in helicopter (aerial view clears terrain)
+            let losLevel = 1;
+            if (!inHeli && useGridLOS) {
                 const eGrid = tm._worldToGrid(ePos.x, ePos.z);
                 losLevel = _hasGridLOS(tm, myGrid.col, myGrid.row, myEyeY, eGrid.col, eGrid.row);
                 if (losLevel === 0) continue;
@@ -620,7 +763,7 @@ export class AIController {
                     const p = this.personality;
                     const distFactor = p.nearReaction + (p.farReaction - p.nearReaction) * t;
                     // Exposure penalty: head-only target is harder to identify
-                    const losFactor = losLevel === 2 ? 1.4 : 1.0;
+                    const losFactor = this._targetLOSLevel === 2 ? 1.4 : 1.0;
                     this.reactionTimer = p.reactionTime / 1000 * distFactor * losFactor +
                         (Math.random() * 0.15);
                     // Initial aim offset — smaller at close range (target fills FOV)
@@ -764,6 +907,13 @@ export class AIController {
 
     _shouldThrowGrenade() {
         if (!this.grenadeManager) return false;
+
+        // Don't throw grenades at airborne targets (helicopter passengers — can't reach)
+        if (!this.vehicle && this.targetEnemy && this.targetEnemy.alive) {
+            const ePos = this.targetEnemy.getPosition();
+            const groundY = this.getHeightAt(ePos.x, ePos.z);
+            if (ePos.y - groundY > 5) return false;
+        }
 
         // Safety: don't throw if nearest enemy is too close (blast would hit self)
         if (this.targetEnemy && this.targetEnemy.alive && this._enemyDist() < 8) return false;
@@ -1362,6 +1512,255 @@ export class AIController {
         return BTState.RUNNING;
     }
 
+    // ───── Vehicle Actions ─────
+
+    /**
+     * Find a helicopter that a squad mate is already in (with room left).
+     * @returns {import('../entities/Helicopter.js').Helicopter|null}
+     */
+    _findSquadHelicopter() {
+        if (!this.squad || !this.vehicleManager) return null;
+        for (const ctrl of this.squad.controllers) {
+            if (ctrl === this) continue;
+            if (!ctrl.vehicle) continue;
+            const v = ctrl.vehicle;
+            if (!v.alive || v.team !== this.team) continue;
+            if (v.type === 'helicopter' && v.occupantCount >= 5) continue;
+            return v;
+        }
+        return null;
+    }
+
+    /**
+     * Should the AI use a vehicle to reach its target?
+     * Conditions: target flag is far away (>60m) OR A* path failed (cross-water),
+     * no close enemies, and team has an available vehicle.
+     */
+    _shouldUseVehicle() {
+        if (this.vehicle) return false; // already driving
+        if (!this.vehicleManager) return false;
+
+        // Don't board if there's a close enemy
+        if (this.targetEnemy && this.targetEnemy.alive) {
+            const myPos = this.soldier.getPosition();
+            const eDist = myPos.distanceTo(this.targetEnemy.getPosition());
+            if (eDist < 40) return false;
+        }
+
+        // Priority: if a squad mate is already in a helicopter, join them
+        const squadHeli = this._findSquadHelicopter();
+        if (squadHeli) {
+            // Skip if helicopter is already airborne (too high above ground to board)
+            const hPos = squadHeli.mesh.position;
+            const hGround = this.getHeightAt(hPos.x, hPos.z);
+            if (hPos.y - hGround > squadHeli.enterRadius) return false;
+
+            this._vehicleBoardTarget = squadHeli;
+            this._vehicleMoveTarget = this.targetFlag ? this.targetFlag.position.clone() : null;
+            return true;
+        }
+
+        // Check if target flag is far enough to warrant a vehicle
+        if (this.targetFlag) {
+            const myPos = this.soldier.getPosition();
+            const dist = myPos.distanceTo(this.targetFlag.position);
+            const needsVehicle = dist > 60 || this._noPathFound;
+            if (!needsVehicle) return false;
+        } else {
+            return false;
+        }
+
+        // Check for available vehicle
+        const v = this.vehicleManager.findNearestVehicle(this.soldier, 80);
+        if (!v) return false;
+
+        this._vehicleBoardTarget = v;
+        this._vehicleMoveTarget = this.targetFlag.position.clone();
+        return true;
+    }
+
+    _actionBoardVehicle() {
+        const bt = this._vehicleBoardTarget;
+        if (!bt || !bt.alive) {
+            this._vehicleBoardTarget = null;
+            return BTState.FAILURE;
+        }
+        // Reject if vehicle is full
+        const maxOcc = bt.type === 'helicopter' ? 5 : 1;
+        if ((bt.occupantCount || (bt.driver ? 1 : 0)) >= maxOcc) {
+            this._vehicleBoardTarget = null;
+            return BTState.FAILURE;
+        }
+        // Abort if helicopter took off while we were walking toward it
+        if (bt.type === 'helicopter') {
+            const bPos = bt.mesh.position;
+            if (bPos.y - this.getHeightAt(bPos.x, bPos.z) > bt.enterRadius) {
+                this._vehicleBoardTarget = null;
+                return BTState.FAILURE;
+            }
+        }
+
+        const myPos = this.soldier.getPosition();
+        const vPos = this._vehicleBoardTarget.mesh.position;
+        const dx = vPos.x - myPos.x;
+        const dz = vPos.z - myPos.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+
+        if (dist < this._vehicleBoardTarget.enterRadius) {
+            // Close enough — enter the vehicle
+            this._releaseCover();
+            this._vehicleBoardTarget.enter(this.soldier);
+            this.vehicle = this._vehicleBoardTarget;
+            // AI soldiers always visible in vehicles (positioned at cockpit/door slots)
+            this.soldier.mesh.visible = true;
+            // Pilot: start waiting for passengers immediately on boarding
+            if (this.vehicle.driver === this.soldier && this.vehicle.type === 'helicopter') {
+                this._heliWaitingForPassengers = true;
+                this._heliWaitTimer = 10;
+            }
+            this._vehicleBoardTarget = null;
+            return BTState.SUCCESS;
+        }
+
+        this.moveTarget = new THREE.Vector3(vPos.x, 0, vPos.z);
+        this.missionPressure = 0.5;
+        return BTState.RUNNING;
+    }
+
+    _actionDriveVehicle() {
+        const v = this.vehicle;
+        if (!v || !v.alive) {
+            this._exitVehicle();
+            return BTState.FAILURE;
+        }
+
+        // Helicopter: air fire support, never disembark
+        if (v.type === 'helicopter') {
+            // Pilot updates orbit target; passengers just ride along
+            if (v.driver === this.soldier && this.targetFlag) {
+                this._vehicleMoveTarget = this.targetFlag.position.clone();
+            }
+            this.missionPressure = 0.3;
+            // Pilot wait logic: wait for first passenger, then 10s extra for more
+            if (v.driver === this.soldier) {
+                if (v.passengers.length === 0) {
+                    // No passengers yet — wait indefinitely
+                    this._heliWaitingForPassengers = true;
+                    this._heliWaitTimer = 10;
+                } else if (v.passengers.length >= v.maxPassengers) {
+                    // All seats filled — depart almost immediately
+                    this._heliWaitingForPassengers = true;
+                    this._heliWaitTimer = Math.min(this._heliWaitTimer, 0.5);
+                } else if (this._heliWaitTimer > 0) {
+                    // Has passengers but still in grace period
+                    this._heliWaitingForPassengers = true;
+                } else {
+                    this._heliWaitingForPassengers = false;
+                }
+            }
+            return BTState.RUNNING;
+        }
+
+        // Unknown vehicle type — exit
+        this._exitVehicle();
+        return BTState.FAILURE;
+    }
+
+    /**
+     * Continuous vehicle driving — called every frame from updateContinuous().
+     * Computes steering input and applies it to the vehicle.
+     */
+    _updateVehicleDriving(dt) {
+        const v = this.vehicle;
+        if (!v || !v.alive) return;
+
+        if (v.type === 'helicopter') {
+            this._updateHelicopterOrbit(dt);
+        }
+    }
+
+    _updateHelicopterOrbit(dt) {
+        const v = this.vehicle;
+        const vPos = v.mesh.position;
+        const target = this._vehicleMoveTarget || (this.targetFlag ? this.targetFlag.position : null);
+        if (!target) return;
+
+        // Wait on ground until passengers board + grace period expires
+        if (this._heliWaitingForPassengers) {
+            if (v.passengers.length > 0) {
+                // All seats filled — depart almost immediately
+                if (v.passengers.length >= v.maxPassengers) {
+                    this._heliWaitTimer = Math.min(this._heliWaitTimer, 0.5);
+                }
+                this._heliWaitTimer -= dt;
+                if (this._heliWaitTimer <= 0) {
+                    this._heliWaitingForPassengers = false;
+                }
+            }
+            if (this._heliWaitingForPassengers) return;
+        }
+
+        const orbitRadius = 35;
+        const desiredAlt = 22;
+        const orbitSpeed = 0.3; // rad/s → ~21s per full orbit
+
+        // Advance orbit angle
+        this._vehicleOrbitAngle += orbitSpeed * dt;
+
+        // Compute orbit waypoint — clamp within map bounds
+        const MAP_HW = 145, MAP_HD = 55; // map half-extents with margin
+        let waypointX = target.x + Math.sin(this._vehicleOrbitAngle) * orbitRadius;
+        let waypointZ = target.z + Math.cos(this._vehicleOrbitAngle) * orbitRadius;
+        waypointX = Math.max(-MAP_HW, Math.min(MAP_HW, waypointX));
+        waypointZ = Math.max(-MAP_HD, Math.min(MAP_HD, waypointZ));
+
+        const dx = waypointX - vPos.x;
+        const dz = waypointZ - vPos.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+
+        const waypointAngle = Math.atan2(dx, dz);
+        let angleDiff = waypointAngle - v.rotationY;
+        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+        _heliInput.thrust = Math.min(0.7, dist / 20);
+        _heliInput.brake = 0;
+        _heliInput.steerLeft = angleDiff > 0.1;
+        _heliInput.steerRight = angleDiff < -0.1;
+        _heliInput.ascend = vPos.y < desiredAlt;
+        _heliInput.descend = vPos.y > desiredAlt + 5;
+
+        // Terrain clearance: climb if terrain is close below or ahead
+        const groundBelow = this.getHeightAt(vPos.x, vPos.z);
+        const minClearance = 12;
+        if (vPos.y < groundBelow + minClearance) {
+            _heliInput.ascend = true;
+            _heliInput.descend = false;
+        }
+        const aheadX = vPos.x + Math.sin(v.rotationY) * 20;
+        const aheadZ = vPos.z + Math.cos(v.rotationY) * 20;
+        const aheadGround = this.getHeightAt(aheadX, aheadZ);
+        if (vPos.y < aheadGround + minClearance) {
+            _heliInput.ascend = true;
+            _heliInput.descend = false;
+        }
+
+        v.applyInput(_heliInput, dt);
+    }
+
+    _exitVehicle() {
+        if (!this.vehicle) return;
+        const v = this.vehicle;
+        const exitPos = v.exit(this.soldier);
+        this.vehicle = null;
+        this._vehicleMoveTarget = null;
+        this.soldier.mesh.visible = true;
+        if (exitPos) {
+            const h = this.getHeightAt(exitPos.x, exitPos.z);
+            this.soldier.body.position.set(exitPos.x, Math.max(h + 0.1, exitPos.y), exitPos.z);
+        }
+    }
+
     _actionPatrol() {
         const myPos = this.soldier.getPosition();
         if (!this.moveTarget || myPos.distanceTo(this.moveTarget) < 3) {
@@ -1457,6 +1856,17 @@ export class AIController {
         const body = this.soldier.body;
         const myPos = this.soldier.getPosition();
         const groundY = this.getHeightAt(myPos.x, myPos.z);
+
+        // Hit stagger: freeze in place for a short duration after being hit
+        if (this._hitStaggerTimer > 0) {
+            this._hitStaggerTimer -= dt;
+            // Still snap to ground and decelerate inertia
+            if (!this.isJumping) body.position.y = groundY + 0.05;
+            this._velX *= Math.max(0, 1 - 15 * dt);
+            this._velZ *= Math.max(0, 1 - 15 * dt);
+            this.lastPos.copy(myPos);
+            return;
+        }
 
         // Handle jumping (manual parabola)
         if (this.isJumping) {
@@ -1929,6 +2339,10 @@ export class AIController {
         if (this.weaponDef.aiAimDelay && this._boltAimTimer < this.weaponDef.aiAimDelay) return;
 
         if (this.fireTimer <= 0) {
+            if (this.vehicle && this._vehicleFireBlocked) {
+                this.fireTimer = 0;
+                return;
+            }
             this.fireTimer += this.fireInterval;
             this._fireShot();
             this.currentAmmo--;
@@ -1983,11 +2397,35 @@ export class AIController {
         }
         if (this._playerMesh) _targetMeshes.push(this._playerMesh);
 
-        const envHits = _raycaster.intersectObjects(this.collidables, true);
+        // Build combined collidables (terrain + vehicles) only at fire time
+        _fireCollidables.length = 0;
+        for (let i = 0; i < this.collidables.length; i++) _fireCollidables.push(this.collidables[i]);
+        if (this.vehicleManager) {
+            const vMeshes = this.vehicleManager.getVehicleMeshes();
+            for (let i = 0; i < vMeshes.length; i++) _fireCollidables.push(vMeshes[i]);
+        }
+        const envHits = _raycaster.intersectObjects(_fireCollidables, true);
         const charHits = _raycaster.intersectObjects(_targetMeshes, true);
 
         let hitChar = charHits.length > 0 ? charHits[0] : null;
         let hitEnv = envHits.length > 0 ? envHits[0] : null;
+
+        // Skip raycast hits on own vehicle (passengers firing from inside)
+        if (this.vehicle && hitEnv) {
+            const ownMesh = this.vehicle.mesh;
+            let envIdx = 0;
+            while (envIdx < envHits.length) {
+                let obj = envHits[envIdx].object;
+                let isOwn = false;
+                while (obj) {
+                    if (obj === ownMesh) { isOwn = true; break; }
+                    obj = obj.parent;
+                }
+                if (!isOwn) break;
+                envIdx++;
+            }
+            hitEnv = envIdx < envHits.length ? envHits[envIdx] : null;
+        }
 
         // Determine closest hit distance for tracer length
         let tracerDist = this.weaponDef.maxRange;
@@ -2061,21 +2499,44 @@ export class AIController {
                     });
                 }
             }
-        } else if (hitEnv && this.impactVFX) {
-            // No character hit — spawn impact particles on environment
-            const surfaceType = this._getSurfaceType(hitEnv.object);
-            const impactType = surfaceType === 'water' ? 'water'
-                : (surfaceType === 'rock' ? 'spark' : 'dirt');
-            const worldNormal = this._getWorldNormal(hitEnv);
-            this.impactVFX.spawn(impactType, hitEnv.point, worldNormal);
+        } else if (hitEnv) {
+            // Check if we hit a vehicle
+            let hitObj = hitEnv.object;
+            while (hitObj) {
+                if (hitObj.userData && hitObj.userData.vehicle) {
+                    const vehicle = hitObj.userData.vehicle;
+                    if (vehicle.alive && vehicle.team !== this.team) {
+                        let dmg = this.weaponDef.damage;
+                        if (hitEnv.distance > this.weaponDef.falloffStart) {
+                            const t = Math.min((hitEnv.distance - this.weaponDef.falloffStart) / (this.weaponDef.falloffEnd - this.weaponDef.falloffStart), 1);
+                            dmg *= (1 - t * (1 - this.weaponDef.falloffMinScale));
+                        }
+                        vehicle.takeDamage(dmg);
+                        if (this.impactVFX) {
+                            this.impactVFX.spawn('spark', hitEnv.point, _v1.copy(dir).negate());
+                        }
+                        return;
+                    }
+                    break;
+                }
+                hitObj = hitObj.parent;
+            }
+            // No vehicle hit — spawn normal impact particles on environment
+            if (this.impactVFX) {
+                const surfaceType = this._getSurfaceType(hitEnv.object);
+                const impactType = surfaceType === 'water' ? 'water'
+                    : (surfaceType === 'rock' ? 'spark' : 'dirt');
+                const worldNormal = this._getWorldNormal(hitEnv);
+                this.impactVFX.spawn(impactType, hitEnv.point, worldNormal);
+            }
         }
     }
 
     _getWorldNormal(hit) {
         if (!hit.face) return null;
-        const normal = hit.face.normal.clone();
-        normal.transformDirection(hit.object.matrixWorld);
-        return normal;
+        _tmpVec.copy(hit.face.normal);
+        _tmpVec.transformDirection(hit.object.matrixWorld);
+        return _tmpVec;
     }
 
     _getSurfaceType(obj) {
@@ -2119,6 +2580,7 @@ export class AIController {
         this.crossfirePos = null;
         this._reflexDodgeTimer = 0;
         this._prevTargetedByCount = 0;
+        this._hitStaggerTimer = 0;
         if (this._tacLabel) this._tacLabel.visible = false;
         this._tacLabelText = '';
         this._previouslyVisible.clear();
@@ -2346,16 +2808,22 @@ export class AIController {
 
     _updateSoldierVisual(dt) {
         if (!this.soldier.alive) return;
+        this._updateUpperBodyAim(dt);
+        this._updateLowerBodyMove(dt);
+        this._updateTacLabel();
+    }
 
+    /**
+     * Upper body aiming — universal (ground + vehicle passengers).
+     * Uses this.facingDir for yaw, this.aimPoint for pitch.
+     * Caller must update facingDir before calling.
+     */
+    _updateUpperBodyAim(dt) {
         const soldier = this.soldier;
         const myPos = soldier.getPosition();
-
-        // Upper body faces aiming direction (facingDir) + pitch
         const aimAngle = Math.atan2(-this.facingDir.x, -this.facingDir.z);
         if (soldier.upperBody) {
             soldier.upperBody.rotation.y = aimAngle;
-            // Compute pitch toward aimPoint when engaging or pre-aiming
-            // Pitch only the shoulder pivot (arms + gun), torso stays upright
             if (soldier.shoulderPivot) {
                 let targetPitch = 0;
                 if (this._grenadeThrowTimer > 0) {
@@ -2367,37 +2835,36 @@ export class AIController {
                     const hDist = Math.sqrt(dx * dx + dz * dz);
                     if (hDist > 0.1) targetPitch = Math.atan2(dy, hDist);
                 }
-                // Smooth aim pitch independently, then add reload tilt
                 if (this._smoothAimPitch === undefined) this._smoothAimPitch = 0;
                 this._smoothAimPitch += (targetPitch - this._smoothAimPitch) * 0.15;
                 soldier.shoulderPivot.rotation.x = this._smoothAimPitch + (soldier._gunReloadTilt || 0);
             }
         }
+        soldier.mesh.rotation.set(0, 0, 0);
+    }
 
-        // Lower body faces movement direction
-        if (soldier.lowerBody) {
-            // Compute movement direction from lastPos → currentPos
-            const dx = myPos.x - this.lastPos.x;
-            const dz = myPos.z - this.lastPos.z;
-            const moveSpeed = Math.sqrt(dx * dx + dz * dz) / Math.max(dt, 0.001);
+    /**
+     * Lower body movement — ground soldiers only.
+     * Rotates lower body toward movement direction (or idle → aim direction).
+     * Drives walk animation.
+     */
+    _updateLowerBodyMove(dt) {
+        const soldier = this.soldier;
+        if (!soldier.lowerBody) return;
+        const myPos = soldier.getPosition();
+        const dx = myPos.x - this.lastPos.x;
+        const dz = myPos.z - this.lastPos.z;
+        const moveSpeed = Math.sqrt(dx * dx + dz * dz) / Math.max(dt, 0.001);
 
-            if (moveSpeed > 0.3) {
-                const moveAngle = Math.atan2(-dx, -dz);
-                soldier.lowerBody.rotation.y = _lerpAngle(soldier.lowerBody.rotation.y, moveAngle, 1 - Math.exp(-10 * dt));
-            } else {
-                // Idle: gradually align lower body to upper body
-                soldier.lowerBody.rotation.y = _lerpAngle(soldier.lowerBody.rotation.y, aimAngle, 1 - Math.exp(-5 * dt));
-            }
-
-            // Drive walk animation
-            soldier.animateWalk(dt, moveSpeed);
+        if (moveSpeed > 0.3) {
+            const moveAngle = Math.atan2(-dx, -dz);
+            soldier.lowerBody.rotation.y = _lerpAngle(soldier.lowerBody.rotation.y, moveAngle, 1 - Math.exp(-10 * dt));
+        } else {
+            const aimAngle = Math.atan2(-this.facingDir.x, -this.facingDir.z);
+            soldier.lowerBody.rotation.y = _lerpAngle(soldier.lowerBody.rotation.y, aimAngle, 1 - Math.exp(-5 * dt));
         }
 
-        // No need to rotate the root mesh — upper/lower body handle it
-        soldier.mesh.rotation.y = 0;
-
-        // Tactical label above head
-        this._updateTacLabel();
+        soldier.animateWalk(dt, moveSpeed);
     }
 
     /** Set references for player damage. */

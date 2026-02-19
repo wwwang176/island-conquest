@@ -37,7 +37,10 @@ function computeThreat(enemies) {
     for (const enemy of enemies) {
         const eCol = Math.max(0, Math.min(Math.floor((enemy.x - originX) / cellSize), cols - 1));
         const eRow = Math.max(0, Math.min(Math.floor((enemy.z - originZ) / cellSize), rows - 1));
-        const enemyEyeY = heightGrid[eRow * cols + eCol] + EYE_HEIGHT;
+        // Use actual Y position if above terrain (e.g. helicopter passengers)
+        const terrainEyeY = heightGrid[eRow * cols + eCol] + EYE_HEIGHT;
+        const actualEyeY = (enemy.y !== undefined) ? enemy.y + EYE_HEIGHT : terrainEyeY;
+        const enemyEyeY = Math.max(terrainEyeY, actualEyeY);
 
         const radius = 160;
         const radius2 = radius * radius;
@@ -55,8 +58,9 @@ function computeThreat(enemies) {
 
                 if (!hasLOS(eCol, eRow, enemyEyeY, c, r)) continue;
 
-                const dist = Math.sqrt(dist2) * cellSize;
-                threat[r * cols + c] += 1 / (1 + dist * dist * 0.001);
+                const dy = enemyEyeY - (heightGrid[r * cols + c] + EYE_HEIGHT);
+                const dist3Dsq = dist2 * cellSize * cellSize + dy * dy;
+                threat[r * cols + c] += 1 / (1 + dist3Dsq * 0.001);
             }
         }
     }

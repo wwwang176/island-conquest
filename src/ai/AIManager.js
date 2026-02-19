@@ -176,6 +176,16 @@ export class AIManager {
     }
 
     /**
+     * Set the vehicle manager so AI can board/drive vehicles.
+     */
+    set vehicleManager(mgr) {
+        this._vehicleManager = mgr;
+        for (const ctrl of [...this.teamA.controllers, ...this.teamB.controllers]) {
+            ctrl.vehicleManager = mgr;
+        }
+    }
+
+    /**
      * Set the impact VFX system so AI shots produce hit particles.
      */
     set impactVFX(sys) {
@@ -246,13 +256,12 @@ export class AIManager {
         this.intelA.update(dt);
         this.intelB.update(dt);
 
-        // Update threat maps: teamA's threats come from teamB soldiers and vice versa
-        this.threatMapA.update(dt, allB);
-        this.threatMapB.update(dt, allA);
-
         // Calculate flag deficit per team (positive = behind)
-        const aFlags = this.flags.filter(f => f.owner === 'teamA').length;
-        const bFlags = this.flags.filter(f => f.owner === 'teamB').length;
+        let aFlags = 0, bFlags = 0;
+        for (const f of this.flags) {
+            if (f.owner === 'teamA') aFlags++;
+            else if (f.owner === 'teamB') bFlags++;
+        }
 
         // Pass deficit to controllers
         for (const ctrl of this.teamA.controllers) ctrl.flagDeficit = bFlags - aFlags;
@@ -264,16 +273,7 @@ export class AIManager {
 
         // Add player to appropriate enemy list
         const playerAsEnemy = this.player && this.player.alive && this.player.team
-            ? {
-                alive: this.player.alive,
-                hp: this.player.hp,
-                maxHP: this.player.maxHP,
-                mesh: this.player.mesh,
-                body: this.player.body,
-                getPosition: () => this.player.getPosition(),
-                takeDamage: (amt, from, hitY) => this.player.takeDamage(amt, from, hitY),
-            }
-            : null;
+            ? this.player : null;
 
         // Build enemy/ally lists (reuse pre-allocated buffers)
         const teamAEnemies = this._teamAEnemies;
@@ -289,6 +289,10 @@ export class AIManager {
         } else if (playerAsEnemy && this.player.team === 'teamB') {
             teamAEnemies.push(playerAsEnemy);
         }
+
+        // Update threat maps: teamA's threats come from teamB soldiers (+ player) and vice versa
+        this.threatMapA.update(dt, teamAEnemies);
+        this.threatMapB.update(dt, teamBEnemies);
 
         // Staggered AI controller updates: update 8 AIs per frame (BT + movement)
         const updatesPerFrame = 8;

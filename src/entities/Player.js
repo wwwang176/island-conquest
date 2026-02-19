@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { Weapon } from './Weapon.js';
 import { WeaponDefs } from './WeaponDefs.js';
+import { HELI_PASSENGER_SLOTS, HELI_PILOT_OFFSET } from './Helicopter.js';
 
 // Module-level reusable objects (avoid per-frame allocation)
 const _forward = new THREE.Vector3();
@@ -9,6 +10,15 @@ const _right = new THREE.Vector3();
 const _yawQuat = new THREE.Quaternion();
 const _moveDir = new THREE.Vector3();
 const _yAxis = new THREE.Vector3(0, 1, 0);
+const _seatPos = new THREE.Vector3();
+const _eyeOffset = { x: 0, y: 0, z: 0 };
+const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
+const _aimDir = new THREE.Vector3();
+const _shotOrigin = new THREE.Vector3();
+const _dmgPos = new THREE.Vector3();
+const _dmgFrom = new THREE.Vector3();
+const _dmgFwd = new THREE.Vector3();
+const _dmgQuat = new THREE.Quaternion();
 
 /**
  * First-person player controller.
@@ -46,6 +56,12 @@ export class Player {
         this.respawnDelay = 5;
         this.team = null; // set when joining a team
         this.selectedWeaponId = 'AR15';
+
+        // Position cache (avoid per-frame allocation in getPosition)
+        this._posCache = new THREE.Vector3();
+
+        // Vehicle state
+        this.vehicle = null;
 
         // Grenade state
         this.grenadeCount = WeaponDefs.GRENADE.maxPerLife;
@@ -149,6 +165,12 @@ export class Player {
         if (!this.alive) {
             this.deathTimer -= dt;
             this._syncMeshAndCamera();
+            return;
+        }
+
+        // Vehicle mode: handle driving
+        if (this.vehicle) {
+            this._handleVehicleUpdate(dt);
             return;
         }
 
@@ -311,7 +333,7 @@ export class Player {
 
     }
 
-    _handleShooting(dt) {
+    _handleShooting(dt, canFire = true) {
         this.weapon.triggerHeld = this.input.mouseDown;
 
         // Block fire & scope during grenade throw
@@ -331,8 +353,9 @@ export class Player {
             this.weapon.setScoped(false);
         }
 
-        if (this.input.mouseDown) {
-            const origin = this.camera.position.clone();
+        if (canFire && this.input.mouseDown) {
+            _shotOrigin.copy(this.camera.position);
+            const origin = _shotOrigin;
             const dir = this.getAimDirection();
             const hit = this.weapon.fire(origin, dir, this.shootTargets);
             if (hit) {
@@ -370,8 +393,8 @@ export class Player {
         const pos = this.body.position;
         this.mesh.position.set(pos.x, pos.y, pos.z);
         this.camera.position.set(pos.x, pos.y + this.cameraHeight, pos.z);
-        const euler = new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ');
-        this.camera.quaternion.setFromEuler(euler);
+        _euler.set(this.pitch, this.yaw, 0);
+        this.camera.quaternion.setFromEuler(_euler);
     }
 
     takeDamage(amount, fromPosition, hitY = null) {
@@ -386,10 +409,10 @@ export class Player {
 
         // Damage direction for HUD indicator
         if (fromPosition) {
-            const myPos = new THREE.Vector3(this.body.position.x, 0, this.body.position.z);
-            this.lastDamageDirection = new THREE.Vector3()
-                .subVectors(new THREE.Vector3(fromPosition.x, 0, fromPosition.z), myPos)
-                .normalize();
+            _dmgPos.set(this.body.position.x, 0, this.body.position.z);
+            _dmgFrom.set(fromPosition.x, 0, fromPosition.z);
+            if (!this.lastDamageDirection) this.lastDamageDirection = new THREE.Vector3();
+            this.lastDamageDirection.subVectors(_dmgFrom, _dmgPos).normalize();
             this.damageIndicatorTimer = 1.0;
         }
 
@@ -404,6 +427,11 @@ export class Player {
         this.alive = false;
         this.hp = 0;
         this.deathTimer = this.respawnDelay;
+        // Exit vehicle on death
+        if (this.vehicle) {
+            this.vehicle.exit(this);
+            this.vehicle = null;
+        }
         // Unscope on death
         if (this.weapon.isScoped) this.weapon.setScoped(false);
         this.eventBus.emit('playerDied');
@@ -443,12 +471,152 @@ export class Player {
     }
 
     getPosition() {
-        return new THREE.Vector3(this.body.position.x, this.body.position.y, this.body.position.z);
+        return this._posCache.set(this.body.position.x, this.body.position.y, this.body.position.z);
     }
 
     getAimDirection() {
-        const dir = new THREE.Vector3(0, 0, -1);
-        dir.applyQuaternion(this.camera.quaternion);
-        return dir;
+        _aimDir.set(0, 0, -1);
+        _aimDir.applyQuaternion(this.camera.quaternion);
+        return _aimDir;
+    }
+
+    // ───── Vehicle Controls ─────
+
+    _handleVehicleUpdate(dt) {
+        // Health regen still works in vehicle
+        this.timeSinceLastDamage += dt;
+        if (this.timeSinceLastDamage >= this.regenDelay && this.hp < this.maxHP) {
+            this.hp = Math.min(this.maxHP, this.hp + this.regenRate * dt);
+        }
+
+        if (this.input.isPointerLocked) {
+            this._handleMouseLook();
+            this._handleVehicleControls(dt);
+            // Pilots cannot shoot; passengers can
+            const isPilot = this.vehicle && this.vehicle.driver === this;
+            let sideBlocked = false;
+            // Helicopter passengers: restricted to their side
+            if (this.vehicle && !isPilot && this.vehicle.type === 'helicopter') {
+                const slotIdx = this.vehicle.passengers.indexOf(this);
+                const isLeftSeat = slotIdx >= 0 && slotIdx % 2 === 0;
+                const aimDir = this.getAimDirection();
+                const rY = this.vehicle.rotationY;
+                const cross = Math.sin(rY) * aimDir.z - Math.cos(rY) * aimDir.x;
+                sideBlocked = isLeftSeat ? cross < 0 : cross > 0;
+            }
+            if (!isPilot) {
+                this._handleShooting(dt, !sideBlocked);
+            }
+        }
+        this._syncCameraToVehicle();
+        this.weapon.update(dt);
+    }
+
+    _handleVehicleControls(dt) {
+        const v = this.vehicle;
+        if (!v) return;
+
+        // Only the pilot (driver) can steer
+        if (v.driver !== this) return;
+
+        const input = {
+            thrust: 0,
+            brake: 0,
+            steerLeft: false,
+            steerRight: false,
+            ascend: false,
+            descend: false,
+        };
+
+        if (this.input.isKeyDown('KeyW')) input.thrust = 1;
+        if (this.input.isKeyDown('KeyS')) input.brake = 1;
+        if (this.input.isKeyDown('KeyA')) input.steerLeft = true;
+        if (this.input.isKeyDown('KeyD')) input.steerRight = true;
+
+        if (v.type === 'helicopter') {
+            if (this.input.isKeyDown('Space')) input.ascend = true;
+            if (this.input.isKeyDown('ShiftLeft') || this.input.isKeyDown('ShiftRight')) input.descend = true;
+        }
+
+        v.applyInput(input, dt);
+    }
+
+    _syncCameraToVehicle() {
+        const v = this.vehicle;
+        if (!v || !v.mesh) return;
+
+        const vp = v.mesh.position;
+        let camX = vp.x, camY = vp.y, camZ = vp.z;
+
+        if (v.type === 'helicopter') {
+            if (v.driver === this) {
+                // Pilot: full world-space transform (eye offset baked in)
+                _eyeOffset.x = HELI_PILOT_OFFSET.x;
+                _eyeOffset.y = HELI_PILOT_OFFSET.y + 1.6;
+                _eyeOffset.z = HELI_PILOT_OFFSET.z;
+                v.getWorldSeatPos(_seatPos, _eyeOffset);
+                camX = _seatPos.x;
+                camY = _seatPos.y;
+                camZ = _seatPos.z;
+            } else {
+                // Passenger: full world-space transform (eye offset baked in)
+                const slotIdx = v.passengers ? v.passengers.indexOf(this) : -1;
+                if (slotIdx >= 0 && slotIdx < HELI_PASSENGER_SLOTS.length) {
+                    const slot = HELI_PASSENGER_SLOTS[slotIdx];
+                    _eyeOffset.x = slot.x;
+                    _eyeOffset.y = slot.y + 1.6;
+                    _eyeOffset.z = slot.z;
+                    v.getWorldSeatPos(_seatPos, _eyeOffset);
+                    camX = _seatPos.x;
+                    camY = _seatPos.y;
+                    camZ = _seatPos.z;
+                } else {
+                    camY = vp.y + 0.5;
+                }
+            }
+        } else {
+            camY = vp.y + 2.0;
+        }
+
+        this.camera.position.set(camX, camY, camZ);
+
+        // Use player's own yaw/pitch for free look
+        _euler.set(this.pitch, this.yaw, 0);
+        this.camera.quaternion.setFromEuler(_euler);
+
+        // Sync physics body to vehicle position
+        this.body.position.set(camX, vp.y, camZ);
+    }
+
+    /**
+     * Enter a vehicle.
+     * @param {import('./Vehicle.js').Vehicle} vehicle
+     */
+    enterVehicle(vehicle) {
+        this.vehicle = vehicle;
+        vehicle.enter(this);
+        this.mesh.visible = false;
+        // Face the vehicle direction
+        this.yaw = vehicle.rotationY;
+        // Unscope
+        if (this.weapon.isScoped) this.weapon.setScoped(false);
+    }
+
+    /**
+     * Exit the current vehicle.
+     * @param {THREE.Vector3} exitPos - Where to place the player
+     */
+    exitVehicle(exitPos) {
+        const v = this.vehicle;
+        if (!v) return;
+        v.exit(this);
+        this.vehicle = null;
+        this.mesh.visible = false; // Stay hidden in FPS
+        this.body.position.set(exitPos.x, exitPos.y + 1, exitPos.z);
+        this.body.velocity.set(0, 0, 0);
+        this.isJumping = false;
+        this.jumpVelY = 0;
+        this._velX = 0;
+        this._velZ = 0;
     }
 }
