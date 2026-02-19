@@ -47,11 +47,30 @@ export class FlagPoint {
         this.group.add(pole);
 
         // Flag cloth
-        const flagGeo = new THREE.PlaneGeometry(1.8, 1.0);
+        const flagGeo = new THREE.PlaneGeometry(1.8, 1.0, 6, 2);
+        this._flagTime = { value: 0 };
         this.flagMat = new THREE.MeshLambertMaterial({
             color: this.colors.neutral,
             side: THREE.DoubleSide,
         });
+        const flagTime = this._flagTime;
+        this.flagMat.onBeforeCompile = (shader) => {
+            shader.uniforms.uFlagTime = flagTime;
+            shader.vertexShader = shader.vertexShader.replace(
+                '#include <common>',
+                `#include <common>
+                uniform float uFlagTime;`
+            );
+            shader.vertexShader = shader.vertexShader.replace(
+                '#include <begin_vertex>',
+                `#include <begin_vertex>
+                float wf = (transformed.x + 0.9) / 1.8;
+                float wave = wf * wf;
+                transformed.z += sin(uFlagTime * 4.0 - wf * 8.0) * 0.12 * wave;
+                transformed.z += sin(uFlagTime * 7.0 - wf * 14.0) * 0.03 * wave;
+                transformed.y += sin(uFlagTime * 3.0 - wf * 6.0) * 0.03 * wave;`
+            );
+        };
         this.flag = new THREE.Mesh(flagGeo, this.flagMat);
         this.flag.position.set(0.9, 5.2, 0);
         this.flag.castShadow = true;
@@ -219,6 +238,7 @@ export class FlagPoint {
      */
     update(teamASoldiers, teamBSoldiers, dt, camera) {
         this._camera = camera;
+        this._flagTime.value += dt;
         // Count soldiers in capture radius
         const aCount = this._countInRadius(teamASoldiers);
         const bCount = this._countInRadius(teamBSoldiers);
