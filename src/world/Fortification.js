@@ -33,6 +33,7 @@ export function generateFortifications(island, flagPositions) {
             const wz = fp.z + Math.sin(segAngle) * radius;
             const wGroundY = island.getHeightAt(wx, wz);
             if (wGroundY < 0.5) continue;
+            if (island._inExclusionZone && island._inExclusionZone(wx, wz)) continue;
 
             // Wall faces outward from flag center
             const faceAngle = segAngle + noise.noise2D(wx * 0.4, wz * 0.4) * 0.15;

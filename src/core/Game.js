@@ -116,7 +116,8 @@ export class Game {
         this.vehicleManager = new VehicleManager(
             this.scene, this.physics, this.flags,
             (x, z) => this.island.getHeightAt(x, z),
-            this.eventBus
+            this.eventBus,
+            this.island.heliSpawnPositions
         );
         this.vehicleManager.setImpactVFX(this.impactVFX);
         this.aiManager.vehicleManager = this.vehicleManager;

@@ -15,12 +15,13 @@ export class VehicleManager {
      * @param {Function} getHeightAt
      * @param {import('../core/EventBus.js').EventBus} eventBus
      */
-    constructor(scene, physics, flags, getHeightAt, eventBus) {
+    constructor(scene, physics, flags, getHeightAt, eventBus, heliSpawnPositions) {
         this.scene = scene;
         this.physics = physics;
         this.flags = flags;
         this.getHeightAt = getHeightAt;
         this.eventBus = eventBus;
+        this._heliSpawnPositions = heliSpawnPositions || null;
 
         /** @type {import('../entities/Vehicle.js').Vehicle[]} */
         this.vehicles = [];
@@ -44,8 +45,12 @@ export class VehicleManager {
     _spawnTeamVehicles(team, basePos) {
         const baseFlag = team === 'teamA' ? this.flags[0] : this.flags[this.flags.length - 1];
 
-        // Helicopter: on land near base flag
-        const heliPos = this._findLandSpawn(basePos, 8);
+        // Helicopter: use pre-computed position (Island already cleared the area)
+        const spawnIdx = team === 'teamA' ? 0 : 1;
+        const precomputed = this._heliSpawnPositions && this._heliSpawnPositions[spawnIdx];
+        const heliPos = precomputed
+            ? new THREE.Vector3(precomputed.x, precomputed.y, precomputed.z)
+            : this._findLandSpawn(basePos, 8);
         if (heliPos) {
             const heli = new Helicopter(this.scene, team, heliPos);
             heli.rotationY = team === 'teamA' ? 0 : Math.PI;

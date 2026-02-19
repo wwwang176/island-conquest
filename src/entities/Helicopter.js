@@ -7,6 +7,8 @@ const WATER_Y = -0.3;
 const MAP_HALF_W = 150;  // island.width / 2
 const MAP_HALF_D = 60;   // island.depth / 2
 const _cannonYAxis = new CANNON.Vec3(0, 1, 0);
+const _euler = new THREE.Euler();
+const _threeQuat = new THREE.Quaternion();
 
 /**
  * World-space offsets from helicopter mesh center (rotY=0, facing +Z).
@@ -23,9 +25,9 @@ const PASSENGER_SLOTS = [
 ];
 
 /**
- * Helicopter vehicle — simplified flight model.
- * Kinematic: position directly controlled, auto-stabilize attitude.
- * Seats: 1 pilot + 3 passengers (all can fire).
+ * Helicopter vehicle — force-driven flight model.
+ * Dynamic body with anti-gravity; collision feedback via body.velocity.
+ * Seats: 1 pilot + 4 passengers (all can fire).
  */
 export { PASSENGER_SLOTS as HELI_PASSENGER_SLOTS, PILOT_OFFSET as HELI_PILOT_OFFSET };
 
@@ -107,16 +109,24 @@ export class Helicopter extends Vehicle {
         this._physics = physics;
 
         this.body = new CANNON.Body({
-            mass: 0,
-            type: CANNON.Body.KINEMATIC,
-            collisionFilterGroup: 1,
-            collisionFilterMask: 1,
+            mass: 300,
+            type: CANNON.Body.DYNAMIC,
+            collisionFilterGroup: 4,
+            collisionFilterMask: 5,  // 1(terrain)|4(helicopters) — excludes soldiers(2)
+            linearDamping: 0.5,
+            angularDamping: 0.0,   // yaw damping handled manually
+            allowSleep: false,     // helicopter must never sleep
         });
 
         // Main fuselage box (cabin + nose area)
         this.body.addShape(
             new CANNON.Box(new CANNON.Vec3(0.9, 0.7, 2.5)),
             new CANNON.Vec3(0, -0.15, 0)
+        );
+        // Nose cone
+        this.body.addShape(
+            new CANNON.Box(new CANNON.Vec3(0.5, 0.5, 0.5)),
+            new CANNON.Vec3(0, -0.2, 2.8)
         );
         // Tail boom
         this.body.addShape(
@@ -126,6 +136,13 @@ export class Helicopter extends Vehicle {
 
         this._syncBody();
         physics.addBody(this.body);
+
+        // Anti-gravity: runs per sub-step so it perfectly cancels world gravity
+        this._preStepListener = () => {
+            if (!this.body || !this.alive || this._crashing) return;
+            this.body.force.y += this.body.mass * 9.82;
+        };
+        physics.world.addEventListener('preStep', this._preStepListener);
     }
 
     /**
@@ -360,9 +377,17 @@ export class Helicopter extends Vehicle {
         } else {
             this.passengers.push(entity);
         }
+        // Disable occupant's collision so their body doesn't push the helicopter
+        if (entity.body) {
+            entity.body.collisionResponse = false;
+        }
     }
 
     exit(entity) {
+        // Re-enable occupant's collision before removing them
+        if (entity.body) {
+            entity.body.collisionResponse = true;
+        }
         if (this.driver === entity) {
             this.driver = null;
             // Promote first passenger to pilot
@@ -404,20 +429,14 @@ export class Helicopter extends Vehicle {
             this.impactVFX.spawn('explosion', this.mesh.position, null);
         }
 
-        // Switch physics body to dynamic — let CANNON handle crash physics
-        if (this.body && this._physics) {
-            this.body.type = CANNON.Body.DYNAMIC;
-            this.body.mass = 500;
-            this.body.material = this._physics.defaultMaterial;
+        // Adjust damping for crash — velocity already in body from flight
+        if (this.body) {
             this.body.linearDamping = 0.1;
             this.body.angularDamping = 0.3;
-            this.body.updateMassProperties();
-            // Carry over flight velocity
-            this.body.velocity.set(this.velX, this.velocityY || 0, this.velZ);
-            // Carry over angular velocity (yaw → Y axis) + random tumble
+            // Add random tumble on top of existing angular velocity
             this.body.angularVelocity.set(
                 (Math.random() - 0.5) * 3,
-                this._yawRate + (Math.random() - 0.5) * 2,
+                this.body.angularVelocity.y + (Math.random() - 0.5) * 2,
                 (Math.random() - 0.5) * 3
             );
         }
@@ -429,6 +448,8 @@ export class Helicopter extends Vehicle {
     _killAllOccupants() {
         const occupants = this.getAllOccupants();
         for (const occ of occupants) {
+            // Re-enable collision before ejecting
+            if (occ.body) occ.body.collisionResponse = true;
             // Clear vehicle reference on entity
             if (occ.vehicle !== undefined) occ.vehicle = null;
             // Clear vehicle reference on AI controller
@@ -468,13 +489,12 @@ export class Helicopter extends Vehicle {
             this.mesh.visible = false;
             this._crashing = false;
             this.respawnTimer = this.respawnDelay;
-            // Switch body back to kinematic and move out of the way
+            // Move body out of the way
             if (this.body) {
-                this.body.type = CANNON.Body.KINEMATIC;
-                this.body.mass = 0;
-                this.body.updateMassProperties();
                 this.body.velocity.set(0, 0, 0);
                 this.body.angularVelocity.set(0, 0, 0);
+                this.body.force.set(0, 0, 0);
+                this.body.torque.set(0, 0, 0);
                 this.body.position.set(0, -999, 0);
             }
         }
@@ -501,17 +521,33 @@ export class Helicopter extends Vehicle {
             return;
         }
 
-        // Drag when no one aboard
-        if (!this.driver && this.passengers.length === 0) {
-            const hDragFactor = Math.max(0, 1 - this.hDrag * dt);
-            this.velX *= hDragFactor;
-            this.velZ *= hDragFactor;
-            this.velocityY *= Math.max(0, 1 - this.vDrag * dt);
+        // ── Read position from physics body (includes collision resolution) ──
+        if (this.body) {
+            const bp = this.body.position;
+            this.mesh.position.set(bp.x, bp.y, bp.z);
+            // Clear accumulated forces — prevents stacking when frame rate > physics rate
+            this.body.force.set(0, 0, 0);
+            this.body.torque.set(0, 0, 0);
+        }
 
-            // Gravity when empty — slowly descend
-            if (this.mesh.position.y > this.minAltitude + 1) {
-                this.velocityY -= 3 * dt;
+        // Unoccupied: apply downward force + higher damping + decay yaw
+        if (!this.driver && this.passengers.length === 0) {
+            if (this.body) {
+                this.body.linearDamping = 0.8;
+                this.body.force.y -= this.body.mass * 3;
             }
+            this._yawRate *= Math.max(0, 1 - 5 * dt);
+        } else {
+            if (this.body) {
+                this.body.linearDamping = 0.5;
+            }
+        }
+
+        // Sync local velocity variables from body (for visual attitude, AI, etc.)
+        if (this.body) {
+            this.velX = this.body.velocity.x;
+            this.velZ = this.body.velocity.z;
+            this.velocityY = this.body.velocity.y;
         }
 
         // Derive scalar speed (forward component along heading)
@@ -519,38 +555,44 @@ export class Helicopter extends Vehicle {
         const fwdZ = Math.cos(this.rotationY);
         this.speed = this.velX * fwdX + this.velZ * fwdZ; // signed forward speed
 
-        // Apply velocity vector
-        this.mesh.position.x += this.velX * dt;
-        this.mesh.position.z += this.velZ * dt;
-        this.mesh.position.y += this.velocityY * dt;
-
-        // Altitude constraints — respect actual terrain height
+        // Altitude constraints — respect actual terrain height (safety net)
         let floorY = this.minAltitude;
         if (this.getHeightAt) {
             this._groundY = this.getHeightAt(this.mesh.position.x, this.mesh.position.z);
-            floorY = Math.max(floorY, this._groundY + 1.1); // skid bottom at local y=-1.04
+            floorY = Math.max(floorY, this._groundY + 1.1);
         }
         if (this.mesh.position.y <= floorY) {
             this.mesh.position.y = floorY;
-            if (this.velocityY < 0) this.velocityY = 0;
+            if (this.body && this.body.velocity.y < 0) this.body.velocity.y = 0;
         }
         if (this.mesh.position.y >= this.maxAltitude) {
             this.mesh.position.y = this.maxAltitude;
-            if (this.velocityY > 0) this.velocityY = 0;
+            if (this.body && this.body.velocity.y > 0) this.body.velocity.y = 0;
         }
 
-        // Map boundary clamp — kill velocity component into wall
+        // Map boundary clamp
         const px = this.mesh.position.x;
         const pz = this.mesh.position.z;
-        if (px < -MAP_HALF_W) { this.mesh.position.x = -MAP_HALF_W; if (this.velX < 0) this.velX = 0; }
-        if (px >  MAP_HALF_W) { this.mesh.position.x =  MAP_HALF_W; if (this.velX > 0) this.velX = 0; }
-        if (pz < -MAP_HALF_D) { this.mesh.position.z = -MAP_HALF_D; if (this.velZ < 0) this.velZ = 0; }
-        if (pz >  MAP_HALF_D) { this.mesh.position.z =  MAP_HALF_D; if (this.velZ > 0) this.velZ = 0; }
+        if (px < -MAP_HALF_W) { this.mesh.position.x = -MAP_HALF_W; if (this.body && this.body.velocity.x < 0) this.body.velocity.x = 0; }
+        if (px >  MAP_HALF_W) { this.mesh.position.x =  MAP_HALF_W; if (this.body && this.body.velocity.x > 0) this.body.velocity.x = 0; }
+        if (pz < -MAP_HALF_D) { this.mesh.position.z = -MAP_HALF_D; if (this.body && this.body.velocity.z < 0) this.body.velocity.z = 0; }
+        if (pz >  MAP_HALF_D) { this.mesh.position.z =  MAP_HALF_D; if (this.body && this.body.velocity.z > 0) this.body.velocity.z = 0; }
 
         // Store altitude
         this.altitude = this.mesh.position.y;
 
-        // Apply rotation
+        // ── Sync body back; constrain to Y-only rotation ──
+        if (this.body) {
+            this.body.position.set(this.mesh.position.x, this.mesh.position.y, this.mesh.position.z);
+            // Lock X/Z angular velocity — helicopter stays upright
+            this.body.angularVelocity.x = 0;
+            this.body.angularVelocity.z = 0;
+            this.body.angularVelocity.y = this._yawRate;
+            // Sync quaternion to full visual attitude (yaw + pitch + roll)
+            _euler.set(this._visualPitch, this.rotationY, this._visualRoll, 'YXZ');
+            _threeQuat.setFromEuler(_euler);
+            this.body.quaternion.set(_threeQuat.x, _threeQuat.y, _threeQuat.z, _threeQuat.w);
+        }
         this.mesh.rotation.y = this.rotationY;
 
         // ── Visual attitude ──
@@ -595,16 +637,12 @@ export class Helicopter extends Vehicle {
         // Cache world quaternion for passengers/pilot (avoids repeated matrix traversal)
         this._attitudeGroup.updateWorldMatrix(true, false);
         this._cachedWorldQuat.setFromRotationMatrix(this._attitudeGroup.matrixWorld);
-
-        // Sync physics body (skip when idle — no occupants and on ground)
-        if (this.driver || this.passengers.length > 0 || this.altitude > this._groundY + 1) {
-            this._syncBody();
-        }
     }
 
     applyInput(input, dt) {
-        if (!this.alive) return;
+        if (!this.alive || !this.body) return;
 
+        const mass = this.body.mass;
         const fwdX = Math.sin(this.rotationY);
         const fwdZ = Math.cos(this.rotationY);
 
@@ -612,49 +650,41 @@ export class Helicopter extends Vehicle {
         this._inputThrust = input.thrust || 0;
         this._inputBrake = input.brake || 0;
 
-        // Thrust: add force along current heading
+        // Thrust along current heading
         if (input.thrust > 0) {
-            this.velX += fwdX * this.hAccel * input.thrust * dt;
-            this.velZ += fwdZ * this.hAccel * input.thrust * dt;
+            this.body.force.x += fwdX * mass * this.hAccel * input.thrust;
+            this.body.force.z += fwdZ * mass * this.hAccel * input.thrust;
         }
-        // Brake: add force opposite to current heading
+        // Brake opposite to heading
         if (input.brake > 0) {
-            this.velX -= fwdX * this.hAccel * input.brake * dt;
-            this.velZ -= fwdZ * this.hAccel * input.brake * dt;
+            this.body.force.x -= fwdX * mass * this.hAccel * input.brake;
+            this.body.force.z -= fwdZ * mass * this.hAccel * input.brake;
         }
 
-        // Horizontal drag (applied to velocity vector)
-        const hDragFactor = Math.max(0, 1 - this.hDrag * 0.3 * dt);
-        this.velX *= hDragFactor;
-        this.velZ *= hDragFactor;
-
-        // Clamp horizontal speed
-        const hSpd = Math.sqrt(this.velX * this.velX + this.velZ * this.velZ);
+        // Horizontal speed soft cap (extra drag when exceeding max)
+        const hSpd = Math.sqrt(this.body.velocity.x ** 2 + this.body.velocity.z ** 2);
         if (hSpd > this.maxHSpeed) {
-            const scale = this.maxHSpeed / hSpd;
-            this.velX *= scale;
-            this.velZ *= scale;
+            const excess = (hSpd - this.maxHSpeed) / hSpd;
+            this.body.force.x -= this.body.velocity.x * excess * mass * 10;
+            this.body.force.z -= this.body.velocity.z * excess * mass * 10;
         }
 
-        // Steering — smooth yaw rate
+        // Steering — smooth yaw rate (direct control, not torque)
         let targetYaw = 0;
         if (input.steerLeft) targetYaw = this.turnSpeed;
         if (input.steerRight) targetYaw = -this.turnSpeed;
         const yawLerp = 1 - Math.exp(-5 * dt);
         this._yawRate += (targetYaw - this._yawRate) * yawLerp;
+        // rotationY integrated by CANNON via body.angularVelocity.y (set in update)
         this.rotationY += this._yawRate * dt;
 
-        // Ascend / descend (inertial)
+        // Vertical thrust
         if (input.ascend) {
-            this.velocityY += this.vAccel * dt;
+            this.body.force.y += mass * this.vAccel;
         } else if (input.descend) {
-            this.velocityY -= this.vAccel * dt;
-        } else {
-            // Auto-stabilize vertical velocity
-            this.velocityY *= Math.max(0, 1 - this.vDrag * dt);
+            this.body.force.y -= mass * this.vAccel;
         }
-        // Clamp vertical speed
-        this.velocityY = Math.max(-this.maxVSpeed, Math.min(this.maxVSpeed, this.velocityY));
+        // Anti-gravity is in preStep callback (per sub-step), not here
     }
 
     /**
@@ -703,14 +733,16 @@ export class Helicopter extends Vehicle {
             this._attitudeGroup.rotation.set(0, 0, 0);
         }
 
-        // Ensure body is kinematic for normal flight
+        // Reset body to flight-ready state
         if (this.body) {
-            this.body.type = CANNON.Body.KINEMATIC;
-            this.body.mass = 0;
-            this.body.updateMassProperties();
+            this.body.linearDamping = 0.5;
+            this.body.angularDamping = 0.0;
             this.body.velocity.set(0, 0, 0);
             this.body.angularVelocity.set(0, 0, 0);
+            this.body.force.set(0, 0, 0);
+            this.body.torque.set(0, 0, 0);
+            this.body.position.set(this.mesh.position.x, this.mesh.position.y, this.mesh.position.z);
+            this.body.quaternion.setFromAxisAngle(_cannonYAxis, this.rotationY);
         }
-        this._syncBody();
     }
 }

@@ -38,10 +38,15 @@ export class Island {
         // Per-obstacle bounding boxes for ThreatMap height grid
         this.obstacleBounds = [];
 
+        // Exclusion zones: [{x, z, r}] — obstacle/vegetation generation skips these
+        this._exclusionZones = [];
+
         this._generateTerrain();
         this._generateWater();
         // Cache flag positions early so cover generation can use them
         this._flagPositionsCache = this.getFlagPositions();
+        // Pre-compute helicopter landing pads; covers/vegetation will avoid them
+        this.heliSpawnPositions = this._computeHeliSpawns();
         this._generateCovers();
         this._generateBuildings();
         this._generateVegetation();
@@ -291,6 +296,47 @@ export class Island {
         this.collidables.push(water);
     }
 
+    /**
+     * Pre-compute helicopter spawn positions (same algorithm as VehicleManager._findLandSpawn)
+     * and register them as exclusion zones so covers/vegetation don't spawn there.
+     */
+    _computeHeliSpawns() {
+        const flags = this._flagPositionsCache;
+        const bases = [flags[0], flags[flags.length - 1]];
+        const HELI_CLEAR_RADIUS = 6; // metres to keep clear around landing pad
+        const positions = [];
+        for (const base of bases) {
+            let pos = null;
+            for (let attempt = 0; attempt < 12; attempt++) {
+                const angle = attempt * (Math.PI * 2 / 12);
+                const x = base.x + Math.cos(angle) * 8;
+                const z = base.z + Math.sin(angle) * 8;
+                const h = this.getHeightAt(x, z);
+                if (h > 0.5 && h < 6) {
+                    pos = { x, y: h, z };
+                    break;
+                }
+            }
+            if (!pos) {
+                const h = this.getHeightAt(base.x, base.z);
+                pos = { x: base.x, y: Math.max(h, 1), z: base.z };
+            }
+            positions.push(pos);
+            this._exclusionZones.push({ x: pos.x, z: pos.z, r: HELI_CLEAR_RADIUS });
+        }
+        return positions;
+    }
+
+    /** Check if (x,z) falls inside any exclusion zone. */
+    _inExclusionZone(x, z) {
+        for (const zone of this._exclusionZones) {
+            const dx = x - zone.x;
+            const dz = z - zone.z;
+            if (dx * dx + dz * dz < zone.r * zone.r) return true;
+        }
+        return false;
+    }
+
     _generateCovers() {
         // Geometry collection arrays for batch merging
         this._rockGeos = [];
@@ -343,7 +389,7 @@ export class Island {
             const rx = (this.noise.noise2D(i * 7.3, 200) * 0.8) * this.width / 2;
             const rz = (this.noise.noise2D(i * 3.7, 300) * 0.8) * this.depth / 2;
             const h = this.getHeightAt(rx, rz);
-            if (h > 0.5) {
+            if (h > 0.5 && !this._inExclusionZone(rx, rz)) {
                 this._placeRock(rx, h, rz);
             }
         }
@@ -411,6 +457,7 @@ export class Island {
             const h = this.getHeightAt(x, z);
 
             if (h < 0.5) continue; // skip underwater
+            if (this._inExclusionZone(x, z)) continue; // skip heli pads
 
             const r = Math.abs(this.noise.noise2D(x * 0.5, z * 0.5));
             if (r < 0.35) {
@@ -638,7 +685,7 @@ export class Island {
             const z = (this.noise.noise2D(i * 3.3, 600) * 0.85) * this.depth / 2;
             const h = this.getHeightAt(x, z);
 
-            if (h > 0.5 && h < 5) {
+            if (h > 0.5 && h < 5 && !this._inExclusionZone(x, z)) {
                 // Trunk (tapered cylinder, slightly curved via segments)
                 const trunkH = 6 + Math.abs(this.noise.noise2D(x, z)) * 4.5;
                 const trunkGeo = new THREE.CylinderGeometry(0.08, 0.18, trunkH, 5, 4);

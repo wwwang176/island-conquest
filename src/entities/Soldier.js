@@ -396,6 +396,7 @@ export class Soldier {
             angularDamping: 1.0,
             fixedRotation: true,
             collisionResponse: !this.kinematic,
+            collisionFilterGroup: 2,
         });
         const r = 0.35;
         body.addShape(new CANNON.Sphere(r), new CANNON.Vec3(0, r, 0));

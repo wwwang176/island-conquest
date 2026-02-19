@@ -102,6 +102,7 @@ export class Player {
             mass: 0,
             type: CANNON.Body.KINEMATIC,
             fixedRotation: true,
+            collisionFilterGroup: 2,
         });
         const r = 0.4;
         this.body.addShape(new CANNON.Sphere(r), new CANNON.Vec3(0, r, 0));
