@@ -24,6 +24,7 @@ export const WeaponDefs = {
         // First-person arm grip Z positions (trigger hand, support hand)
         fpGripZ: [-0.15, -0.55],
         tpLeftArmRotX: 1.2,
+        tpMuzzleZ: -0.595,          // barrel translate -0.42, length 0.35
     },
     GRENADE: {
         name: 'Grenade',
@@ -52,6 +53,7 @@ export const WeaponDefs = {
         moveSpeedMult: 1.15,
         fpGripZ: [-0.15, -0.38],
         tpLeftArmRotX: 1.35,
+        tpMuzzleZ: -0.225,          // barrel translate -0.15, length 0.15
     },
     LMG: {
         name: 'LMG',
@@ -72,6 +74,7 @@ export const WeaponDefs = {
         minSpread: 0.012,                // floor for sustained fire tightening
         fpGripZ: [-0.15, -0.55],
         tpLeftArmRotX: 1.35,
+        tpMuzzleZ: -0.595,              // same as AR15
     },
     BOLT: {
         name: 'Bolt-Action',
@@ -94,6 +97,7 @@ export const WeaponDefs = {
         aiAimDelay: 0.5,           // AI must aim for 0.5s before firing
         fpGripZ: [-0.18, -0.55],
         tpLeftArmRotX: 1.35,
+        tpMuzzleZ: -0.795,          // barrel translate -0.52, length 0.55
     },
 };
 

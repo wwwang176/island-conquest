@@ -139,9 +139,8 @@ export class Player {
             if (child.material) child.material.dispose();
         }
 
-        // Remove old weapon visuals
+        // Remove old weapon visuals (flash is child of gunGroup, removed with it)
         this.camera.remove(this.weapon.gunGroup);
-        this.camera.remove(this.weapon.muzzleFlash);
 
         // Create new weapon
         const tracerSystem = this.weapon.tracerSystem;

@@ -51,14 +51,14 @@ export class Weapon {
         this.isScoped = false;
         this._defaultFOV = camera.fov;
 
-        // Visual: muzzle flash
-        this.muzzleFlash = this._createMuzzleFlash();
-        this.muzzleFlashTimer = 0;
-
         // Gun mesh (simple low-poly representation)
         this.armColor = armColor;
         this.gunGroup = this._createGunMesh();
         this.camera.add(this.gunGroup);
+
+        // Visual: muzzle flash (attached to gunGroup so it follows recoil)
+        this.muzzleFlash = this._createMuzzleFlash();
+        this.muzzleFlashTimer = 0;
 
         // Recoil visual (camera kick)
         this.recoilOffset = 0;
@@ -109,20 +109,12 @@ export class Weapon {
     }
 
     _createMuzzleFlash() {
-        const geo = new THREE.SphereGeometry(0.05, 4, 4);
-        const mat = new THREE.MeshBasicMaterial({
-            color: 0xffaa00,
-            transparent: true,
-            opacity: 0.9,
-        });
-        const flash = new THREE.Mesh(geo, mat);
+        const flash = Soldier.createMuzzleFlashMesh();
         flash.visible = false;
-        // Muzzle Z in camera space: gun at (0.25, -0.19, -0.40) in group, group at (-0.20, -0.10, 0)
-        const muzzleZ = this.weaponId === 'BOLT' ? -1.195
-            : this.weaponId === 'LMG' ? -0.995
-            : (this.weaponId === 'SMG' ? -0.625 : -0.995);
-        flash.position.set(0.05, -0.28, muzzleZ);
-        this.camera.add(flash);
+        // gunGroup space: gun at (0.25, -0.19, -0.40), barrel tip = gun + tpMuzzleZ
+        const def = WeaponDefs[this.weaponId];
+        flash.position.set(0.25, -0.18, -0.40 + def.tpMuzzleZ);
+        this.gunGroup.add(flash);
         return flash;
     }
 
@@ -161,7 +153,8 @@ export class Weapon {
 
         // Muzzle flash
         this.muzzleFlash.visible = true;
-        this.muzzleFlash.scale.setScalar(0.5 + Math.random() * 1.0);
+        this.muzzleFlash.scale.setScalar(0.85 + Math.random() * 0.3);
+        this.muzzleFlash.rotation.z = (Math.random() - 0.5) * (10 * Math.PI / 180);
         this.muzzleFlashTimer = 0.04;
 
         // Bolt cycling (BOLT weapon only)

@@ -2442,6 +2442,7 @@ export class AIController {
 
         // Visual recoil kick on gun mesh
         this.soldier._gunRecoilZ = GunAnim.recoilOffset;
+        this.soldier.showMuzzleFlash();
 
         // Notify minimap that this AI fired
         if (this.eventBus) {

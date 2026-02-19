@@ -92,6 +92,9 @@ export class Soldier {
 
         // Cached position vector (avoids new Vector3 per getPosition call)
         this._posCache = new THREE.Vector3();
+
+        // Muzzle flash timer (COM)
+        this._muzzleFlashTimer = 0;
     }
 
     _createMesh() {
@@ -221,6 +224,29 @@ export class Soldier {
         geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     }
 
+    /** Create a four-pointed-star muzzle flash mesh (shared geometry+material). */
+    static createMuzzleFlashMesh() {
+        const outerR = 0.27, innerR = 0.0675;
+        const pts = [];
+        for (let i = 0; i < 8; i++) {
+            const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
+            const r = i % 2 === 0 ? outerR : innerR;
+            pts.push(Math.cos(a) * r, Math.sin(a) * r, 0);
+        }
+        const verts = [];
+        for (let i = 0; i < 8; i++) {
+            const j = (i + 1) % 8;
+            verts.push(0, 0, 0, pts[i * 3], pts[i * 3 + 1], 0, pts[j * 3], pts[j * 3 + 1], 0);
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+        const mat = new THREE.MeshBasicMaterial({
+            color: 0xffcc44, transparent: true, opacity: 0.9,
+            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+        });
+        return new THREE.Mesh(geo, mat);
+    }
+
     /**
      * Build a shared gun mesh for the given weapon ID (centered at origin).
      * Used by third-person view, first-person view, and dropped guns.
@@ -301,6 +327,14 @@ export class Soldier {
         this._gunParent.add(gun);
         this.gunMesh = gun;
 
+        // Muzzle flash (attached to gun mesh)
+        const flash = Soldier.createMuzzleFlashMesh();
+        flash.visible = false;
+        const flashDef = WeaponDefs[weaponId];
+        flash.position.set(0, 0.01, flashDef.tpMuzzleZ);
+        gun.add(flash);
+        this._muzzleFlash = flash;
+
         // Adjust left arm grip per weapon
         if (this._leftArmMesh) {
             const def = WeaponDefs[weaponId];
@@ -312,6 +346,14 @@ export class Soldier {
 
     setWeaponModel(weaponId) {
         this._createGunMesh(weaponId);
+    }
+
+    showMuzzleFlash() {
+        if (!this._muzzleFlash) return;
+        this._muzzleFlash.visible = true;
+        this._muzzleFlash.scale.setScalar(0.85 + Math.random() * 0.3);
+        this._muzzleFlash.rotation.z = (Math.random() - 0.5) * (10 * Math.PI / 180);
+        this._muzzleFlashTimer = 0.04;
     }
 
     /**
@@ -616,6 +658,14 @@ export class Soldier {
             const targetTilt = this.controller.isReloading ? GunAnim.reloadTilt : (bolting ? GunAnim.boltTilt : 0);
             const tiltSpeed = this.controller.isReloading ? 12 : 8;
             this._gunReloadTilt += (targetTilt - this._gunReloadTilt) * Math.min(1, tiltSpeed * dt);
+        }
+
+        // Muzzle flash timer
+        if (this._muzzleFlashTimer > 0) {
+            this._muzzleFlashTimer -= dt;
+            if (this._muzzleFlashTimer <= 0 && this._muzzleFlash) {
+                this._muzzleFlash.visible = false;
+            }
         }
 
         // Gun recoil Z recovery + apply
