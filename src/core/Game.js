@@ -156,7 +156,12 @@ export class Game {
         this.blocker.querySelector('p').textContent = 'Loading...';
         this.blocker.style.cursor = 'default';
         this.blocker.addEventListener('click', () => {
-            if (this._ready && !this.paused) this.input.requestPointerLock();
+            if (!this._ready || this.paused) return;
+            if (this.gameMode === 'playing') {
+                this.input.requestPointerLock();
+            } else {
+                this.blocker.classList.add('hidden');
+            }
         });
         document.addEventListener('pointerlockchange', () => {
             if (document.pointerLockElement) {
