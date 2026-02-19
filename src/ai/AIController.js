@@ -196,7 +196,6 @@ export class AIController {
         this._pathCooldown = Math.random() * 0.5; // stagger initial A* across COMs
         this._lastRiskLevel = 0;     // for detecting risk spikes (under attack)
         this._noPathFound = false;   // true when A* fails — blocks direct movement
-        this._hitStaggerTimer = 0;   // freezes movement briefly when hit
 
         // Tactical state
         this.riskLevel = 0;
@@ -456,10 +455,6 @@ export class AIController {
      */
     onDamaged() {
         this.btTimer = this.btInterval; // triggers BT on next update()
-        // Stagger: freeze movement briefly (skip if already in vehicle)
-        if (!this.vehicle) {
-            this._hitStaggerTimer = 0.25 + Math.random() * 0.1; // 0.25-0.35s
-        }
         // Clear current path so cover-seek recalculates from current position
         if (!this.seekingCover) {
             this.currentPath = [];
@@ -1857,17 +1852,6 @@ export class AIController {
         const myPos = this.soldier.getPosition();
         const groundY = this.getHeightAt(myPos.x, myPos.z);
 
-        // Hit stagger: freeze in place for a short duration after being hit
-        if (this._hitStaggerTimer > 0) {
-            this._hitStaggerTimer -= dt;
-            // Still snap to ground and decelerate inertia
-            if (!this.isJumping) body.position.y = groundY + 0.05;
-            this._velX *= Math.max(0, 1 - 15 * dt);
-            this._velZ *= Math.max(0, 1 - 15 * dt);
-            this.lastPos.copy(myPos);
-            return;
-        }
-
         // Handle jumping (manual parabola)
         if (this.isJumping) {
             this.jumpVelY -= 9.8 * dt; // gravity
@@ -2583,7 +2567,6 @@ export class AIController {
         this.crossfirePos = null;
         this._reflexDodgeTimer = 0;
         this._prevTargetedByCount = 0;
-        this._hitStaggerTimer = 0;
         if (this._tacLabel) this._tacLabel.visible = false;
         this._tacLabelText = '';
         this._previouslyVisible.clear();
