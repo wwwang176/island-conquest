@@ -455,12 +455,9 @@ export class AIController {
      */
     onDamaged() {
         this.btTimer = this.btInterval; // triggers BT on next update()
-        // Clear current path so cover-seek recalculates from current position
-        if (!this.seekingCover) {
-            this.currentPath = [];
-            this.pathIndex = 0;
-            this._pathCooldown *= 0.5;
-        }
+        // Halve path cooldown so A* recomputes sooner for the new moveTarget
+        // (don't clear currentPath — let COM keep moving until BT picks a new destination)
+        this._pathCooldown *= 0.5;
     }
 
     /**
