@@ -424,6 +424,10 @@ export class Island {
         return new THREE.Vector3(bestX, Math.max(bestH, 1), bestZ);
     }
 
+    updateSway(elapsed) {
+        if (this._swayTimeUniform) this._swayTimeUniform.value = elapsed;
+    }
+
     getFlagPositions() {
         // Return cached positions if already generated
         if (this._flagPositionsCache) return this._flagPositionsCache;
@@ -692,11 +696,18 @@ export class Island {
                 const trunkPos = trunkGeo.attributes.position;
                 const bendX = this.noise.noise2D(x * 10, z * 10) * 0.8;
                 const bendZ = this.noise.noise2D(z * 10, x * 10) * 0.8;
+                const treePhase = x * 0.5 + z * 0.3;
+                const sf = new Float32Array(trunkPos.count);
+                const sp = new Float32Array(trunkPos.count);
                 for (let j = 0; j < trunkPos.count; j++) {
                     const ty = (trunkPos.getY(j) + trunkH / 2) / trunkH;
                     trunkPos.setX(j, trunkPos.getX(j) + bendX * ty * ty);
                     trunkPos.setZ(j, trunkPos.getZ(j) + bendZ * ty * ty);
+                    sf[j] = ty * ty;
+                    sp[j] = treePhase;
                 }
+                trunkGeo.setAttribute('swayFactor', new THREE.BufferAttribute(sf, 1));
+                trunkGeo.setAttribute('swayPhase', new THREE.BufferAttribute(sp, 1));
                 trunkGeo.translate(x, h + trunkH / 2, z);
                 trunkGeo.computeVertexNormals();
                 trunkGeometries.push(trunkGeo);
@@ -717,7 +728,14 @@ export class Island {
                     const indices = [0, 1, 2, 0, 3, 1];
                     frondGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
                     frondGeo.setIndex(indices);
-                    frondGeo.translate(x + topX, h + trunkH, z + topZ);
+                    const ax = x + topX, ay = h + trunkH, az = z + topZ;
+                    frondGeo.setAttribute('swayFactor', new THREE.BufferAttribute(new Float32Array(4).fill(1.0), 1));
+                    frondGeo.setAttribute('swayPhase', new THREE.BufferAttribute(new Float32Array(4).fill(treePhase), 1));
+                    frondGeo.setAttribute('bobPhase', new THREE.BufferAttribute(new Float32Array(4).fill(treePhase + f * 1.047), 1));
+                    frondGeo.setAttribute('anchor', new THREE.BufferAttribute(new Float32Array([
+                        ax, ay, az, ax, ay, az, ax, ay, az, ax, ay, az,
+                    ]), 3));
+                    frondGeo.translate(ax, ay, az);
                     frondGeo.computeVertexNormals();
                     frondGeometries.push(frondGeo);
                 }
@@ -732,14 +750,60 @@ export class Island {
         }
 
         if (trunkGeometries.length > 0) {
+            const swayTime = { value: 0 };
+            this._swayTimeUniform = swayTime;
+
+            const injectSway = (withBob) => (shader) => {
+                shader.uniforms.uSwayTime = swayTime;
+                shader.vertexShader = shader.vertexShader.replace(
+                    '#include <common>',
+                    '#include <common>\n' +
+                    'attribute float swayFactor;\n' +
+                    'attribute float swayPhase;\n' +
+                    'uniform float uSwayTime;\n' +
+                    (withBob ? 'attribute float bobPhase;\nattribute vec3 anchor;\n' : '')
+                );
+                if (withBob) {
+                    shader.vertexShader = shader.vertexShader.replace(
+                        '#include <begin_vertex>',
+                        `#include <begin_vertex>
+                        vec3 off = transformed - anchor;
+                        float rAx = sin(uSwayTime * 2.0 + bobPhase * 2.3) * 0.08;
+                        float crx = cos(rAx), srx = sin(rAx);
+                        vec3 r1 = vec3(off.x, off.y * crx - off.z * srx, off.y * srx + off.z * crx);
+                        float rAz = sin(uSwayTime * 1.7 + bobPhase * 1.9) * 0.08;
+                        float crz = cos(rAz), srz = sin(rAz);
+                        transformed = anchor + vec3(r1.x * crz - r1.y * srz, r1.x * srz + r1.y * crz, r1.z);
+                        transformed.x += sin(uSwayTime * 1.5 + swayPhase) * 0.2 * swayFactor;
+                        transformed.z += sin(uSwayTime * 1.1 + swayPhase * 1.7) * 0.15 * swayFactor;`
+                    );
+                } else {
+                    shader.vertexShader = shader.vertexShader.replace(
+                        '#include <begin_vertex>',
+                        `#include <begin_vertex>
+                        transformed.x += sin(uSwayTime * 1.5 + swayPhase) * 0.2 * swayFactor;
+                        transformed.z += sin(uSwayTime * 1.1 + swayPhase * 1.7) * 0.15 * swayFactor;`
+                    );
+                }
+            };
+
+            const swayDepthMat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+            swayDepthMat.onBeforeCompile = injectSway(false);
+
             const mergedTrunks = mergeGeometries(trunkGeometries);
-            const trunkMesh = new THREE.Mesh(mergedTrunks, new THREE.MeshLambertMaterial({ color: 0x8B6508, flatShading: true }));
+            const trunkMat = new THREE.MeshLambertMaterial({ color: 0x8B6508, flatShading: true });
+            trunkMat.onBeforeCompile = injectSway(false);
+            const trunkMesh = new THREE.Mesh(mergedTrunks, trunkMat);
             trunkMesh.castShadow = true;
+            trunkMesh.customDepthMaterial = swayDepthMat;
             this.scene.add(trunkMesh);
 
             const mergedFronds = mergeGeometries(frondGeometries);
-            const frondMesh = new THREE.Mesh(mergedFronds, new THREE.MeshLambertMaterial({ color: 0x2d8a2d, side: THREE.DoubleSide, flatShading: true }));
+            const frondMat = new THREE.MeshLambertMaterial({ color: 0x2d8a2d, side: THREE.DoubleSide, flatShading: true });
+            frondMat.onBeforeCompile = injectSway(true);
+            const frondMesh = new THREE.Mesh(mergedFronds, frondMat);
             frondMesh.castShadow = true;
+            frondMesh.customDepthMaterial = swayDepthMat;
             this.scene.add(frondMesh);
         }
 

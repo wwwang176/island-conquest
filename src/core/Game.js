@@ -627,6 +627,8 @@ export class Game {
 
         const dt = Math.min(this.clock.getDelta(), 0.1);
 
+        this.island.updateSway(this.clock.elapsedTime);
+
         this.physics.step(dt);
 
         // Update tracers
