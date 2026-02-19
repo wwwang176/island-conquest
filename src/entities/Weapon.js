@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { WeaponDefs, GunAnim } from './WeaponDefs.js';
 import { Soldier } from './Soldier.js';
+import { applyFalloff } from '../shared/DamageFalloff.js';
 
 const _tracerOrigin = new THREE.Vector3();
 
@@ -190,11 +191,7 @@ export class Weapon {
             }
 
             // Calculate damage with falloff
-            let dmg = this.damage;
-            if (hit.distance > this.falloffStart) {
-                const t = Math.min((hit.distance - this.falloffStart) / (this.falloffEnd - this.falloffStart), 1);
-                dmg = this.damage * (1 - t * (1 - this.falloffMinScale));
-            }
+            const dmg = applyFalloff(this.damage, hit.distance, this.falloffStart, this.falloffEnd, this.falloffMinScale);
 
             return {
                 target: hit.object,

@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WeaponDefs, GunAnim } from './WeaponDefs.js';
+import { computeHitDamage, applyHealthRegen } from '../shared/DamageModel.js';
+import { createCapsuleBody, resetCapsuleShapes } from '../shared/CapsuleBody.js';
 
 const WATER_Y = -0.3;
 const _splashPos = new THREE.Vector3();
@@ -388,24 +390,7 @@ export class Soldier {
     }
 
     _createPhysicsBody() {
-        const body = new CANNON.Body({
-            mass: this.kinematic ? 0 : 80,
-            type: this.kinematic ? CANNON.Body.KINEMATIC : CANNON.Body.DYNAMIC,
-            material: this.physics.defaultMaterial,
-            linearDamping: 0.9,
-            angularDamping: 1.0,
-            fixedRotation: true,
-            collisionResponse: !this.kinematic,
-            collisionFilterGroup: 2,
-        });
-        const r = 0.35;
-        body.addShape(new CANNON.Sphere(r), new CANNON.Vec3(0, r, 0));
-        body.addShape(new CANNON.Sphere(r), new CANNON.Vec3(0, this.cameraHeight - r, 0));
-        body.addShape(
-            new CANNON.Cylinder(r, r, this.cameraHeight - 2 * r, 8),
-            new CANNON.Vec3(0, this.cameraHeight / 2, 0)
-        );
-        return body;
+        return createCapsuleBody(this.physics.defaultMaterial, 0.35, this.cameraHeight, this.kinematic, 80, 2);
     }
 
     removeFromPhysics() {
@@ -433,9 +418,7 @@ export class Soldier {
         if (!this.alive) return { killed: false, damage: 0, headshot: false };
 
         const baseY = this.body.position.y;
-        const headshot = hitY !== null && hitY >= baseY + 1.45;
-        const legshot = hitY !== null && !headshot && hitY < baseY + 0.7;
-        const actualDamage = headshot ? amount * 2 : legshot ? amount * 0.5 : amount;
+        const { actualDamage, headshot } = computeHitDamage(amount, hitY, baseY);
         this.hp = Math.max(0, this.hp - actualDamage);
         this.timeSinceLastDamage = 0;
         this.lastDamagedTime = performance.now();
@@ -567,16 +550,7 @@ export class Soldier {
         this._walkPhase = 0;
 
         // Restore capsule collision shapes
-        while (this.body.shapes.length > 0) {
-            this.body.removeShape(this.body.shapes[0]);
-        }
-        const r = 0.35;
-        this.body.addShape(new CANNON.Sphere(r), new CANNON.Vec3(0, r, 0));
-        this.body.addShape(new CANNON.Sphere(r), new CANNON.Vec3(0, this.cameraHeight - r, 0));
-        this.body.addShape(
-            new CANNON.Cylinder(r, r, this.cameraHeight - 2 * r, 8),
-            new CANNON.Vec3(0, this.cameraHeight / 2, 0)
-        );
+        resetCapsuleShapes(this.body, 0.35, this.cameraHeight);
 
         // Restore kinematic state
         if (this.kinematic) {
@@ -651,10 +625,7 @@ export class Soldier {
         }
 
         // Health regen
-        this.timeSinceLastDamage += dt;
-        if (this.timeSinceLastDamage >= this.regenDelay && this.hp < this.maxHP) {
-            this.hp = Math.min(this.maxHP, this.hp + this.regenRate * dt);
-        }
+        applyHealthRegen(this, dt);
 
         // Damage indicator fade
         if (this.damageIndicatorTimer > 0) {

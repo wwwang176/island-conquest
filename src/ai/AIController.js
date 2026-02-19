@@ -4,9 +4,9 @@ import { PersonalityTypes } from './Personality.js';
 import { findFlankPosition, computePreAimPoint, computeSuppressionTarget, findRidgelineAimPoint } from './TacticalActions.js';
 import { WeaponDefs, GunAnim } from '../entities/WeaponDefs.js';
 import { HELI_PASSENGER_SLOTS, HELI_PILOT_OFFSET } from '../entities/Helicopter.js';
+import { applyFalloff } from '../shared/DamageFalloff.js';
+import { solveGrenadeBallistic, shouldThrowGrenade, actionThrowGrenade } from './AIGrenade.js';
 
-const _grenadeOrigin = new THREE.Vector3();
-const _grenadeDir = new THREE.Vector3();
 const _heliInput = { thrust: 0, brake: 0, steerLeft: false, steerRight: false, ascend: false, descend: false };
 
 const _v1 = new THREE.Vector3();
@@ -364,8 +364,8 @@ export class AIController {
             // 9. Throw grenade (checked before engage so it can interrupt close combat)
             new Sequence([
                 new Condition(() => ctx.grenadeCount > 0 && ctx.grenadeCooldown <= 0),
-                new Condition(() => ctx._shouldThrowGrenade()),
-                new Action(() => ctx._actionThrowGrenade()),
+                new Condition(() => shouldThrowGrenade(ctx)),
+                new Action(() => actionThrowGrenade(ctx)),
             ]),
 
             // 9.5. Close-range enemy (< 20m) — must engage
@@ -914,215 +914,6 @@ export class AIController {
         return contacts.length > 0;
     }
 
-    // ───── Grenade Logic ─────
-
-    _shouldThrowGrenade() {
-        if (!this.grenadeManager) return false;
-
-        // Don't throw grenades at airborne targets (helicopter passengers — can't reach)
-        if (!this.vehicle && this.targetEnemy && this.targetEnemy.alive) {
-            const ePos = this.targetEnemy.getPosition();
-            const groundY = this.getHeightAt(ePos.x, ePos.z);
-            if (ePos.y - groundY > 5) return false;
-        }
-
-        // Safety: don't throw if nearest enemy is too close (blast would hit self)
-        if (this.targetEnemy && this.targetEnemy.alive && this._enemyDist() < 8) return false;
-
-        const myPos = this.soldier.getPosition();
-
-        // Scenario 1: Rush — rushing toward flag
-        if (this.rushTarget && this.squad && this.squad.rushActive) {
-            const distToFlag = myPos.distanceTo(this.rushTarget);
-            if (distToFlag >= 8 && distToFlag <= 40) {
-                this._grenadeTargetPos = this.rushTarget;
-                return true;
-            }
-        }
-
-        // Scenario 2: Enemy holding a flag we're attacking
-        if (this.targetFlag && this.targetFlag.owner !== this.team && this.targetFlag.owner !== null) {
-            const flagPos = this.targetFlag.position;
-            const distToFlag = myPos.distanceTo(flagPos);
-            if (distToFlag >= 8 && distToFlag <= 45 && this.teamIntel) {
-                const threats = this.teamIntel.getKnownEnemies({
-                    minConfidence: 0.15,
-                    maxDist: 18,
-                    fromPos: flagPos,
-                });
-                if (threats.length > 0) {
-                    this._grenadeTargetPos = flagPos;
-                    return true;
-                }
-            }
-        }
-
-        // Scenario 3: Visible enemy in range
-        if (this.targetEnemy && this.targetEnemy.alive) {
-            const dist = this._enemyDist();
-            if (dist >= 8 && dist <= 40) {
-                this._grenadeTargetPos = this.targetEnemy.getPosition();
-                return true;
-            }
-        }
-
-        // Scenario 4: Multiple enemies clustered — 2+ enemies within blast radius
-        if (this.teamIntel) {
-            const nearby = this.teamIntel.getKnownEnemies({
-                minConfidence: 0.2,
-                maxDist: 40,
-                fromPos: myPos,
-            });
-            if (nearby.length >= 2) {
-                for (let i = 0; i < nearby.length - 1; i++) {
-                    const pi = nearby[i].lastSeenPos;
-                    const di = myPos.distanceTo(pi);
-                    if (di < 8) continue;
-                    for (let j = i + 1; j < nearby.length; j++) {
-                        if (pi.distanceTo(nearby[j].lastSeenPos) < 8) {
-                            // Aim at midpoint between the clustered enemies
-                            this._grenadeTargetPos = pi.clone().add(nearby[j].lastSeenPos).multiplyScalar(0.5);
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Solve ballistic launch for horizDist/dy at fixed speed v.
-     * Returns { vHoriz, vy, flightTime }.
-     */
-    _solveGrenadeBallistic(horizDist, dy, v, fuseTime) {
-        const g = 9.8;
-        const v2 = v * v;
-        const d2 = horizDist * horizDist;
-        const disc = v2 * v2 - g * (g * d2 + 2 * dy * v2);
-
-        let vHoriz, vy;
-        if (disc >= 0) {
-            const sqrtDisc = Math.sqrt(disc);
-            const gd = g * horizDist;
-
-            // High-angle solution (preferred — arcs over obstacles)
-            const tanHi = (v2 + sqrtDisc) / gd;
-            const cosHi = 1 / Math.sqrt(1 + tanHi * tanHi);
-            const vHorizHi = v * cosHi;
-            const flightTimeHi = horizDist / vHorizHi;
-
-            if (flightTimeHi <= fuseTime) {
-                const sinHi = tanHi * cosHi;
-                vHoriz = vHorizHi;
-                vy = v * sinHi;
-            } else {
-                const tanLo = (v2 - sqrtDisc) / gd;
-                const cosLo = 1 / Math.sqrt(1 + tanLo * tanLo);
-                const sinLo = tanLo * cosLo;
-                vHoriz = v * cosLo;
-                vy = v * sinLo;
-            }
-        } else {
-            // Out of range — throw at 45° (maximum range)
-            vHoriz = v * 0.707;
-            vy = v * 0.707;
-        }
-        return { vHoriz, vy, flightTime: horizDist / vHoriz };
-    }
-
-    _actionThrowGrenade() {
-        const myPos = this.soldier.getPosition();
-        const def = WeaponDefs.GRENADE;
-
-        // Use the target decided by _shouldThrowGrenade
-        const targetPos = this._grenadeTargetPos;
-        if (!targetPos) return BTState.FAILURE;
-        this._grenadeTargetPos = null;
-
-        // Face the target before throwing
-        _grenadeDir.set(targetPos.x - myPos.x, 0, targetPos.z - myPos.z).normalize();
-        this.facingDir.copy(_grenadeDir);
-
-        // Origin: shoulder height
-        _grenadeOrigin.set(myPos.x, myPos.y + 1.5, myPos.z);
-
-        // Soldier's horizontal movement velocity
-        const vs = this.soldier.lastMoveVelocity;
-        const v = def.throwSpeed;
-        const dy = (targetPos.y != null ? targetPos.y : myPos.y) - _grenadeOrigin.y;
-
-        // Two-iteration correction for soldier movement velocity.
-        // effectiveTarget = realTarget - vs * flightTime
-        // Iteration 1: estimate flight time from real distance (45° guess)
-        // Iteration 2: re-estimate using actual flight time from ballistic solve
-        let effTargetX = targetPos.x;
-        let effTargetZ = targetPos.z;
-
-        const realDx = targetPos.x - _grenadeOrigin.x;
-        const realDz = targetPos.z - _grenadeOrigin.z;
-        const realHorizDist = Math.sqrt(realDx * realDx + realDz * realDz);
-
-        if (realHorizDist > 0.1) {
-            // Iteration 1: rough t from 45° assumption
-            let t = realHorizDist / (v * 0.707);
-            effTargetX = targetPos.x - vs.x * t;
-            effTargetZ = targetPos.z - vs.z * t;
-
-            let edx = effTargetX - _grenadeOrigin.x;
-            let edz = effTargetZ - _grenadeOrigin.z;
-            let effDist = Math.sqrt(edx * edx + edz * edz);
-            if (effDist > 0.1) {
-                // Iteration 2: solve ballistics for iteration-1 distance, get real flight time
-                const sol = this._solveGrenadeBallistic(effDist, dy, v, def.fuseTime);
-                t = sol.flightTime;
-                effTargetX = targetPos.x - vs.x * t;
-                effTargetZ = targetPos.z - vs.z * t;
-            }
-        }
-
-        // Horizontal direction and distance to effective target
-        _grenadeDir.set(effTargetX - _grenadeOrigin.x, 0, effTargetZ - _grenadeOrigin.z);
-        const horizDist = _grenadeDir.length();
-        if (horizDist < 0.1) {
-            _grenadeDir.set(this.facingDir.x, 0, this.facingDir.z);
-        }
-        _grenadeDir.normalize();
-
-        // Final ballistic solve for the corrected effective target
-        const { vHoriz, vy } = this._solveGrenadeBallistic(horizDist, dy, v, def.fuseTime);
-
-        // Final world velocity = throw velocity + soldier movement velocity
-        const velocity = new THREE.Vector3(
-            _grenadeDir.x * vHoriz + vs.x,
-            vy,
-            _grenadeDir.z * vHoriz + vs.z
-        );
-
-        const myName = `${this.team === 'teamA' ? 'A' : 'B'}-${this.soldier.id}`;
-        this.grenadeManager.spawn(_grenadeOrigin, velocity, def.fuseTime, this.team, myName);
-
-        this.grenadeCount--;
-        this.grenadeCooldown = def.cooldown;
-
-        // Visual: look up toward throw angle
-        this._grenadeThrowPitch = Math.atan2(vy, vHoriz);
-        this._grenadeThrowTimer = 0.5;
-        // Set aimPoint for spectator camera
-        const throwDist = 8;
-        this.aimPoint.set(
-            myPos.x + _grenadeDir.x * throwDist,
-            myPos.y + 1.5 + Math.tan(this._grenadeThrowPitch) * throwDist,
-            myPos.z + _grenadeDir.z * throwDist
-        );
-
-        // Brief pause after throwing (don't shoot for 0.5s)
-        this.fireTimer = 0.5;
-
-        return BTState.SUCCESS;
-    }
-
     // ───── Actions ─────
 
     _actionSeekCover() {
@@ -1203,7 +994,7 @@ export class AIController {
             const d = myPos.distanceTo(contact.lastSeenPos);
             if (d >= 8 && d <= 40) {
                 this._grenadeTargetPos = contact.lastSeenPos;
-                this._actionThrowGrenade();
+                actionThrowGrenade(this);
                 return BTState.RUNNING; // keep aimPoint on the throw arc
             }
         }
@@ -1292,7 +1083,7 @@ export class AIController {
                 });
                 if (threats.length > 0) {
                     this._grenadeTargetPos = this.rushTarget;
-                    this._actionThrowGrenade();
+                    actionThrowGrenade(this);
                 }
             }
 
@@ -2455,11 +2246,7 @@ export class AIController {
 
         if (hitChar && (!hitEnv || hitChar.distance < hitEnv.distance)) {
             // Calculate damage with falloff (same formula as Player)
-            let dmg = this.weaponDef.damage;
-            if (hitChar.distance > this.weaponDef.falloffStart) {
-                const t = Math.min((hitChar.distance - this.weaponDef.falloffStart) / (this.weaponDef.falloffEnd - this.weaponDef.falloffStart), 1);
-                dmg *= (1 - t * (1 - this.weaponDef.falloffMinScale));
-            }
+            const dmg = applyFalloff(this.weaponDef.damage, hitChar.distance, this.weaponDef.falloffStart, this.weaponDef.falloffEnd, this.weaponDef.falloffMinScale);
 
             for (const enemy of this.enemies) {
                 if (!enemy.alive) continue;
@@ -2509,11 +2296,7 @@ export class AIController {
                 if (hitObj.userData && hitObj.userData.vehicle) {
                     const vehicle = hitObj.userData.vehicle;
                     if (vehicle.alive && vehicle.team !== this.team) {
-                        let dmg = this.weaponDef.damage;
-                        if (hitEnv.distance > this.weaponDef.falloffStart) {
-                            const t = Math.min((hitEnv.distance - this.weaponDef.falloffStart) / (this.weaponDef.falloffEnd - this.weaponDef.falloffStart), 1);
-                            dmg *= (1 - t * (1 - this.weaponDef.falloffMinScale));
-                        }
+                        const dmg = applyFalloff(this.weaponDef.damage, hitEnv.distance, this.weaponDef.falloffStart, this.weaponDef.falloffEnd, this.weaponDef.falloffMinScale);
                         vehicle.takeDamage(dmg);
                         if (this.impactVFX) {
                             this.impactVFX.spawn('spark', hitEnv.point, _v1.copy(dir).negate());
