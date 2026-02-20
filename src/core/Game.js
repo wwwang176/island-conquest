@@ -681,6 +681,12 @@ export class Game {
         const dl = this._deathLerp;
         if (!dl.active) return;
 
+        // Stop death lerp when player respawns (gameMode back to 'playing')
+        if (this.gameMode === 'playing' && this.player && this.player.alive) {
+            dl.active = false;
+            return;
+        }
+
         // Spectator: stop when freeze ends (target switches)
         if (this.gameMode === 'spectator' && this.spectator._deathFreezeTimer <= 0) {
             dl.active = false;
