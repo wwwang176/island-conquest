@@ -6,6 +6,7 @@ import { WeaponDefs } from '../entities/WeaponDefs.js';
 const _up = new THREE.Vector3(0, 1, 0);
 const _diff = new THREE.Vector3();
 const _splashPos = new THREE.Vector3();
+const _impulseVec = new CANNON.Vec3();
 const WATER_Y = -0.3;
 
 /**
@@ -123,13 +124,8 @@ export class GrenadeManager {
                     const falloff = 1 - dist / def.blastRadius;
                     const strength = 50 * falloff;
                     _diff.normalize();
-                    gun.body.applyImpulse(
-                        new CANNON.Vec3(
-                            _diff.x * strength,
-                            strength * 0.7,
-                            _diff.z * strength
-                        )
-                    );
+                    _impulseVec.set(_diff.x * strength, strength * 0.7, _diff.z * strength);
+                    gun.body.applyImpulse(_impulseVec);
                 }
             }
         }
@@ -168,12 +164,7 @@ export class GrenadeManager {
         const falloff = 1 - dist / def.blastRadius;
         const strength = 600 * falloff;
         _diff.normalize();
-        target.body.applyImpulse(
-            new CANNON.Vec3(
-                _diff.x * strength,
-                strength * 0.7,
-                _diff.z * strength
-            )
-        );
+        _impulseVec.set(_diff.x * strength, strength * 0.7, _diff.z * strength);
+        target.body.applyImpulse(_impulseVec);
     }
 }

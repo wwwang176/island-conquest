@@ -631,10 +631,7 @@ export class Game {
 
         this.physics.step(dt);
 
-        // Update tracers
         this.tracerSystem.update(dt);
-
-        // Update impact particles
         this.impactVFX.update(dt);
 
         // Update vehicles FIRST so AI passengers read current helicopter position

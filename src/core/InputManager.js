@@ -83,7 +83,7 @@ export class InputManager {
     }
 
     requestPointerLock() {
-        document.body.requestPointerLock();
+        document.body.requestPointerLock().catch(() => {});
     }
 
     exitPointerLock() {

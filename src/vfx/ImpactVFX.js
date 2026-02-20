@@ -124,6 +124,9 @@ export class ImpactVFX {
             this.types[name] = { cfg, ...data };
         }
 
+        // Cache type values array to avoid per-frame Object.values() allocation
+        this._typeValues = Object.values(this.types);
+
         // Smoke sphere InstancedMesh for explosions
         this._initSmokePool();
         // Spike InstancedMesh for explosions
@@ -599,7 +602,7 @@ export class ImpactVFX {
 
     update(dt) {
         // Point particles
-        for (const data of Object.values(this.types)) {
+        for (const data of this._typeValues) {
             const { cfg, positions, velocities, lives, maxLives, particleSizes, opacities, geo } = data;
             let anyAlive = false;
 

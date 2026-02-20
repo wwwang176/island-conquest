@@ -45,6 +45,10 @@ export class AIManager {
         this._posABuf = [];
         this._posBBuf = [];
 
+        // Threat scan worker state
+        this._scanWorker = null;
+        this._scanPending = false;
+
         // Soldiers are created but not yet positioned — call spawnAll() after NavGrid is ready
         this._spawned = false;
     }
@@ -119,11 +123,136 @@ export class AIManager {
         // Share the same height data but init a separate worker for team B
         this.threatMapB.heightGrid = this.threatMapA.heightGrid;
         this.threatMapB._initWorker();
+
+        // Initialize threat scan worker (AI visibility LOS)
+        this._initScanWorker();
     }
 
     // Keep setter for backward compatibility
     set navGrid(grid) {
         this.setNavGrid(grid, null, null);
+    }
+
+    // Float32Array strides for worker communication
+    static AI_STRIDE = 7;    // x, y, z, facingX, facingZ, range, flags
+    static EN_STRIDE = 5;    // x, y, z, visRange, alive
+
+    /**
+     * Initialize the threat scan Web Worker.
+     * Sends heightGrid data once, then accepts per-frame scan requests.
+     */
+    _initScanWorker() {
+        const tm = this.threatMapA; // both teams share the same heightGrid
+        if (!tm.heightGrid) return;
+
+        this._scanWorker = new Worker(
+            new URL('../workers/threat-scan-worker.js', import.meta.url),
+            { type: 'module' }
+        );
+
+        this._scanWorker.postMessage({
+            type: 'init',
+            cols: tm.cols,
+            rows: tm.rows,
+            cellSize: tm.cellSize,
+            originX: tm.originX,
+            originZ: tm.originZ,
+            heightGrid: tm.heightGrid,
+        });
+
+        this._scanWorker.onmessage = (e) => {
+            if (e.data.type === 'scanResult') {
+                this._applyTeamResults(this.teamA.controllers, this._teamAEnemies, e.data.teamAResults);
+                this._applyTeamResults(this.teamB.controllers, this._teamBEnemies, e.data.teamBResults);
+                this._scanPending = false;
+            }
+        };
+    }
+
+    /**
+     * Pack one team's AIs + enemies into Float32Arrays and return them.
+     */
+    _packTeam(controllers, enemies) {
+        const AS = AIManager.AI_STRIDE;
+        const ES = AIManager.EN_STRIDE;
+        const aiData = new Float32Array(controllers.length * AS);
+        const enData = new Float32Array(enemies.length * ES);
+
+        for (let i = 0; i < controllers.length; i++) {
+            const ctrl = controllers[i];
+            const s = ctrl.soldier;
+            const pos = s.getPosition();
+            const off = i * AS;
+            const inHeli = ctrl.vehicle && ctrl.vehicle.type === 'helicopter';
+            aiData[off]     = pos.x;
+            aiData[off + 1] = pos.y;
+            aiData[off + 2] = pos.z;
+            aiData[off + 3] = ctrl.facingDir.x;
+            aiData[off + 4] = ctrl.facingDir.z;
+            aiData[off + 5] = ctrl.vehicle ? ctrl.vehicle.detectionRange : 80;
+            aiData[off + 6] = (s.alive ? 1 : 0) | (inHeli ? 2 : 0);
+        }
+
+        for (let i = 0; i < enemies.length; i++) {
+            const e = enemies[i];
+            const pos = e.getPosition();
+            const off = i * ES;
+            enData[off]     = pos.x;
+            enData[off + 1] = pos.y;
+            enData[off + 2] = pos.z;
+            enData[off + 3] = e.vehicle ? e.vehicle.visibilityRange : 80;
+            enData[off + 4] = e.alive ? 1 : 0;
+        }
+
+        return { aiData, enData };
+    }
+
+    /**
+     * Collect per-team AI + enemy data and send to scan worker.
+     */
+    _dispatchScan(teamAEnemies, teamBEnemies) {
+        if (!this._scanWorker || this._scanPending) return;
+
+        const a = this._packTeam(this.teamA.controllers, teamAEnemies);
+        const b = this._packTeam(this.teamB.controllers, teamBEnemies);
+
+        this._scanPending = true;
+        this._scanWorker.postMessage({
+            type: 'scan',
+            aiAData: a.aiData, enAData: a.enData,
+            aiACount: this.teamA.controllers.length, enACount: teamAEnemies.length,
+            aiBData: b.aiData, enBData: b.enData,
+            aiBCount: this.teamB.controllers.length, enBCount: teamBEnemies.length,
+        }, [a.aiData.buffer, a.enData.buffer, b.aiData.buffer, b.enData.buffer]);
+    }
+
+    /**
+     * Apply one team's scan results — idx maps directly to the team's enemy list.
+     */
+    _applyTeamResults(controllers, enemies, results) {
+        for (let i = 0; i < results.length; i++) {
+            const ctrl = controllers[i];
+            if (!ctrl.soldier.alive) continue;
+
+            const r = results[i];
+            const visibleEnemies = [];
+            let closestEnemy = null;
+            let closestDist = Infinity;
+            let closestLOS = 1;
+
+            for (const ve of r.visibleEnemies) {
+                const enemy = enemies[ve.idx];
+                if (!enemy) continue;
+                visibleEnemies.push({ enemy, dist: ve.dist, losLevel: ve.losLevel });
+                if (ve.dist < closestDist) {
+                    closestDist = ve.dist;
+                    closestEnemy = enemy;
+                    closestLOS = ve.losLevel;
+                }
+            }
+
+            ctrl.applyScanResults(visibleEnemies, closestEnemy, closestDist, closestLOS);
+        }
     }
 
     /**
@@ -317,6 +446,9 @@ export class AIManager {
             }
         }
         this.updateIndex = (this.updateIndex + updatesPerFrame) % this.totalAI;
+
+        // Dispatch threat scan to worker (non-blocking)
+        this._dispatchScan(teamAEnemies, teamBEnemies);
 
         // Continuous updates for ALL AIs every frame (aiming + shooting)
         for (const ctrl of this.teamA.controllers) ctrl.updateContinuous(dt);

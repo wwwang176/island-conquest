@@ -15,6 +15,8 @@ export class Minimap {
         this.flashDuration = 1.5; // seconds enemy dot stays visible after firing
 
         this._mapOut = [0, 0]; // reusable output buffer for _worldToMap
+        this._drawTimer = 0;
+        this._drawInterval = 0.05; // 20fps draw throttle
         this._createDOM();
     }
 
@@ -61,15 +63,21 @@ export class Minimap {
      */
     update(data) {
         const { playerPos, playerYaw, playerTeam, flags, teamASoldiers, teamBSoldiers, dt, vehicles } = data;
-        const ctx = this.ctx;
-        const s = this.size;
 
-        // Decay enemy flashes
+        // Decay enemy flashes every frame (cheap)
         for (const [id, t] of this.enemyFlashes) {
             const remaining = t - dt;
             if (remaining <= 0) this.enemyFlashes.delete(id);
             else this.enemyFlashes.set(id, remaining);
         }
+
+        // Throttle canvas redraws to ~20fps
+        this._drawTimer += dt;
+        if (this._drawTimer < this._drawInterval) return;
+        this._drawTimer = 0;
+
+        const ctx = this.ctx;
+        const s = this.size;
 
         // Clear
         ctx.clearRect(0, 0, s, s);

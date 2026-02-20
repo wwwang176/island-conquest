@@ -27,6 +27,18 @@ function _isChildOf(obj, parent) {
     return false;
 }
 
+/** Walk up parent chain to find the soldierRef userData tag. */
+function _findSoldierRef(obj) {
+    let current = obj;
+    while (current) {
+        if (current.userData && current.userData.soldierRef) {
+            return current.userData.soldierRef;
+        }
+        current = current.parent;
+    }
+    return null;
+}
+
 function _getWorldNormal(hit) {
     if (!hit.face) return null;
     _tmpVec.copy(hit.face.normal);
@@ -259,16 +271,10 @@ export function fireShot(ctx) {
 
     for (let i = 0; i < allHits.length; i++) {
         const hit = allHits[i];
-        let isChar = false;
-        for (let j = 0; j < _targetMeshes.length; j++) {
-            if (_isChildOf(hit.object, _targetMeshes[j])) {
-                isChar = true;
-                break;
-            }
-        }
-        if (isChar) {
-            if (!hitChar) hitChar = hit;
-        } else {
+        const soldierRef = _findSoldierRef(hit.object);
+        if (soldierRef && soldierRef !== ctx.soldier) {
+            if (!hitChar) { hitChar = hit; hitChar._soldierRef = soldierRef; }
+        } else if (!soldierRef) {
             if (ownVehicleMesh && _isChildOf(hit.object, ownVehicleMesh)) continue;
             if (!hitEnv) hitEnv = hit;
         }
@@ -305,45 +311,26 @@ export function fireShot(ctx) {
 
     if (hitChar && (!hitEnv || hitChar.distance < hitEnv.distance)) {
         const dmg = applyFalloff(ctx.weaponDef.damage, hitChar.distance, ctx.weaponDef.falloffStart, ctx.weaponDef.falloffEnd, ctx.weaponDef.falloffMinScale);
+        const hitSoldier = hitChar._soldierRef;
 
-        for (const enemy of ctx.enemies) {
-            if (!enemy.alive) continue;
-            if (ctx._playerMesh && enemy.mesh === ctx._playerMesh) continue;
-            if (_isChildOf(hitChar.object, enemy.mesh)) {
-                if (ctx.impactVFX) {
-                    ctx.impactVFX.spawn('blood', hitChar.point, _v1.copy(dir).negate());
-                }
-                const result = enemy.takeDamage(dmg, myPos, hitChar.point.y);
-                if (ctx.eventBus) {
-                    _aiHitPayload.soldier = ctx.soldier;
-                    _aiHitPayload.killed = result.killed;
-                    ctx.eventBus.emit('aiHit', _aiHitPayload);
-                }
-                if (result.killed && ctx.eventBus) {
-                    const vTeam = enemy.team || (ctx.team === 'teamA' ? 'teamB' : 'teamA');
-                    ctx.eventBus.emit('kill', {
-                        killerName: myName,
-                        killerTeam: ctx.team,
-                        victimName: `${vTeam === 'teamA' ? 'A' : 'B'}-${enemy.id}`,
-                        victimTeam: vTeam,
-                        headshot: result.headshot,
-                        weapon: ctx.weaponId,
-                    });
-                }
-                return;
-            }
-        }
-        if (ctx._playerRef && _isChildOf(hitChar.object, ctx._playerMesh)) {
+        if (hitSoldier) {
             if (ctx.impactVFX) {
                 ctx.impactVFX.spawn('blood', hitChar.point, _v1.copy(dir).negate());
             }
-            const result = ctx._playerRef.takeDamage(dmg, myPos, hitChar.point.y);
+            const result = hitSoldier.takeDamage(dmg, myPos, hitChar.point.y);
+            if (ctx.eventBus) {
+                _aiHitPayload.soldier = ctx.soldier;
+                _aiHitPayload.killed = result.killed;
+                ctx.eventBus.emit('aiHit', _aiHitPayload);
+            }
             if (result.killed && ctx.eventBus) {
+                const isPlayer = ctx._playerRef && hitSoldier === ctx._playerRef;
+                const vTeam = hitSoldier.team || (ctx.team === 'teamA' ? 'teamB' : 'teamA');
                 ctx.eventBus.emit('kill', {
                     killerName: myName,
                     killerTeam: ctx.team,
-                    victimName: 'You',
-                    victimTeam: ctx._playerRef.team,
+                    victimName: isPlayer ? 'You' : `${vTeam === 'teamA' ? 'A' : 'B'}-${hitSoldier.id}`,
+                    victimTeam: vTeam,
                     headshot: result.headshot,
                     weapon: ctx.weaponId,
                 });

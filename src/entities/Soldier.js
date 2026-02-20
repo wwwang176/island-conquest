@@ -64,6 +64,13 @@ export class Soldier {
         this.teamColor = team === 'teamA' ? 0x4488ff : 0xff4444;
         this.mesh = this._createMesh();
         this.mesh.userData.soldier = this;
+        // Tag all children with soldierRef for O(1) hit classification in AIShooter.
+        // Non-enumerable so JSON.stringify (used by Three.js clone) skips it.
+        this.mesh.traverse((child) => {
+            Object.defineProperty(child.userData, 'soldierRef', {
+                value: this, writable: true, enumerable: false, configurable: true,
+            });
+        });
         scene.add(this.mesh);
 
         // Physics body
@@ -351,6 +358,13 @@ export class Soldier {
 
         this._gunParent.add(gun);
         this.gunMesh = gun;
+
+        // Tag gun and its children with soldierRef for hit classification
+        gun.traverse((child) => {
+            Object.defineProperty(child.userData, 'soldierRef', {
+                value: this, writable: true, enumerable: false, configurable: true,
+            });
+        });
 
         // Muzzle flash (attached to gun mesh)
         const flash = Soldier.createMuzzleFlashMesh();

@@ -321,8 +321,8 @@ export class FlagPoint {
             this.progressBarContainer.visible = false;
         }
 
-        // Billboard: orbit container toward camera
-        if (this._camera) {
+        // Billboard: only compute when progress bar is actively shown
+        if (this.progressBarContainer.visible && this._camera) {
             const cam = this._camera;
             const dx = cam.position.x - this.group.position.x;
             const dz = cam.position.z - this.group.position.z;
@@ -333,7 +333,6 @@ export class FlagPoint {
                 this.progressBarContainer.position.x = nx * 0.15;
                 this.progressBarContainer.position.z = nz * 0.15;
             }
-            // Ensure parent world matrix is current before lookAt
             this.group.updateWorldMatrix(true, false);
             const cWX = this.group.position.x + this.progressBarContainer.position.x;
             const cWZ = this.group.position.z + this.progressBarContainer.position.z;

@@ -476,12 +476,7 @@ export class AIController {
         if (this._targetSwitchCooldown > 0) this._targetSwitchCooldown -= dt;
         if (this._preAimCooldown > 0) this._preAimCooldown -= dt;
 
-        // Threat scan — 50ms throttle, independent of BT stagger
-        this._scanTimer += dt;
-        if (this._scanTimer >= 0.05) {
-            this._scanTimer = 0;
-            this._updateThreatScan();
-        }
+        // Threat scan is now handled by AIManager's Web Worker — see applyScanResults()
 
         // Decay path cooldown
         if (this._pathCooldown > 0) this._pathCooldown -= dt;
@@ -795,6 +790,87 @@ export class AIController {
             }
         } else {
             // Lost all visual targets — hand off to intel pre-aim
+            if (this.targetEnemy && this.teamIntel) {
+                const contact = this.teamIntel.contacts.get(this.targetEnemy);
+                if (contact) {
+                    this._preAimContact = contact;
+                    this._preAimCooldown = 0.5;
+                }
+            }
+            this._targetLOSLevel = 1;
+            this._setTargetEnemy(null);
+            this.hasReacted = false;
+        }
+    }
+
+    /**
+     * Apply scan results from the threat scan Web Worker.
+     * Replaces the old per-frame _updateThreatScan() that ran on main thread.
+     * @param {Array<{enemy, dist, losLevel}>} visibleEnemies — enemies this AI can see
+     * @param {Soldier|null} closestEnemy — nearest visible enemy
+     * @param {number} closestDist — distance to nearest
+     * @param {number} closestLOS — LOS level of nearest (1=body, 2=head-only)
+     */
+    applyScanResults(visibleEnemies, closestEnemy, closestDist, closestLOS) {
+        const currentlyVisible = this._useSetA ? this._visSetA : this._visSetB;
+        currentlyVisible.clear();
+
+        for (const ve of visibleEnemies) {
+            currentlyVisible.add(ve.enemy);
+
+            // Report to TeamIntel
+            if (this.teamIntel) {
+                const ePos = ve.enemy.getPosition();
+                if (this._previouslyVisible.has(ve.enemy)) {
+                    this.teamIntel.refreshContact(ve.enemy, ePos, ve.enemy.body.velocity, ve.enemy.vehicle !== null);
+                } else {
+                    this.teamIntel.reportSighting(ve.enemy, ePos, ve.enemy.body.velocity, ve.enemy.vehicle !== null);
+                }
+            }
+        }
+
+        // Report lost contacts
+        if (this.teamIntel) {
+            for (const prev of this._previouslyVisible) {
+                if (!currentlyVisible.has(prev)) {
+                    this.teamIntel.reportLost(prev);
+                }
+            }
+        }
+
+        const prevVisible = this._previouslyVisible;
+        this._previouslyVisible = currentlyVisible;
+        this._useSetA = !this._useSetA;
+
+        // Target switching with stickiness
+        if (closestEnemy) {
+            this._targetLOSLevel = closestLOS;
+            if (this.targetEnemy !== closestEnemy) {
+                const isNewThreat = !prevVisible.has(closestEnemy);
+                const currentLost = !this.targetEnemy || !this.targetEnemy.alive
+                    || !currentlyVisible.has(this.targetEnemy);
+                const canSwitch = isNewThreat || currentLost
+                    || this._targetSwitchCooldown <= 0;
+
+                if (canSwitch) {
+                    this._setTargetEnemy(closestEnemy);
+                    this.hasReacted = false;
+                    this._targetSwitchCooldown = 0.4;
+                    const t = Math.max(0, Math.min(1, closestDist / 60));
+                    const p = this.personality;
+                    const distFactor = p.nearReaction + (p.farReaction - p.nearReaction) * t;
+                    const losFactor = this._targetLOSLevel === 2 ? 1.4 : 1.0;
+                    this.reactionTimer = p.reactionTime / 1000 * distFactor * losFactor +
+                        (Math.random() * 0.15);
+                    const aimSpread = Math.max(0.3, Math.min(1.0, closestDist / 25));
+                    this.aimOffset.set(
+                        (Math.random() - 0.5) * 2 * aimSpread,
+                        (Math.random() - 0.5) * 1.5 * aimSpread,
+                        (Math.random() - 0.5) * 2 * aimSpread
+                    );
+                }
+            }
+        } else {
             if (this.targetEnemy && this.teamIntel) {
                 const contact = this.teamIntel.contacts.get(this.targetEnemy);
                 if (contact) {
