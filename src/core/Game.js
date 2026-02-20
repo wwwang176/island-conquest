@@ -222,6 +222,12 @@ export class Game {
         last.owner = 'teamB';
         last.captureProgress = 1;
         last.capturingTeam = 'teamB';
+
+        // Track previous flag states for change detection (flag banner)
+        this._prevFlagStates = this.flags.map(f => ({
+            owner: f.owner,
+            contesting: null  // 'losing' | 'capturing' | null
+        }));
     }
 
     async _initNavGrid() {
@@ -710,6 +716,60 @@ export class Game {
         this.player.shootTargets = buf;
     }
 
+    _getPlayerTeam() {
+        if (this.gameMode === 'playing' || this.gameMode === 'dead') return this.player ? this.player.team : null;
+        if (this.gameMode === 'spectator' && this.spectator && this.spectator.mode === 'follow') {
+            const t = this.spectator.getCurrentTarget();
+            return t ? t.soldier.team : null;
+        }
+        return null;
+    }
+
+    _checkFlagStatusChanges() {
+        const team = this._getPlayerTeam();
+        if (!team) return;
+
+        const teamColor = team === 'teamA' ? '#4488ff' : '#ff4444';
+
+        for (let i = 0; i < this.flags.length; i++) {
+            const flag = this.flags[i];
+            const prev = this._prevFlagStates[i];
+            const name = flag.name;
+
+            // 1. Ownership change
+            if (flag.owner !== prev.owner) {
+                if (flag.owner === team) {
+                    this.hud.showFlagBanner(`CAPTURED ${name}`, teamColor);
+                } else if (prev.owner === team) {
+                    this.hud.showFlagBanner(`LOST ${name}`, '#ff4444');
+                }
+            }
+
+            // 2. Contesting state
+            let contesting = null;
+            if (flag.owner === team && flag.capturingTeam && flag.capturingTeam !== team
+                && flag.captureProgress > 0 && flag.captureProgress < 1) {
+                contesting = 'losing';
+            } else if (flag.owner !== team && flag.capturingTeam === team
+                && flag.captureProgress > 0 && flag.captureProgress < 1) {
+                contesting = 'capturing';
+            }
+
+            // Trigger only on state transition
+            if (contesting !== prev.contesting) {
+                if (contesting === 'losing') {
+                    this.hud.showFlagBanner(`LOSING ${name}`, '#ffaa00');
+                } else if (contesting === 'capturing') {
+                    this.hud.showFlagBanner(`TAKING ${name}`, teamColor);
+                }
+            }
+
+            // Update cache
+            prev.owner = flag.owner;
+            prev.contesting = contesting;
+        }
+    }
+
     _onResize() {
         this.camera.aspect = window.innerWidth / window.innerHeight;
         this.camera.updateProjectionMatrix();
@@ -777,6 +837,9 @@ export class Game {
         for (const flag of this.flags) {
             flag.update(teamAPositions, teamBPositions, dt, this.camera);
         }
+
+        // Detect flag status changes → show flag banner
+        this._checkFlagStatusChanges();
 
         // Update scores
         this.scoreManager.update(this.flags, dt);

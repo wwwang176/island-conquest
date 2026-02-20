@@ -26,6 +26,10 @@ export class HUDController {
         this._killBannerTimer = 0;
         this._killBannerFadeOut = false;
 
+        // Flag banner state
+        this._flagBannerTimer = 0;
+        this._flagBannerFadeOut = false;
+
         // Kill streak state
         this._streakCount = 0;
         this._streakTimer = 0;
@@ -60,6 +64,7 @@ export class HUDController {
         this._updateReloadIndicator();
         this._updateHitMarker(dt);
         this._updateKillBanner(dt);
+        this._updateFlagBanner(dt);
         this._updateJoinScreen();
         this._updateVehicleHUD();
     }
@@ -138,6 +143,22 @@ export class HUDController {
         this._streakCount = 0;
         this._streakTimer = 0;
         this.killBanner.style.display = 'none';
+    }
+
+    showFlagBanner(text, color) {
+        this._flagBannerText.textContent = text;
+        this._flagBannerText.style.color = color;
+        this._flagBannerTimer = 2.0;
+        this._flagBannerFadeOut = false;
+
+        // Slide-down entrance (from above)
+        this.flagBanner.style.transition = 'opacity 0.15s ease-out, transform 0.15s ease-out';
+        this.flagBanner.style.display = 'block';
+        this.flagBanner.style.opacity = '0';
+        this.flagBanner.style.transform = 'translateX(-50%) translateY(-8px)';
+        this.flagBanner.offsetHeight; // force reflow
+        this.flagBanner.style.opacity = '1';
+        this.flagBanner.style.transform = 'translateX(-50%) translateY(0)';
     }
 
     updateScoreboard() {
@@ -323,6 +344,7 @@ export class HUDController {
         this._createScoreboard();
         this._createVehicleHUD();
         this._createKillBanner();
+        this._createFlagBanner();
     }
 
     _createCrosshair() {
@@ -627,6 +649,21 @@ export class HUDController {
         this._killBannerText = span;
     }
 
+    _createFlagBanner() {
+        const el = document.createElement('div');
+        el.id = 'flag-banner';
+        el.style.cssText = `position:fixed;top:25%;left:50%;transform:translateX(-50%);
+            pointer-events:none;z-index:102;display:none;
+            font-family:Consolas,monospace;font-size:20px;font-weight:bold;
+            letter-spacing:2px;background:rgba(0,0,0,0.5);padding:8px 24px;border-radius:6px;
+            transition:opacity 0.15s ease-out, transform 0.15s ease-out;`;
+        const span = document.createElement('span');
+        el.appendChild(span);
+        document.body.appendChild(el);
+        this.flagBanner = el;
+        this._flagBannerText = span;
+    }
+
     // ───── Per-frame update methods ─────
 
     _updateHitMarker(dt) {
@@ -663,6 +700,20 @@ export class HUDController {
         if (this._killBannerTimer <= 0) {
             this.killBanner.style.display = 'none';
             this._killBannerTimer = 0;
+        }
+    }
+
+    _updateFlagBanner(dt) {
+        if (this._flagBannerTimer <= 0) return;
+        this._flagBannerTimer -= dt;
+        if (this._flagBannerTimer <= 0.3 && !this._flagBannerFadeOut) {
+            this._flagBannerFadeOut = true;
+            this.flagBanner.style.opacity = '0';
+            this.flagBanner.style.transform = 'translateX(-50%) translateY(-8px)';
+        }
+        if (this._flagBannerTimer <= 0) {
+            this.flagBanner.style.display = 'none';
+            this._flagBannerTimer = 0;
         }
     }
 
