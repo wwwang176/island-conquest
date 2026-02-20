@@ -13,7 +13,10 @@ const _origin = new THREE.Vector3();
 const _target = new THREE.Vector3();
 const _tmpVec = new THREE.Vector3();
 const _targetMeshes = [];
-const _fireCollidables = [];
+const _allTargets = [];
+let _cachedCollidables = null;
+const _aiFiredPayload = { team: '', soldierId: '' };
+const _aiHitPayload = { soldier: null, killed: false };
 
 function _isChildOf(obj, parent) {
     let current = obj;
@@ -225,41 +228,51 @@ export function fireShot(ctx) {
     _raycaster.set(_origin, dir);
     _raycaster.far = ctx.weaponDef.maxRange;
 
-    // Check against all enemies
+    // Collect live enemy meshes (must rebuild — enemies die)
     _targetMeshes.length = 0;
     for (const e of ctx.enemies) {
         if (e.alive && e.mesh && e.mesh !== ctx._playerMesh) _targetMeshes.push(e.mesh);
     }
     if (ctx._playerMesh) _targetMeshes.push(ctx._playerMesh);
 
-    // Build combined collidables (terrain + vehicles) only at fire time
-    _fireCollidables.length = 0;
-    for (let i = 0; i < ctx.collidables.length; i++) _fireCollidables.push(ctx.collidables[i]);
-    if (ctx.vehicleManager) {
-        const vMeshes = ctx.vehicleManager.getVehicleMeshes();
-        for (let i = 0; i < vMeshes.length; i++) _fireCollidables.push(vMeshes[i]);
-    }
-    const envHits = _raycaster.intersectObjects(_fireCollidables, true);
-    const charHits = _raycaster.intersectObjects(_targetMeshes, true);
-
-    let hitChar = charHits.length > 0 ? charHits[0] : null;
-    let hitEnv = envHits.length > 0 ? envHits[0] : null;
-
-    // Skip raycast hits on own vehicle (passengers firing from inside)
-    if (ctx.vehicle && hitEnv) {
-        const ownMesh = ctx.vehicle.mesh;
-        let envIdx = 0;
-        while (envIdx < envHits.length) {
-            let obj = envHits[envIdx].object;
-            let isOwn = false;
-            while (obj) {
-                if (obj === ownMesh) { isOwn = true; break; }
-                obj = obj.parent;
-            }
-            if (!isOwn) break;
-            envIdx++;
+    // Cache static collidables (terrain + vehicles) — built once
+    if (!_cachedCollidables) {
+        _cachedCollidables = [];
+        for (let i = 0; i < ctx.collidables.length; i++) _cachedCollidables.push(ctx.collidables[i]);
+        if (ctx.vehicleManager) {
+            const vMeshes = ctx.vehicleManager.getVehicleMeshes();
+            for (let i = 0; i < vMeshes.length; i++) _cachedCollidables.push(vMeshes[i]);
         }
-        hitEnv = envIdx < envHits.length ? envHits[envIdx] : null;
+    }
+
+    // Merge into single target array for one raycast
+    _allTargets.length = 0;
+    for (let i = 0; i < _cachedCollidables.length; i++) _allTargets.push(_cachedCollidables[i]);
+    for (let i = 0; i < _targetMeshes.length; i++) _allTargets.push(_targetMeshes[i]);
+
+    const allHits = _raycaster.intersectObjects(_allTargets, true);
+
+    // Classify hits: first character hit and first environment hit (sorted by distance)
+    let hitChar = null;
+    let hitEnv = null;
+    const ownVehicleMesh = ctx.vehicle ? ctx.vehicle.mesh : null;
+
+    for (let i = 0; i < allHits.length; i++) {
+        const hit = allHits[i];
+        let isChar = false;
+        for (let j = 0; j < _targetMeshes.length; j++) {
+            if (_isChildOf(hit.object, _targetMeshes[j])) {
+                isChar = true;
+                break;
+            }
+        }
+        if (isChar) {
+            if (!hitChar) hitChar = hit;
+        } else {
+            if (ownVehicleMesh && _isChildOf(hit.object, ownVehicleMesh)) continue;
+            if (!hitEnv) hitEnv = hit;
+        }
+        if (hitChar && hitEnv) break;
     }
 
     // Determine closest hit distance for tracer length
@@ -283,7 +296,9 @@ export function fireShot(ctx) {
 
     // Notify minimap that this AI fired
     if (ctx.eventBus) {
-        ctx.eventBus.emit('aiFired', { team: ctx.team, soldierId: `${ctx.team}_${ctx.soldier.id}` });
+        _aiFiredPayload.team = ctx.team;
+        _aiFiredPayload.soldierId = `${ctx.team}_${ctx.soldier.id}`;
+        ctx.eventBus.emit('aiFired', _aiFiredPayload);
     }
 
     const myName = `${ctx.team === 'teamA' ? 'A' : 'B'}-${ctx.soldier.id}`;
@@ -300,7 +315,9 @@ export function fireShot(ctx) {
                 }
                 const result = enemy.takeDamage(dmg, myPos, hitChar.point.y);
                 if (ctx.eventBus) {
-                    ctx.eventBus.emit('aiHit', { soldier: ctx.soldier, killed: result.killed });
+                    _aiHitPayload.soldier = ctx.soldier;
+                    _aiHitPayload.killed = result.killed;
+                    ctx.eventBus.emit('aiHit', _aiHitPayload);
                 }
                 if (result.killed && ctx.eventBus) {
                     const vTeam = enemy.team || (ctx.team === 'teamA' ? 'teamB' : 'teamA');

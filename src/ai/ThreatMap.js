@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 
+const _gridResult = { col: 0, row: 0 };
+const _enemyData = [];
+
 /**
  * Spatial threat evaluation grid.
  * Same resolution as NavGrid (300×120, 1m cells) for accurate LOS shadow casting.
@@ -118,16 +121,25 @@ export class ThreatMap {
         if (!this._worker) return;
         this._timer = 0;
 
-        // Extract enemy positions (plain data for worker)
-        const enemyData = [];
+        // Extract enemy positions (reuse pooled objects for worker)
+        let count = 0;
         for (const enemy of enemies) {
             if (!enemy.alive) continue;
             const pos = enemy.getPosition();
-            enemyData.push({ x: pos.x, y: pos.y, z: pos.z });
+            let entry = _enemyData[count];
+            if (!entry) {
+                entry = { x: 0, y: 0, z: 0 };
+                _enemyData[count] = entry;
+            }
+            entry.x = pos.x;
+            entry.y = pos.y;
+            entry.z = pos.z;
+            count++;
         }
+        _enemyData.length = count;
 
         this._workerBusy = true;
-        this._worker.postMessage({ type: 'update', enemies: enemyData });
+        this._worker.postMessage({ type: 'update', enemies: _enemyData });
     }
 
     /**
@@ -280,9 +292,8 @@ export class ThreatMap {
     _worldToGrid(wx, wz) {
         const col = Math.floor((wx - this.originX) / this.cellSize);
         const row = Math.floor((wz - this.originZ) / this.cellSize);
-        return {
-            col: Math.max(0, Math.min(col, this.cols - 1)),
-            row: Math.max(0, Math.min(row, this.rows - 1)),
-        };
+        _gridResult.col = Math.max(0, Math.min(col, this.cols - 1));
+        _gridResult.row = Math.max(0, Math.min(row, this.rows - 1));
+        return _gridResult;
     }
 }

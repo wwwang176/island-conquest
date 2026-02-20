@@ -697,10 +697,12 @@ export class AIController {
         // Pre-compute grid coordinates for Bresenham LOS
         const tm = this.threatMap;
         const useGridLOS = tm && tm.heightGrid;
-        let myGrid, myEyeY;
+        let myGridCol, myGridRow, myEyeY;
         if (useGridLOS) {
-            myGrid = tm._worldToGrid(myPos.x, myPos.z);
-            myEyeY = tm.heightGrid[myGrid.row * tm.cols + myGrid.col] + EYE_HEIGHT;
+            const myGrid = tm._worldToGrid(myPos.x, myPos.z);
+            myGridCol = myGrid.col;
+            myGridRow = myGrid.row;
+            myEyeY = tm.heightGrid[myGridRow * tm.cols + myGridCol] + EYE_HEIGHT;
         }
 
         const inHeli = this.vehicle && this.vehicle.type === 'helicopter';
@@ -725,7 +727,7 @@ export class AIController {
             let losLevel = 1;
             if (!inHeli && useGridLOS) {
                 const eGrid = tm._worldToGrid(ePos.x, ePos.z);
-                losLevel = _hasGridLOS(tm, myGrid.col, myGrid.row, myEyeY, eGrid.col, eGrid.row, ePos.y);
+                losLevel = _hasGridLOS(tm, myGridCol, myGridRow, myEyeY, eGrid.col, eGrid.row, ePos.y);
                 if (losLevel === 0) continue;
             }
 

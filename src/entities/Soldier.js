@@ -168,6 +168,7 @@ export class Soldier {
         const torsoHeadGeo = mergeGeometries([torsoGeo, headGeo]);
         torsoGeo.dispose(); headGeo.dispose();
 
+        torsoHeadGeo.computeBoundsTree();
         const torsoHeadMesh = new THREE.Mesh(
             torsoHeadGeo,
             new THREE.MeshLambertMaterial({ vertexColors: true })
@@ -340,7 +341,9 @@ export class Soldier {
         }
 
         if (!Soldier._gunMeshCache[weaponId]) {
-            Soldier._gunMeshCache[weaponId] = Soldier.buildGunMesh(weaponId);
+            const proto = Soldier.buildGunMesh(weaponId);
+            proto.geometry.computeBoundsTree();
+            Soldier._gunMeshCache[weaponId] = proto;
         }
         const gun = Soldier._gunMeshCache[weaponId].clone();
         gun.position.set(0.05, -0.05, -0.45);

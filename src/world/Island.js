@@ -120,6 +120,9 @@ export class Island {
         this.scene.add(this.terrainMesh);
         this.collidables.push(this.terrainMesh);
 
+        // BVH acceleration for raycast
+        geo.computeBoundsTree();
+
         // Physics: use heightfield
         this._createTerrainPhysics();
     }
@@ -294,6 +297,9 @@ export class Island {
         water.userData.surfaceType = 'water';
         this.scene.add(water);
         this.collidables.push(water);
+
+        // BVH acceleration for raycast
+        waterGeo.computeBoundsTree();
     }
 
     /**
@@ -668,6 +674,9 @@ export class Island {
             mesh.userData.surfaceType = cfg.surface;
             this.scene.add(mesh);
             this.collidables.push(mesh);
+
+            // BVH acceleration for raycast
+            merged.computeBoundsTree();
         }
         // Free temporary arrays
         this._rockGeos = null;

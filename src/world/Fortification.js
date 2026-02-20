@@ -54,6 +54,9 @@ export function generateFortifications(island, flagPositions) {
         mesh.userData.surfaceType = 'sand';
         island.scene.add(mesh);
         island.collidables.push(mesh);
+
+        // BVH acceleration for raycast
+        merged.computeBoundsTree();
     }
 }
 
