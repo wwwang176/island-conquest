@@ -16,7 +16,7 @@ const _targetMeshes = [];
 const _allTargets = [];
 let _cachedCollidables = null;
 const _aiFiredPayload = { team: '', soldierId: '' };
-const _aiHitPayload = { soldier: null, killed: false };
+const _aiHitPayload = { soldier: null, killed: false, headshot: false, victimName: '', victimTeam: '' };
 
 function _isChildOf(obj, parent) {
     let current = obj;
@@ -319,8 +319,13 @@ export function fireShot(ctx) {
             }
             const result = hitSoldier.takeDamage(dmg, myPos, hitChar.point.y);
             if (ctx.eventBus) {
+                const isPlayer = ctx._playerRef && hitSoldier === ctx._playerRef;
+                const vTeam = hitSoldier.team || (ctx.team === 'teamA' ? 'teamB' : 'teamA');
                 _aiHitPayload.soldier = ctx.soldier;
                 _aiHitPayload.killed = result.killed;
+                _aiHitPayload.headshot = result.headshot || false;
+                _aiHitPayload.victimName = isPlayer ? 'You' : `${vTeam === 'teamA' ? 'A' : 'B'}-${hitSoldier.id}`;
+                _aiHitPayload.victimTeam = vTeam;
                 ctx.eventBus.emit('aiHit', _aiHitPayload);
             }
             if (result.killed && ctx.eventBus) {

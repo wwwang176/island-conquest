@@ -74,6 +74,7 @@ export class GrenadeManager {
 
         // Damage living enemies + push ALL ragdolls (both teams)
         let enemyHitCount = 0;
+        let enemyKillCount = 0;
         for (const soldier of allSoldiers) {
             if (soldier.alive) {
                 if (soldier.team !== throwerTeam) {
@@ -81,16 +82,20 @@ export class GrenadeManager {
                     const wasAlive = soldier.alive;
                     this._applyBlastDamage(pos, soldier, def);
                     if (soldier.hp < hpBefore) enemyHitCount++;
-                    if (wasAlive && !soldier.alive && this.eventBus) {
+                    if (wasAlive && !soldier.alive) {
+                        enemyKillCount++;
                         const vTeam = soldier.team;
-                        this.eventBus.emit('kill', {
-                            killerName: throwerName,
-                            killerTeam: throwerTeam,
-                            victimName: `${vTeam === 'teamA' ? 'A' : 'B'}-${soldier.id}`,
-                            victimTeam: vTeam,
-                            headshot: false,
-                            weapon: 'GRENADE',
-                        });
+                        const victimName = `${vTeam === 'teamA' ? 'A' : 'B'}-${soldier.id}`;
+                        if (this.eventBus) {
+                            this.eventBus.emit('kill', {
+                                killerName: throwerName,
+                                killerTeam: throwerTeam,
+                                victimName,
+                                victimTeam: vTeam,
+                                headshot: false,
+                                weapon: 'GRENADE',
+                            });
+                        }
                     }
                 }
             } else if (soldier.ragdollActive) {
@@ -133,7 +138,10 @@ export class GrenadeManager {
         if (this.eventBus) {
             this.eventBus.emit('grenadeExploded', { position: pos, team: throwerTeam });
             if (enemyHitCount > 0) {
-                this.eventBus.emit('grenadeDamage', { throwerName, throwerTeam, hitCount: enemyHitCount });
+                this.eventBus.emit('grenadeDamage', {
+                    throwerName, throwerTeam, hitCount: enemyHitCount,
+                    killCount: enemyKillCount,
+                });
             }
         }
     }

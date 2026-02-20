@@ -300,6 +300,7 @@ export class Game {
         if (this.gameMode === 'spectator') {
             if (e.code === 'KeyQ') {
                 this.spectator.nextTarget();
+                this.hud.resetStreak();
             } else if (e.code === 'KeyV') {
                 this.spectator.toggleView();
             } else if (e.code === 'Digit1') {
@@ -493,7 +494,7 @@ export class Game {
                     this.impactVFX.spawn('rock', hit.point, null);
                 }
                 const result = vehicle.takeDamage(hit.damage);
-                this.hud.showHitMarker();
+                this.hud.showHitMarker('hit');
                 if (result.destroyed) {
                     this.eventBus.emit('vehicleDestroyed', {
                         destroyerName: 'You',
@@ -513,16 +514,20 @@ export class Game {
                     this.impactVFX.spawn('blood', hit.point, null);
                 }
                 const result = soldier.takeDamage(hit.damage, this.player.getPosition(), hit.point.y);
-                this.hud.showHitMarker();
                 if (result.killed) {
+                    const isHeadshot = result.headshot;
+                    this.hud.showHitMarker(isHeadshot ? 'headshot_kill' : 'kill');
+                    this.hud.recordKill(isHeadshot);
                     this.eventBus.emit('kill', {
                         killerName: 'You',
                         killerTeam: this.player.team,
                         victimName: `${soldier.team === 'teamA' ? 'A' : 'B'}-${soldier.id}`,
                         victimTeam: soldier.team,
-                        headshot: result.headshot,
+                        headshot: isHeadshot,
                         weapon: this.player.weapon.weaponId,
                     });
+                } else {
+                    this.hud.showHitMarker('hit');
                 }
                 return;
             }
@@ -547,26 +552,40 @@ export class Game {
         if (this.gameMode === 'spectator' && this.spectator && this.spectator.mode === 'follow') {
             const target = this.spectator.getCurrentTarget();
             if (target && target.soldier === data.soldier) {
-                this.hud.showHitMarker();
+                if (data.killed) {
+                    const isHeadshot = data.headshot;
+                    this.hud.showHitMarker(isHeadshot ? 'headshot_kill' : 'kill');
+                    this.hud.recordKill(isHeadshot);
+                } else {
+                    this.hud.showHitMarker('hit');
+                }
             }
         }
     }
 
     _onGrenadeDamage(data) {
+        let isOurs = false;
         // Player's grenade hit
         if (this.gameMode === 'playing' && data.throwerName === 'You') {
-            this.hud.showHitMarker();
-            return;
+            isOurs = true;
         }
         // Spectated COM's grenade hit
-        if (this.gameMode === 'spectator' && this.spectator && this.spectator.mode === 'follow') {
+        if (!isOurs && this.gameMode === 'spectator' && this.spectator && this.spectator.mode === 'follow') {
             const target = this.spectator.getCurrentTarget();
             if (target) {
                 const comName = `${target.soldier.team === 'teamA' ? 'A' : 'B'}-${target.soldier.id}`;
-                if (data.throwerName === comName) {
-                    this.hud.showHitMarker();
-                }
+                if (data.throwerName === comName) isOurs = true;
             }
+        }
+        if (!isOurs) return;
+
+        if (data.killCount > 0) {
+            this.hud.showHitMarker('kill');
+            for (let i = 0; i < data.killCount; i++) {
+                this.hud.recordKill(false);
+            }
+        } else {
+            this.hud.showHitMarker('hit');
         }
     }
 

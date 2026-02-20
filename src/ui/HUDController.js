@@ -17,8 +17,18 @@ export class HUDController {
     constructor(game) {
         this.game = game;
 
-        // Hit marker timer
+        // Hit marker timer + scale animation
         this._hitMarkerTimer = 0;
+        this._hitMarkerDuration = 0.15;
+        this._hitMarkerScale = 1;
+
+        // Kill banner state
+        this._killBannerTimer = 0;
+        this._killBannerFadeOut = false;
+
+        // Kill streak state
+        this._streakCount = 0;
+        this._streakTimer = 0;
 
         // Dirty-check state for DOM writes
         this._lastAmmo = undefined;
@@ -49,16 +59,85 @@ export class HUDController {
         this._updateHUD();
         this._updateReloadIndicator();
         this._updateHitMarker(dt);
+        this._updateKillBanner(dt);
         this._updateJoinScreen();
         this._updateVehicleHUD();
     }
 
     // ───── Public API ─────
 
-    showHitMarker() {
-        this._hitMarkerTimer = 0.15;
+    showHitMarker(type = 'hit') {
+        const color = type === 'headshot_kill' ? '#ffd700'
+            : type === 'kill' ? '#ff4444' : '#ffffff';
+        this._hitMarkerDuration = type === 'headshot_kill' ? 0.35
+            : type === 'kill' ? 0.30 : 0.15;
+        this._hitMarkerTimer = this._hitMarkerDuration;
+
+        // Set line colors
+        for (let i = 0; i < this._hitMarkerLines.length; i++) {
+            this._hitMarkerLines[i].setAttribute('stroke', color);
+        }
+
+        // Scale pop on kill
+        if (type === 'kill' || type === 'headshot_kill') {
+            this._hitMarkerScale = 1.6;
+        } else {
+            this._hitMarkerScale = 1;
+        }
+
         this.hitMarker.style.display = 'block';
         this.hitMarker.style.opacity = '1';
+        this.hitMarker.style.transform = `translate(-50%,-50%) rotate(45deg) scale(${this._hitMarkerScale})`;
+    }
+
+    recordKill(isHeadshot) {
+        this._streakCount++;
+        this._streakTimer = 4;
+
+        // Pick label: streak text replaces single-kill text
+        let text, color, isStreak;
+        if (this._streakCount >= 2) {
+            const labels = ['', '', 'DOUBLE KILL', 'TRIPLE KILL', 'MULTI KILL', 'RAMPAGE'];
+            text = this._streakCount >= labels.length
+                ? 'RAMPAGE' : labels[this._streakCount];
+            color = '#ffd700';
+            isStreak = true;
+        } else {
+            text = isHeadshot ? 'HEADSHOT' : 'ELIMINATED';
+            color = isHeadshot ? '#ffd700' : '#ffffff';
+            isStreak = false;
+        }
+
+        this._killBannerText.textContent = text;
+        this._killBannerText.style.color = color;
+        this._killBannerTimer = isStreak ? 2 : 1.5;
+        this._killBannerFadeOut = false;
+
+        // Streak: scale pop  /  Single kill: slide up
+        if (isStreak) {
+            this.killBanner.style.transition = 'transform 0.2s cubic-bezier(0.34,1.56,0.64,1), opacity 0.15s ease-out';
+            this.killBanner.style.fontSize = '28px';
+            this.killBanner.style.display = 'block';
+            this.killBanner.style.opacity = '1';
+            this.killBanner.style.transform = 'translateX(-50%) scale(0.5)';
+            this.killBanner.offsetHeight; // reflow
+            this.killBanner.style.transform = 'translateX(-50%) scale(1)';
+        } else {
+            this.killBanner.style.transition = 'opacity 0.15s ease-out, transform 0.15s ease-out';
+            this.killBanner.style.fontSize = '18px';
+            this.killBanner.style.display = 'block';
+            this.killBanner.style.opacity = '0';
+            this.killBanner.style.transform = 'translateX(-50%) translateY(8px)';
+            this.killBanner.offsetHeight; // reflow
+            this.killBanner.style.opacity = '1';
+            this.killBanner.style.transform = 'translateX(-50%) translateY(0)';
+        }
+    }
+
+    resetStreak() {
+        this._streakCount = 0;
+        this._streakTimer = 0;
+        this.killBanner.style.display = 'none';
     }
 
     updateScoreboard() {
@@ -166,6 +245,7 @@ export class HUDController {
                     game.player.weapon.gunGroup.visible = false;
                     game.player.weapon.muzzleFlash.visible = false;
                 }
+                this.resetStreak();
                 break;
 
             case 'joining':
@@ -242,6 +322,7 @@ export class HUDController {
         this._createKeyHints();
         this._createScoreboard();
         this._createVehicleHUD();
+        this._createKillBanner();
     }
 
     _createCrosshair() {
@@ -270,6 +351,7 @@ export class HUDController {
             <line x1="13" y1="10" x2="18" y2="10" stroke="white" stroke-width="1.5"/></svg>`;
         document.body.appendChild(hm);
         this.hitMarker = hm;
+        this._hitMarkerLines = hm.querySelectorAll('line');
     }
 
     _createReloadIndicator() {
@@ -530,6 +612,21 @@ export class HUDController {
         this._lastVehicleHpPct = -1;
     }
 
+    _createKillBanner() {
+        const el = document.createElement('div');
+        el.id = 'kill-banner';
+        el.style.cssText = `position:fixed;top:calc(50% + 60px);left:50%;transform:translateX(-50%);
+            pointer-events:none;z-index:102;display:none;
+            font-family:Arial,sans-serif;font-size:18px;font-weight:bold;
+            text-shadow:0 0 6px rgba(0,0,0,0.8);letter-spacing:2px;
+            transition:opacity 0.15s ease-out, transform 0.15s ease-out;`;
+        const span = document.createElement('span');
+        el.appendChild(span);
+        document.body.appendChild(el);
+        this.killBanner = el;
+        this._killBannerText = span;
+    }
+
     // ───── Per-frame update methods ─────
 
     _updateHitMarker(dt) {
@@ -539,7 +636,33 @@ export class HUDController {
                 this.hitMarker.style.display = 'none';
             } else {
                 this.hitMarker.style.opacity = String(Math.min(1, this._hitMarkerTimer / 0.08));
+                // Scale pop decay back to 1.0
+                if (this._hitMarkerScale > 1) {
+                    this._hitMarkerScale = Math.max(1, this._hitMarkerScale - dt * 6);
+                    this.hitMarker.style.transform = `translate(-50%,-50%) rotate(45deg) scale(${this._hitMarkerScale})`;
+                }
             }
+        }
+    }
+
+    _updateKillBanner(dt) {
+        // Streak window countdown (independent of display timer)
+        if (this._streakTimer > 0) {
+            this._streakTimer -= dt;
+            if (this._streakTimer <= 0) {
+                this._streakCount = 0;
+            }
+        }
+        if (this._killBannerTimer <= 0) return;
+        this._killBannerTimer -= dt;
+        if (this._killBannerTimer <= 0.3 && !this._killBannerFadeOut) {
+            this._killBannerFadeOut = true;
+            this.killBanner.style.opacity = '0';
+            this.killBanner.style.transform = 'translateX(-50%) translateY(-8px)';
+        }
+        if (this._killBannerTimer <= 0) {
+            this.killBanner.style.display = 'none';
+            this._killBannerTimer = 0;
         }
     }
 
