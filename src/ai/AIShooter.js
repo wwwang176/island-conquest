@@ -245,7 +245,7 @@ export function fireShot(ctx) {
     for (const e of ctx.enemies) {
         if (e.alive && e.mesh && e.mesh !== ctx._playerMesh) _targetMeshes.push(e.mesh);
     }
-    if (ctx._playerMesh) _targetMeshes.push(ctx._playerMesh);
+    if (ctx._playerMesh && ctx._playerRef && ctx._playerRef.team !== ctx.team) _targetMeshes.push(ctx._playerMesh);
 
     // Cache static collidables (terrain + vehicles) — built once
     if (!_cachedCollidables) {
@@ -313,7 +313,7 @@ export function fireShot(ctx) {
         const dmg = applyFalloff(ctx.weaponDef.damage, hitChar.distance, ctx.weaponDef.falloffStart, ctx.weaponDef.falloffEnd, ctx.weaponDef.falloffMinScale);
         const hitSoldier = hitChar._soldierRef;
 
-        if (hitSoldier) {
+        if (hitSoldier && hitSoldier.team !== ctx.team) {
             if (ctx.impactVFX) {
                 ctx.impactVFX.spawn('blood', hitChar.point, _v1.copy(dir).negate());
             }
