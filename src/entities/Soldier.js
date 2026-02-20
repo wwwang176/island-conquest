@@ -502,6 +502,7 @@ export class Soldier {
         this.body.angularDamping = 0.4;
         this.body.linearDamping = 0.4;
         this.body.collisionResponse = true;
+        this.body.wakeUp();
 
         // Apply bullet-direction impulse for toppling effect
         if (fromPosition) {
