@@ -22,6 +22,8 @@ import { SpectatorMode } from './SpectatorMode.js';
 import { HUDController } from '../ui/HUDController.js';
 import Stats from 'three/addons/libs/stats.module.js';
 
+const _euler = new THREE.Euler();
+
 export class Game {
     constructor() {
         this.eventBus = new EventBus();
@@ -670,10 +672,9 @@ export class Game {
         dl.targetPitch = Math.atan2(dy, hDist);
 
         // Start from current camera orientation
-        const euler = new THREE.Euler();
-        euler.setFromQuaternion(this.camera.quaternion, 'YXZ');
-        dl.yaw = euler.y;
-        dl.pitch = euler.x;
+        _euler.setFromQuaternion(this.camera.quaternion, 'YXZ');
+        dl.yaw = _euler.y;
+        dl.pitch = _euler.x;
         dl.active = true;
     }
 
@@ -703,7 +704,8 @@ export class Game {
         dl.pitch += (dl.targetPitch - dl.pitch) * t;
 
         // Force camera rotation every frame — overrides player._syncMeshAndCamera
-        this.camera.quaternion.setFromEuler(new THREE.Euler(dl.pitch, dl.yaw, 0, 'YXZ'));
+        _euler.set(dl.pitch, dl.yaw, 0, 'YXZ');
+        this.camera.quaternion.setFromEuler(_euler);
     }
 
     _updateShootTargets() {
