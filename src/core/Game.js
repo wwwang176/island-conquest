@@ -120,6 +120,9 @@ export class Game {
         this._threatVisState = 0; // 0=off, 1=teamA, 2=teamB
         this._intelVisState = 0; // 0=off, 1=teamA, 2=teamB
 
+        // Death camera lerp (smooth turn toward killer on death)
+        this._deathLerp = { active: false, yaw: 0, pitch: 0, targetYaw: 0, targetPitch: 0 };
+
         // KD stats for scoreboard
         this._kdStats = new Map(); // key: name ("A-0","B-5","You"), value: {kills,deaths,team,weapon}
 
@@ -426,6 +429,8 @@ export class Game {
     _leaveTeam() {
         if (!this.player) return;
 
+        this._deathLerp.active = false;
+
         // Exit vehicle if in one
         if (this.player.vehicle) {
             const exitPos = this.vehicleManager.exitVehicle(this.player);
@@ -545,6 +550,23 @@ export class Game {
         this._kdStats.get(data.killerName).kills++;
         this._kdStats.get(data.killerName).weapon = data.weapon;
         this._kdStats.get(data.victimName).deaths++;
+
+        // Death camera: smooth turn toward killer
+        // Player killed
+        if (data.victimName === 'You' && this.gameMode === 'playing') {
+            this._startDeathLerp(this._findSoldierByName(data.killerName));
+        }
+        // Spectated COM killed (_trackedSoldier still set because 'kill' fires
+        // during aiManager.update(), before spectator._rebuildTargets() runs)
+        if (this.gameMode === 'spectator' && this.spectator && this.spectator.mode === 'follow') {
+            const tracked = this.spectator._trackedSoldier;
+            if (tracked) {
+                const victimTag = `${tracked.team === 'teamA' ? 'A' : 'B'}-${tracked.id}`;
+                if (data.victimName === victimTag) {
+                    this._startDeathLerp(this._findSoldierByName(data.killerName));
+                }
+            }
+        }
     }
 
     _onAIHit(data) {
@@ -615,6 +637,63 @@ export class Game {
             `Final Score: ${data.scores.teamA} — ${data.scores.teamB}`;
     }
 
+    // ───── Death Camera ─────
+
+    _findSoldierByName(name) {
+        if (name === 'You') return this.player;
+        const match = name.match(/^([AB])-(\d+)$/);
+        if (!match) return null;
+        const soldiers = match[1] === 'A'
+            ? this.aiManager.teamA.soldiers
+            : this.aiManager.teamB.soldiers;
+        const id = parseInt(match[2]);
+        return soldiers.find(s => s.id === id) || null;
+    }
+
+    /** Start smooth turn toward killer's position at time of death. */
+    _startDeathLerp(killer) {
+        if (!killer) return;
+        const dl = this._deathLerp;
+        const killerPos = killer.getPosition();
+        const dx = killerPos.x - this.camera.position.x;
+        const dy = (killerPos.y + 1.2) - this.camera.position.y;
+        const dz = killerPos.z - this.camera.position.z;
+        const hDist = Math.sqrt(dx * dx + dz * dz);
+
+        dl.targetYaw = Math.atan2(-dx, -dz);
+        dl.targetPitch = Math.atan2(dy, hDist);
+
+        // Start from current camera orientation
+        const euler = new THREE.Euler();
+        euler.setFromQuaternion(this.camera.quaternion, 'YXZ');
+        dl.yaw = euler.y;
+        dl.pitch = euler.x;
+        dl.active = true;
+    }
+
+    _updateDeathLerp(dt) {
+        const dl = this._deathLerp;
+        if (!dl.active) return;
+
+        // Spectator: stop when freeze ends (target switches)
+        if (this.gameMode === 'spectator' && this.spectator._deathFreezeTimer <= 0) {
+            dl.active = false;
+            return;
+        }
+
+        const t = Math.min(1, 6 * dt); // ~0.17s to converge
+
+        // Yaw with wrapping
+        let yawDiff = dl.targetYaw - dl.yaw;
+        if (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
+        if (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
+        dl.yaw += yawDiff * t;
+        dl.pitch += (dl.targetPitch - dl.pitch) * t;
+
+        // Force camera rotation every frame — overrides player._syncMeshAndCamera
+        this.camera.quaternion.setFromEuler(new THREE.Euler(dl.pitch, dl.yaw, 0, 'YXZ'));
+    }
+
     _updateShootTargets() {
         if (!this.player) return;
         const enemyMeshes = this.aiManager.getAllSoldierMeshes();
@@ -683,6 +762,9 @@ export class Game {
             // Refresh shoot targets
             this._updateShootTargets();
         }
+
+        // Death lerp: smooth turn toward killer after death
+        this._updateDeathLerp(dt);
 
         // Update flags — include AI + player positions (buffers reused by AIManager)
         const teamAPositions = this.aiManager.getTeamPositions('teamA');
