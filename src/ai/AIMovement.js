@@ -361,7 +361,7 @@ export function updateMovement(ctx, dt) {
                     if (contact.status === 'visible') continue;
                     const d = myPos.distanceTo(contact.lastSeenPos);
                     if (d >= ctx.weaponDef.maxRange) continue;
-                    const score = ctx._targetScore(contact.lastSeenPos, d);
+                    const score = ctx._targetScore(contact.lastSeenPos, d) * contact.confidence;
                     if (score > bestScore) {
                         bestScore = score;
                         nearest = contact;

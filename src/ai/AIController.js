@@ -760,13 +760,6 @@ export class AIController {
                 }
             }
         } else {
-            if (this.targetEnemy && this.teamIntel) {
-                const contact = this.teamIntel.contacts.get(this.targetEnemy);
-                if (contact) {
-                    this._preAimContact = contact;
-                    this._preAimCooldown = 0.5;
-                }
-            }
             this._targetLOSLevel = 1;
             this._setTargetEnemy(null);
             this.hasReacted = false;
