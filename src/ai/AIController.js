@@ -814,7 +814,7 @@ export class AIController {
      * @param {number} closestDist — distance to nearest
      * @param {number} closestLOS — LOS level of nearest (1=body, 2=head-only)
      */
-    applyScanResults(visibleEnemies, closestEnemy, closestDist, closestLOS) {
+    applyScanResults(visibleEnemies) {
         const currentlyVisible = this._useSetA ? this._visSetA : this._visSetB;
         currentlyVisible.clear();
 
@@ -845,29 +845,41 @@ export class AIController {
         this._previouslyVisible = currentlyVisible;
         this._useSetA = !this._useSetA;
 
+        // Pick best target by two-factor score: aimEase (0.45) + distScore (0.55)
+        let bestEnemy = null, bestDist = Infinity, bestLOS = 1, bestScore = -1;
+        for (const ve of visibleEnemies) {
+            const score = this._targetScore(ve.enemy.getPosition(), ve.dist);
+            if (score > bestScore) {
+                bestScore = score;
+                bestEnemy = ve.enemy;
+                bestDist = ve.dist;
+                bestLOS = ve.losLevel;
+            }
+        }
+
         // Target switching with stickiness
-        if (closestEnemy) {
-            this._targetLOSLevel = closestLOS;
-            if (this.targetEnemy !== closestEnemy) {
-                const isNewThreat = !prevVisible.has(closestEnemy);
+        if (bestEnemy) {
+            this._targetLOSLevel = bestLOS;
+            if (this.targetEnemy !== bestEnemy) {
+                const isNewThreat = !prevVisible.has(bestEnemy);
                 const currentLost = !this.targetEnemy || !this.targetEnemy.alive
                     || !currentlyVisible.has(this.targetEnemy);
                 const canSwitch = isNewThreat || currentLost
                     || this._targetSwitchCooldown <= 0;
 
                 if (canSwitch) {
-                    this._setTargetEnemy(closestEnemy);
+                    this._setTargetEnemy(bestEnemy);
                     this.hasReacted = false;
                     this._targetSwitchCooldown = 0.4;
-                    const t = Math.max(0, Math.min(1, closestDist / 60));
+                    const t = Math.max(0, Math.min(1, bestDist / 60));
                     const p = this.personality;
                     const distFactor = p.nearReaction + (p.farReaction - p.nearReaction) * t;
                     const losFactor = this._targetLOSLevel === 2 ? 1.4 : 1.0;
-                    const angularFactor = this._angularFactor(closestEnemy.getPosition());
+                    const angularFactor = this._angularFactor(bestEnemy.getPosition());
                     this.reactionTimer = Math.min(0.6,
                         p.reactionTime / 1000 * distFactor * losFactor * angularFactor +
                         (Math.random() * 0.15));
-                    const aimSpread = Math.max(0.3, Math.min(1.0, closestDist / 25));
+                    const aimSpread = Math.max(0.3, Math.min(1.0, bestDist / 25));
                     this.aimOffset.set(
                         (Math.random() - 0.5) * 2 * aimSpread,
                         (Math.random() - 0.5) * 1.5 * aimSpread,
@@ -887,6 +899,32 @@ export class AIController {
             this._setTargetEnemy(null);
             this.hasReacted = false;
         }
+    }
+
+    /**
+     * Two-factor target priority score in [0, 1].
+     *   aimEase  (0.45) — dot product of 3D aim direction toward enemy, clamped [0, 1].
+     *                     Targets already in the crosshair score higher; off-axis targets
+     *                     score lower, which naturally discourages thrashing between targets.
+     *   distScore (0.55) — linear falloff over 80 m detection range.
+     *                      Closer enemies are more dangerous and easier to hit.
+     *
+     * @param {THREE.Vector3} enemyPos
+     * @param {number} dist — 3-D Euclidean distance to enemy (pre-computed by scan)
+     * @returns {number} priority in [0, 1]
+     */
+    _targetScore(enemyPos, dist) {
+        if (dist < 0.01) return 0;
+        const pitch = this._smoothAimPitch || 0;
+        const cp = Math.cos(pitch);
+        const myPos = this.soldier.getPosition();
+        const dx = enemyPos.x - myPos.x;
+        const dy = enemyPos.y - myPos.y;
+        const dz = enemyPos.z - myPos.z;
+        const dot = (this.facingDir.x * cp * dx + Math.sin(pitch) * dy + this.facingDir.z * cp * dz) / dist;
+        const aimEase  = Math.max(0, dot);            // [0, 1]
+        const distScore = 1 - Math.min(dist / 80, 1); // [0, 1]
+        return 0.45 * aimEase + 0.55 * distScore;
     }
 
     /**
