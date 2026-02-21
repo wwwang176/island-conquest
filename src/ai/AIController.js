@@ -777,8 +777,11 @@ export class AIController {
                     const distFactor = p.nearReaction + (p.farReaction - p.nearReaction) * t;
                     // Exposure penalty: head-only target is harder to identify
                     const losFactor = this._targetLOSLevel === 2 ? 1.4 : 1.0;
-                    this.reactionTimer = p.reactionTime / 1000 * distFactor * losFactor +
-                        (Math.random() * 0.15);
+                    // Angular penalty: enemies outside current crosshairs take longer to react to
+                    const angularFactor = this._angularFactor(closestEnemy.getPosition());
+                    this.reactionTimer = Math.min(0.6,
+                        p.reactionTime / 1000 * distFactor * losFactor * angularFactor +
+                        (Math.random() * 0.15));
                     // Initial aim offset — smaller at close range (target fills FOV)
                     const aimSpread = Math.max(0.3, Math.min(1.0, closestDist / 25));
                     this.aimOffset.set(
@@ -860,8 +863,10 @@ export class AIController {
                     const p = this.personality;
                     const distFactor = p.nearReaction + (p.farReaction - p.nearReaction) * t;
                     const losFactor = this._targetLOSLevel === 2 ? 1.4 : 1.0;
-                    this.reactionTimer = p.reactionTime / 1000 * distFactor * losFactor +
-                        (Math.random() * 0.15);
+                    const angularFactor = this._angularFactor(closestEnemy.getPosition());
+                    this.reactionTimer = Math.min(0.6,
+                        p.reactionTime / 1000 * distFactor * losFactor * angularFactor +
+                        (Math.random() * 0.15));
                     const aimSpread = Math.max(0.3, Math.min(1.0, closestDist / 25));
                     this.aimOffset.set(
                         (Math.random() - 0.5) * 2 * aimSpread,
@@ -882,6 +887,56 @@ export class AIController {
             this._setTargetEnemy(null);
             this.hasReacted = false;
         }
+    }
+
+    /**
+     * Angular weighting for reaction time.
+     * Enemies already in the AI's crosshairs trigger faster reactions;
+     * enemies near the edge of the FOV trigger slower ones.
+     *
+     * Uses the current 3D aim direction (horizontal facingDir + vertical
+     * _smoothAimPitch) and the 3D vector to the enemy to compute the
+     * cosine of the angle between them, then maps it through a non-linear
+     * power curve:
+     *
+     *   u = (1 - dot) / 2          — 0 = perfectly aligned, 1 = directly behind
+     *   factor = 0.4 + 2.6 * u^1.8 — range [0.4× … 3.0×]
+     *
+     * Typical values:
+     *   0°  (directly ahead)  → 0.40×  (60% faster)
+     *   45°                   → 0.69×
+     *   90° (side)            → 1.15×  (neutral-ish)
+     *   102° (FOV edge)       → 1.32×
+     *
+     * Enemies beyond ~102° are never detected (FOV cutoff in _updateThreatScan /
+     * applyScanResults), so the "behind" end of the curve is academic for
+     * ground soldiers.
+     *
+     * @param {THREE.Vector3} enemyPos — world position of the target
+     * @returns {number} multiplier in [0.4, 3.0]
+     */
+    _angularFactor(enemyPos) {
+        const myPos = this.soldier.getPosition();
+
+        // Build 3D aim direction from horizontal facingDir + vertical pitch
+        const pitch = this._smoothAimPitch || 0;
+        const cp = Math.cos(pitch);
+        const aimX = this.facingDir.x * cp;
+        const aimY = Math.sin(pitch);
+        const aimZ = this.facingDir.z * cp;
+
+        // Vector from AI to enemy, normalized
+        const dx = enemyPos.x - myPos.x;
+        const dy = enemyPos.y - myPos.y;
+        const dz = enemyPos.z - myPos.z;
+        const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (len < 0.01) return 1.0;
+
+        const dot = (aimX * dx + aimY * dy + aimZ * dz) / len; // [-1, 1]
+
+        // Non-linear map: 0.4 (aligned) → 3.0 (behind), power curve steepens near edge
+        const u = (1 - dot) / 2;                        // [0, 1]
+        return 0.4 + 2.6 * Math.pow(u, 1.8);
     }
 
     _updateRisk() {
