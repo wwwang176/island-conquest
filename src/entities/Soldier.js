@@ -6,6 +6,8 @@ import { computeHitDamage, applyHealthRegen } from '../shared/DamageModel.js';
 import { createCapsuleBody, resetCapsuleShapes } from '../shared/CapsuleBody.js';
 
 const WATER_Y = -0.3;
+const RAGDOLL_MAX_SPEED = 15;
+const RAGDOLL_MAX_SPEED_SQ = RAGDOLL_MAX_SPEED * RAGDOLL_MAX_SPEED;
 const _splashPos = new THREE.Vector3();
 const _upDir = new THREE.Vector3(0, 1, 0);
 const _sdmgPos = new THREE.Vector3();
@@ -619,6 +621,13 @@ export class Soldier {
             // body.position is at body center (y+0.8), mesh origin is at feet
             // so offset mesh down by 0.8 in body's local frame
             if (this.ragdollActive) {
+                // Clamp ragdoll velocity to prevent physics interpenetration explosions
+                const v = this.body.velocity;
+                const spd2 = v.x * v.x + v.y * v.y + v.z * v.z;
+                if (spd2 > RAGDOLL_MAX_SPEED_SQ) {
+                    const s = RAGDOLL_MAX_SPEED / Math.sqrt(spd2);
+                    v.x *= s; v.y *= s; v.z *= s;
+                }
                 this.mesh.quaternion.set(
                     this.body.quaternion.x,
                     this.body.quaternion.y,
