@@ -615,7 +615,7 @@ export class AIController {
                             // (accounts for yaw + pitch + roll simultaneously)
                             if (this.soldier.upperBody) {
                                 const worldYaw = this.soldier.upperBody.rotation.y;
-                                const worldPitch = this._smoothAimPitch || 0;
+                                const worldPitch = this._aimPitch || 0;
                                 const cp = Math.cos(worldPitch);
                                 _aimDirVec.set(
                                     -Math.sin(worldYaw) * cp,
@@ -1500,7 +1500,7 @@ export class AIController {
         this._grenadeThrowTimer = 0;
         this._grenadeThrowPitch = 0;
         // Reset visual state
-        this._smoothAimPitch = 0;
+        this._aimPitch = 0;
         // Reset jump and inertia state
         this.isJumping = false;
         this.jumpVelY = 0;

@@ -38,9 +38,8 @@ export function updateUpperBodyAim(ctx, dt) {
                 const hDist = Math.sqrt(dx * dx + dz * dz);
                 if (hDist > 0.1) targetPitch = Math.atan2(dy, hDist);
             }
-            if (ctx._smoothAimPitch === undefined) ctx._smoothAimPitch = 0;
-            ctx._smoothAimPitch += (targetPitch - ctx._smoothAimPitch) * 0.15;
-            soldier.shoulderPivot.rotation.x = ctx._smoothAimPitch + (soldier._gunReloadTilt || 0);
+            ctx._aimPitch = targetPitch;
+            soldier.shoulderPivot.rotation.x = targetPitch + (soldier._gunReloadTilt || 0);
         }
     }
     soldier.mesh.rotation.set(0, 0, 0);

@@ -134,7 +134,7 @@ export class AIManager {
     }
 
     // Float32Array strides for worker communication
-    static AI_STRIDE = 7;    // x, y, z, facingX, facingZ, range, flags
+    static AI_STRIDE = 8;    // x, y, z, facingX, facingY, facingZ, range, flags
     static EN_STRIDE = 5;    // x, y, z, visRange, alive
 
     /**
@@ -187,10 +187,13 @@ export class AIManager {
             aiData[off]     = pos.x;
             aiData[off + 1] = pos.y;
             aiData[off + 2] = pos.z;
-            aiData[off + 3] = ctrl.facingDir.x;
-            aiData[off + 4] = ctrl.facingDir.z;
-            aiData[off + 5] = ctrl.vehicle ? ctrl.vehicle.detectionRange : 80;
-            aiData[off + 6] = (s.alive ? 1 : 0) | (inHeli ? 2 : 0);
+            const pitch = ctrl._aimPitch || 0;
+            const cp = Math.cos(pitch);
+            aiData[off + 3] = ctrl.facingDir.x * cp;   // facingX (pitch-adjusted)
+            aiData[off + 4] = Math.sin(pitch);          // facingY
+            aiData[off + 5] = ctrl.facingDir.z * cp;   // facingZ (pitch-adjusted)
+            aiData[off + 6] = ctrl.vehicle ? ctrl.vehicle.detectionRange : 80;
+            aiData[off + 7] = (s.alive ? 1 : 0) | (inHeli ? 2 : 0);
         }
 
         for (let i = 0; i < enemies.length; i++) {
@@ -236,22 +239,26 @@ export class AIManager {
 
             const r = results[i];
             const visibleEnemies = [];
-            let closestEnemy = null;
-            let closestDist = Infinity;
-            let closestLOS = 1;
+            let bestEnemy = null;
+            let bestDist = Infinity;
+            let bestLOS = 1;
+            let bestScore = Infinity;
 
             for (const ve of r.visibleEnemies) {
                 const enemy = enemies[ve.idx];
                 if (!enemy) continue;
                 visibleEnemies.push({ enemy, dist: ve.dist, losLevel: ve.losLevel });
-                if (ve.dist < closestDist) {
-                    closestDist = ve.dist;
-                    closestEnemy = enemy;
-                    closestLOS = ve.losLevel;
+                // Weighted score: prefer targets closest to crosshair, with distance as tiebreaker
+                const score = 0.7 * (1 - ve.dot) + 0.3 * (ve.dist / ve.range);
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestDist = ve.dist;
+                    bestEnemy = enemy;
+                    bestLOS = ve.losLevel;
                 }
             }
 
-            ctrl.applyScanResults(visibleEnemies, closestEnemy, closestDist, closestLOS);
+            ctrl.applyScanResults(visibleEnemies, bestEnemy, bestDist, bestLOS);
         }
     }
 
