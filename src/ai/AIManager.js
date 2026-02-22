@@ -243,6 +243,7 @@ export class AIManager {
             let bestDist = Infinity;
             let bestLOS = 1;
             let bestScore = Infinity;
+            let bestDot = 1;
 
             for (const ve of r.visibleEnemies) {
                 const enemy = enemies[ve.idx];
@@ -255,10 +256,11 @@ export class AIManager {
                     bestDist = ve.dist;
                     bestEnemy = enemy;
                     bestLOS = ve.losLevel;
+                    bestDot = ve.dot;
                 }
             }
 
-            ctrl.applyScanResults(visibleEnemies, bestEnemy, bestDist, bestLOS);
+            ctrl.applyScanResults(visibleEnemies, bestEnemy, bestDist, bestLOS, bestDot);
         }
     }
 
