@@ -698,8 +698,9 @@ export class AIController {
                     const p = this.personality;
                     const distFactor = p.nearReaction + (p.farReaction - p.nearReaction) * t;
                     const losFactor = this._targetLOSLevel === 2 ? 1.4 : 1.0;
-                    // angleFactor: crosshair center (dot=1) → 1.0, FOV edge (dot≈-0.2) → ~1.6
-                    const angleFactor = 1.0 + 0.5 * (1 - closestDot);
+                    // angleFactor: baseline 0.933 so that 30° (dot≈0.866) yields 1.0 (unchanged),
+                    // crosshair center is slightly faster, FOV edge (~102°) reaches ~1.53
+                    const angleFactor = 0.933 + 0.5 * (1 - closestDot);
                     this.reactionTimer = p.reactionTime / 1000 * distFactor * losFactor * angleFactor +
                         (Math.random() * 0.15);
                     const aimSpread = Math.max(0.3, Math.min(1.0, closestDist / 25));
