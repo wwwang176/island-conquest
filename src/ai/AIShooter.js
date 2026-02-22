@@ -85,12 +85,6 @@ export function updateAiming(ctx, dt) {
 
     // Gradually reduce aim offset
     ctx.aimOffset.multiplyScalar(1 - ctx.aimCorrectionSpeed * dt);
-
-    // Add tracking lag for moving targets
-    const enemyVel = ctx.targetEnemy.body.velocity;
-    const lagAmount = (1 - ctx.personality.aimSkill) * 0.15;
-    ctx.aimOffset.x += enemyVel.x * lagAmount * dt;
-    ctx.aimOffset.z += enemyVel.z * lagAmount * dt;
 }
 
 /** Update shooting state — burst management, reloading, firing. */

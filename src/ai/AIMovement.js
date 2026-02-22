@@ -356,12 +356,14 @@ export function updateMovement(ctx, dt) {
             }
             if (!nearest || ctx._preAimCooldown <= 0) {
                 nearest = null;
-                let nearestDist = Infinity;
+                let bestScore = -1;
                 for (const contact of ctx.teamIntel.contacts.values()) {
                     if (contact.status === 'visible') continue;
                     const d = myPos.distanceTo(contact.lastSeenPos);
-                    if (d < ctx.weaponDef.maxRange && d < nearestDist) {
-                        nearestDist = d;
+                    if (d >= ctx.weaponDef.maxRange) continue;
+                    const score = ctx._targetScore(contact.lastSeenPos, d) * contact.confidence;
+                    if (score > bestScore) {
+                        bestScore = score;
                         nearest = contact;
                     }
                 }

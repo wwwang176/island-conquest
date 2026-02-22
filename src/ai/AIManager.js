@@ -236,22 +236,14 @@ export class AIManager {
 
             const r = results[i];
             const visibleEnemies = [];
-            let closestEnemy = null;
-            let closestDist = Infinity;
-            let closestLOS = 1;
 
             for (const ve of r.visibleEnemies) {
                 const enemy = enemies[ve.idx];
                 if (!enemy) continue;
                 visibleEnemies.push({ enemy, dist: ve.dist, losLevel: ve.losLevel });
-                if (ve.dist < closestDist) {
-                    closestDist = ve.dist;
-                    closestEnemy = enemy;
-                    closestLOS = ve.losLevel;
-                }
             }
 
-            ctrl.applyScanResults(visibleEnemies, closestEnemy, closestDist, closestLOS);
+            ctrl.applyScanResults(visibleEnemies);
         }
     }
 
