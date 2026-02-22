@@ -18,45 +18,6 @@ const _aimDirVec = new THREE.Vector3();
 const _tmpQuat = new THREE.Quaternion();
 const _raycaster = new THREE.Raycaster();
 
-const EYE_HEIGHT = 1.5;
-const HEAD_TOP_HEIGHT = 1.7;
-
-/** Bresenham walk: returns true if ray from eyeY0 to targetY1 is unblocked. */
-function _bresenhamClear(tm, c0, r0, eyeY0, c1, r1, targetY1) {
-    let nc = c0, nr = r0;
-    const dc = Math.abs(c1 - c0), dr = Math.abs(r1 - r0);
-    const sc = c0 < c1 ? 1 : -1, sr = r0 < r1 ? 1 : -1;
-    let err = dc - dr;
-    const totalSteps = Math.max(dc, dr);
-    let step = 0;
-    while (true) {
-        if (!(nc === c0 && nr === r0)) {
-            if (totalSteps > 0) {
-                const t = step / totalSteps;
-                const expectedY = eyeY0 + (targetY1 - eyeY0) * t;
-                const cellY = tm.heightGrid[nr * tm.cols + nc];
-                if (cellY > expectedY) return false;
-            }
-        }
-        if (nc === c1 && nr === r1) return true;
-        step++;
-        const e2 = 2 * err;
-        if (e2 > -dr) { err -= dr; nc += sc; }
-        if (e2 < dc) { err += dc; nr += sr; }
-    }
-}
-
-/**
- * Grid-based Bresenham LOS check using ThreatMap heightGrid.
- * Dual-ray: first eye→eye, if blocked try eye→head-top.
- * Returns: 0 = not visible, 1 = body visible, 2 = head-only visible.
- */
-function _hasGridLOS(tm, c0, r0, eyeY0, c1, r1, targetY) {
-    if (_bresenhamClear(tm, c0, r0, eyeY0, c1, r1, targetY + EYE_HEIGHT)) return 1;
-    if (_bresenhamClear(tm, c0, r0, eyeY0, c1, r1, targetY + HEAD_TOP_HEIGHT)) return 2;
-    return 0;
-}
-
 /**
  * AI Controller for a single COM soldier.
  * Manages behavior tree, movement, aiming, shooting, and tactical decisions.
@@ -615,7 +576,7 @@ export class AIController {
                             // (accounts for yaw + pitch + roll simultaneously)
                             if (this.soldier.upperBody) {
                                 const worldYaw = this.soldier.upperBody.rotation.y;
-                                const worldPitch = this._smoothAimPitch || 0;
+                                const worldPitch = this._aimPitch || 0;
                                 const cp = Math.cos(worldPitch);
                                 _aimDirVec.set(
                                     -Math.sin(worldYaw) * cp,
@@ -680,129 +641,6 @@ export class AIController {
         updateShooting(this, dt);
     }
 
-    // ───── Threat Scanning ─────
-
-    _updateThreatScan() {
-        const myPos = this.soldier.getPosition();
-        let closestDist = Infinity;
-        let closestEnemy = null;
-        const currentlyVisible = this._useSetA ? this._visSetA : this._visSetB;
-        currentlyVisible.clear();
-
-        // Pre-compute grid coordinates for Bresenham LOS
-        const tm = this.threatMap;
-        const useGridLOS = tm && tm.heightGrid;
-        let myGridCol, myGridRow, myEyeY;
-        if (useGridLOS) {
-            const myGrid = tm._worldToGrid(myPos.x, myPos.z);
-            myGridCol = myGrid.col;
-            myGridRow = myGrid.row;
-            myEyeY = tm.heightGrid[myGridRow * tm.cols + myGridCol] + EYE_HEIGHT;
-        }
-
-        const inHeli = this.vehicle && this.vehicle.type === 'helicopter';
-        const myRange = this.vehicle ? this.vehicle.detectionRange : 80;
-
-        for (const enemy of this.enemies) {
-            if (!enemy.alive) continue;
-            const ePos = enemy.getPosition();
-            const dist = myPos.distanceTo(ePos);
-
-            const targetVis = enemy.vehicle ? enemy.vehicle.visibilityRange : 80;
-            if (dist > Math.max(myRange, targetVis)) continue;
-
-            // FOV check (120°) — skip in helicopter (360° awareness)
-            if (!inHeli) {
-                _v1.subVectors(ePos, myPos).normalize();
-                const dot = this.facingDir.dot(_v1);
-                if (dot < -0.2) continue; // behind us (~120° FOV)
-            }
-
-            // Line of sight check — skip in helicopter (aerial view clears terrain)
-            let losLevel = 1;
-            if (!inHeli && useGridLOS) {
-                const eGrid = tm._worldToGrid(ePos.x, ePos.z);
-                losLevel = _hasGridLOS(tm, myGridCol, myGridRow, myEyeY, eGrid.col, eGrid.row, ePos.y);
-                if (losLevel === 0) continue;
-            }
-
-            currentlyVisible.add(enemy);
-
-            // Report to TeamIntel: new sighting vs refresh
-            if (this.teamIntel) {
-                if (this._previouslyVisible.has(enemy)) {
-                    // Continuous observation — update position only, don't change count
-                    this.teamIntel.refreshContact(enemy, ePos, enemy.body.velocity, enemy.vehicle !== null);
-                } else {
-                    // New sighting — increment seenByCount
-                    this.teamIntel.reportSighting(enemy, ePos, enemy.body.velocity, enemy.vehicle !== null);
-                }
-            }
-
-            if (dist < closestDist) {
-                closestDist = dist;
-                closestEnemy = enemy;
-                this._targetLOSLevel = losLevel;
-            }
-        }
-
-        // Report lost contacts to TeamIntel
-        if (this.teamIntel) {
-            for (const prev of this._previouslyVisible) {
-                if (!currentlyVisible.has(prev)) {
-                    this.teamIntel.reportLost(prev);
-                }
-            }
-        }
-        const prevVisible = this._previouslyVisible;
-        this._previouslyVisible = currentlyVisible;
-        this._useSetA = !this._useSetA;
-
-        // Target switching with stickiness
-        if (closestEnemy) {
-            if (this.targetEnemy !== closestEnemy) {
-                const isNewThreat = !prevVisible.has(closestEnemy);
-                const currentLost = !this.targetEnemy || !this.targetEnemy.alive
-                    || !currentlyVisible.has(this.targetEnemy);
-                const canSwitch = isNewThreat || currentLost
-                    || this._targetSwitchCooldown <= 0;
-
-                if (canSwitch) {
-                    this._setTargetEnemy(closestEnemy);
-                    this.hasReacted = false;
-                    this._targetSwitchCooldown = 0.4;
-                    // Per-personality distance curve: lerp(nearReaction, farReaction, t)
-                    const t = Math.max(0, Math.min(1, closestDist / 60));
-                    const p = this.personality;
-                    const distFactor = p.nearReaction + (p.farReaction - p.nearReaction) * t;
-                    // Exposure penalty: head-only target is harder to identify
-                    const losFactor = this._targetLOSLevel === 2 ? 1.4 : 1.0;
-                    this.reactionTimer = p.reactionTime / 1000 * distFactor * losFactor +
-                        (Math.random() * 0.15);
-                    // Initial aim offset — smaller at close range (target fills FOV)
-                    const aimSpread = Math.max(0.3, Math.min(1.0, closestDist / 25));
-                    this.aimOffset.set(
-                        (Math.random() - 0.5) * 2 * aimSpread,
-                        (Math.random() - 0.5) * 1.5 * aimSpread,
-                        (Math.random() - 0.5) * 2 * aimSpread
-                    );
-                }
-            }
-        } else {
-            // Lost all visual targets — hand off to intel pre-aim
-            if (this.targetEnemy && this.teamIntel) {
-                const contact = this.teamIntel.contacts.get(this.targetEnemy);
-                if (contact) {
-                    this._preAimContact = contact;
-                    this._preAimCooldown = 0.5;
-                }
-            }
-            this._targetLOSLevel = 1;
-            this._setTargetEnemy(null);
-            this.hasReacted = false;
-        }
-    }
-
     /**
      * Apply scan results from the threat scan Web Worker.
      * Replaces the old per-frame _updateThreatScan() that ran on main thread.
@@ -811,7 +649,7 @@ export class AIController {
      * @param {number} closestDist — distance to nearest
      * @param {number} closestLOS — LOS level of nearest (1=body, 2=head-only)
      */
-    applyScanResults(visibleEnemies, closestEnemy, closestDist, closestLOS) {
+    applyScanResults(visibleEnemies, closestEnemy, closestDist, closestLOS, closestDot = 1) {
         const currentlyVisible = this._useSetA ? this._visSetA : this._visSetB;
         currentlyVisible.clear();
 
@@ -860,7 +698,10 @@ export class AIController {
                     const p = this.personality;
                     const distFactor = p.nearReaction + (p.farReaction - p.nearReaction) * t;
                     const losFactor = this._targetLOSLevel === 2 ? 1.4 : 1.0;
-                    this.reactionTimer = p.reactionTime / 1000 * distFactor * losFactor +
+                    // angleFactor: baseline 0.933 so that 30° (dot≈0.866) yields 1.0 (unchanged),
+                    // crosshair center is slightly faster, FOV edge (~102°) reaches ~1.53
+                    const angleFactor = 0.933 + 0.5 * (1 - closestDot);
+                    this.reactionTimer = p.reactionTime / 1000 * distFactor * losFactor * angleFactor +
                         (Math.random() * 0.15);
                     const aimSpread = Math.max(0.3, Math.min(1.0, closestDist / 25));
                     this.aimOffset.set(
@@ -1500,7 +1341,7 @@ export class AIController {
         this._grenadeThrowTimer = 0;
         this._grenadeThrowPitch = 0;
         // Reset visual state
-        this._smoothAimPitch = 0;
+        this._aimPitch = 0;
         // Reset jump and inertia state
         this.isJumping = false;
         this.jumpVelY = 0;

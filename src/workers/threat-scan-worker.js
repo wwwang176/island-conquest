@@ -9,13 +9,13 @@
  *     (Float32Arrays, transferred)
  *   Worker → Main: { type: 'scanResult', teamAResults, teamBResults }
  *
- * AI stride  = 7: x, y, z, facingX, facingZ, range, flags (bit0=alive, bit1=inHeli)
+ * AI stride  = 8: x, y, z, facingX, facingY, facingZ, range, flags (bit0=alive, bit1=inHeli)
  * Enemy stride = 5: x, y, z, visRange, alive
  */
 
 const EYE_HEIGHT = 1.5;
 const HEAD_TOP_HEIGHT = 1.7;
-const AI_STRIDE = 7;
+const AI_STRIDE = 8;
 const EN_STRIDE = 5;
 
 let cols = 0, rows = 0, cellSize = 1, originX = 0, originZ = 0;
@@ -74,9 +74,9 @@ function scanTeam(aiData, aiCount, enData, enCount) {
     for (let a = 0; a < aiCount; a++) {
         const ao = a * AI_STRIDE;
         const ax = aiData[ao], ay = aiData[ao + 1], az = aiData[ao + 2];
-        const facingX = aiData[ao + 3], facingZ = aiData[ao + 4];
-        const range = aiData[ao + 5];
-        const flags = aiData[ao + 6];
+        const facingX = aiData[ao + 3], facingY = aiData[ao + 4], facingZ = aiData[ao + 5];
+        const range = aiData[ao + 6];
+        const flags = aiData[ao + 7];
         const alive = (flags & 1) !== 0;
         const inHeli = (flags & 2) !== 0;
 
@@ -107,11 +107,12 @@ function scanTeam(aiData, aiCount, enData, enCount) {
             const maxRange = range > visRange ? range : visRange;
             if (dist > maxRange) continue;
 
-            // FOV check (120 deg) — skip in helicopter
+            const invDist = dist > 0.001 ? 1 / dist : 0;
+
+            // FOV check (120 deg, horizontal only) — skip in helicopter
             if (!inHeli) {
-                const invDist = dist > 0.001 ? 1 / dist : 0;
-                const dot = facingX * (dx * invDist) + facingZ * (dz * invDist);
-                if (dot < -0.2) continue;
+                const dot2d = facingX * (dx * invDist) + facingZ * (dz * invDist);
+                if (dot2d < -0.2) continue;
             }
 
             // LOS check — skip in helicopter
@@ -125,7 +126,10 @@ function scanTeam(aiData, aiCount, enData, enCount) {
                 if (losLevel === 0) continue;
             }
 
-            visibleEnemies.push({ idx: ei, dist, losLevel });
+            // 3D dot: crosshair proximity (includes pitch)
+            const dot = facingX * (dx * invDist) + facingY * (dy * invDist) + facingZ * (dz * invDist);
+
+            visibleEnemies.push({ idx: ei, dist, losLevel, dot, range });
         }
 
         results[a] = { visibleEnemies };

@@ -106,8 +106,9 @@ export function updateShooting(ctx, dt) {
 
     // BOLT aim delay: must aim at target for aiAimDelay seconds before firing
     if (ctx.weaponDef.aiAimDelay) {
-        // Unscope during bolt cycling, reloading, or grenade throw
+        // Unscope during bolt cycling, reloading, or grenade throw — reset aim timer
         if (ctx.boltTimer > 0 || ctx.isReloading || ctx._grenadeThrowTimer > 0) {
+            ctx._boltAimTimer = 0;
             ctx.isScoped = false;
         } else if (ctx.targetEnemy && ctx.targetEnemy.alive && ctx.hasReacted) {
             if (ctx.targetEnemy !== ctx._lastAimTarget) {
