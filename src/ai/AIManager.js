@@ -245,9 +245,13 @@ export class AIManager {
             let bestScore = Infinity;
             let bestDot = 1;
 
+            const ds = ctrl._damageSource;
+            let dsAlreadySeen = false;
+
             for (const ve of r.visibleEnemies) {
                 const enemy = enemies[ve.idx];
                 if (!enemy) continue;
+                if (enemy === ds) dsAlreadySeen = true;
                 visibleEnemies.push({ enemy, dist: ve.dist, losLevel: ve.losLevel });
                 // Weighted score: prefer targets closest to crosshair, with distance as tiebreaker
                 const score = 0.7 * (1 - ve.dot) + 0.3 * (ve.dist / ve.range);
@@ -257,6 +261,27 @@ export class AIManager {
                     bestEnemy = enemy;
                     bestLOS = ve.losLevel;
                     bestDot = ve.dot;
+                }
+            }
+
+            // Inject damage source as visible if not already detected by worker
+            if (ds && !dsAlreadySeen && ds.alive) {
+                const myPos = ctrl.soldier.getPosition();
+                const ePos = ds.getPosition();
+                const dist = myPos.distanceTo(ePos);
+                if (dist < ctrl.weaponDef.maxRange) {
+                    visibleEnemies.push({ enemy: ds, dist, losLevel: 1 });
+                    const dx = ePos.x - myPos.x, dz = ePos.z - myPos.z;
+                    const inv = 1 / Math.max(dist, 0.01);
+                    const dot = ctrl.facingDir.x * dx * inv + ctrl.facingDir.z * dz * inv;
+                    const score = 0.7 * (1 - dot) + 0.3 * (dist / ctrl.weaponDef.maxRange);
+                    if (score < bestScore) {
+                        bestScore = score;
+                        bestDist = dist;
+                        bestEnemy = ds;
+                        bestLOS = 1;
+                        bestDot = dot;
+                    }
                 }
             }
 

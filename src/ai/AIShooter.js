@@ -318,7 +318,7 @@ export function fireShot(ctx) {
             if (ctx.impactVFX) {
                 ctx.impactVFX.spawn('blood', hitChar.point, _v1.copy(dir).negate());
             }
-            const result = hitSoldier.takeDamage(dmg, myPos, hitChar.point.y);
+            const result = hitSoldier.takeDamage(dmg, myPos, hitChar.point.y, ctx.soldier);
             if (ctx.eventBus) {
                 const isPlayer = ctx._playerRef && hitSoldier === ctx._playerRef;
                 const vTeam = hitSoldier.team || (ctx.team === 'teamA' ? 'teamB' : 'teamA');

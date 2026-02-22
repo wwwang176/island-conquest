@@ -526,7 +526,7 @@ export class Game {
                 if (this.impactVFX) {
                     this.impactVFX.spawn('blood', hit.point, null);
                 }
-                const result = soldier.takeDamage(hit.damage, this.player.getPosition(), hit.point.y);
+                const result = soldier.takeDamage(hit.damage, this.player.getPosition(), hit.point.y, this.player);
                 if (result.killed) {
                     const isHeadshot = result.headshot;
                     this.hud.showHitMarker(isHeadshot ? 'headshot_kill' : 'kill');

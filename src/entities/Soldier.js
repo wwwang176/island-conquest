@@ -445,9 +445,10 @@ export class Soldier {
      * @param {number} amount - Damage amount
      * @param {THREE.Vector3} fromPosition - World position of the attacker
      * @param {number|null} hitY - Hit point Y coordinate (null for explosions etc.)
+     * @param {Soldier|null} attacker - Reference to the attacking soldier (for AI awareness)
      * @returns {object} { killed: boolean, damage: number, headshot: boolean }
      */
-    takeDamage(amount, fromPosition, hitY = null) {
+    takeDamage(amount, fromPosition, hitY = null, attacker = null) {
         if (!this.alive) return { killed: false, damage: 0, headshot: false };
 
         const baseY = this.body.position.y;
@@ -471,7 +472,7 @@ export class Soldier {
 
         // Notify AI controller for immediate reaction
         if (this.controller && this.controller.onDamaged) {
-            this.controller.onDamaged();
+            this.controller.onDamaged(attacker);
         }
 
         return { killed: false, damage: actualDamage, headshot };

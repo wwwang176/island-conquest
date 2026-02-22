@@ -156,6 +156,10 @@ export class AIController {
         this.coverTarget = null;
         this.occupiedCover = null; // actual cover object from CoverSystem
 
+        // Damage-awareness: attacker injected as visible for 0.5s
+        this._damageSource = null;   // Soldier ref
+        this._damageSourceTimer = 0;
+
         // Previously seen enemies (for intel lost reporting)
         this._previouslyVisible = new Set();
         this._visSetA = new Set();
@@ -404,12 +408,20 @@ export class AIController {
     /**
      * Called by Soldier.takeDamage() — force immediate BT re-tick next frame
      * so the COM reacts to being hit without waiting 150-550ms.
+     * @param {Soldier|null} attacker - the soldier that dealt damage
      */
-    onDamaged() {
+    onDamaged(attacker) {
         this.btTimer = this.btInterval; // triggers BT on next update()
         // Halve path cooldown so A* recomputes sooner for the new moveTarget
         // (don't clear currentPath — let COM keep moving until BT picks a new destination)
         this._pathCooldown *= 0.5;
+
+        // Damage-awareness: remember attacker so scan results can inject them as visible.
+        // Don't reportSighting here — applyScanResults handles it to keep seenByCount balanced.
+        if (attacker && attacker.alive && attacker.team !== this.team) {
+            this._damageSource = attacker;
+            this._damageSourceTimer = 0.5;
+        }
     }
 
     /**
@@ -436,6 +448,12 @@ export class AIController {
         // Target switch cooldowns
         if (this._targetSwitchCooldown > 0) this._targetSwitchCooldown -= dt;
         if (this._preAimCooldown > 0) this._preAimCooldown -= dt;
+
+        // Decay damage-awareness timer
+        if (this._damageSourceTimer > 0) {
+            this._damageSourceTimer -= dt;
+            if (this._damageSourceTimer <= 0) this._damageSource = null;
+        }
 
         // Threat scan is now handled by AIManager's Web Worker — see applyScanResults()
 
