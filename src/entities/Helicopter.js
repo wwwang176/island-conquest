@@ -567,7 +567,7 @@ export class Helicopter extends Vehicle {
             // Self-destruct if team helicopter is unmanned over water for too long
             if (this._groundY < WATER_Y) {
                 this._waterIdleTimer += dt;
-                if (this._waterIdleTimer >= 15) {
+                if (this._waterIdleTimer >= 0.5) {
                     this.destroy();
                     return;
                 }
