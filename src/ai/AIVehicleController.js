@@ -129,10 +129,7 @@ export function actionDriveVehicle(ctx) {
         ctx.missionPressure = 0.3;
         // Pilot wait logic
         if (v.driver === ctx.soldier) {
-            if (v.passengers.length === 0) {
-                ctx._heliWaitingForPassengers = true;
-                ctx._heliWaitTimer = 10;
-            } else if (v.passengers.length >= v.maxPassengers) {
+            if (v.passengers.length >= v.maxPassengers) {
                 ctx._heliWaitingForPassengers = true;
                 ctx._heliWaitTimer = Math.min(ctx._heliWaitTimer, 0.5);
             } else if (ctx._heliWaitTimer > 0) {
@@ -168,14 +165,12 @@ export function updateHelicopterOrbit(ctx, dt) {
 
     // Wait on ground until passengers board + grace period expires
     if (ctx._heliWaitingForPassengers) {
-        if (v.passengers.length > 0) {
-            if (v.passengers.length >= v.maxPassengers) {
-                ctx._heliWaitTimer = Math.min(ctx._heliWaitTimer, 0.5);
-            }
-            ctx._heliWaitTimer -= dt;
-            if (ctx._heliWaitTimer <= 0) {
-                ctx._heliWaitingForPassengers = false;
-            }
+        if (v.passengers.length >= v.maxPassengers) {
+            ctx._heliWaitTimer = Math.min(ctx._heliWaitTimer, 0.5);
+        }
+        ctx._heliWaitTimer -= dt;
+        if (ctx._heliWaitTimer <= 0) {
+            ctx._heliWaitingForPassengers = false;
         }
         if (ctx._heliWaitingForPassengers) return;
     }
