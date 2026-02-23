@@ -78,6 +78,7 @@ export class Helicopter extends Vehicle {
         // getHeightAt — set by VehicleManager after construction
         this.getHeightAt = null;
         this._groundY = 0; // cached terrain height for idle check
+        this._waterIdleTimer = 0; // self-destruct timer for unmanned helicopters over water
 
         // Spawn flag — set by VehicleManager; used to switch team on respawn
         this.spawnFlag = null;
@@ -400,6 +401,7 @@ export class Helicopter extends Vehicle {
             this.team = entity.team;
             this._updateStripeColor();
         }
+        this._waterIdleTimer = 0;
     }
 
     exit(entity) {
@@ -418,7 +420,7 @@ export class Helicopter extends Vehicle {
             const idx = this.passengers.indexOf(entity);
             if (idx >= 0) this.passengers.splice(idx, 1);
         }
-        // All occupants gone → revert to neutral
+        // Revert to neutral when last occupant leaves
         if (!this.driver && this.passengers.length === 0) {
             this.team = null;
             this._updateStripeColor();
@@ -468,8 +470,6 @@ export class Helicopter extends Vehicle {
 
         // Kill all occupants
         this._killAllOccupants();
-        this.team = null;
-        this._updateStripeColor();
     }
 
     _killAllOccupants() {
@@ -561,9 +561,19 @@ export class Helicopter extends Vehicle {
         if (!this.driver && this.passengers.length === 0) {
             if (this.body) {
                 this.body.linearDamping = 0.8;
-                this.body.force.y -= this.body.mass * 3;
+                this.body.force.y -= this.body.mass * 6;
             }
             this._yawRate *= Math.max(0, 1 - 5 * dt);
+            // Self-destruct if team helicopter is unmanned over water for too long
+            if (this._groundY < WATER_Y) {
+                this._waterIdleTimer += dt;
+                if (this._waterIdleTimer >= 15) {
+                    this.destroy();
+                    return;
+                }
+            } else {
+                this._waterIdleTimer = 0;
+            }
         } else {
             if (this.body) {
                 this.body.linearDamping = 0.5;
@@ -744,6 +754,7 @@ export class Helicopter extends Vehicle {
         this._visualPitch = 0;
         this._visualRoll = 0;
         this._yawRate = 0;
+        this._waterIdleTimer = 0;
         this.passengers = [];
 
         if (this.mesh) {
