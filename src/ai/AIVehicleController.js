@@ -14,7 +14,8 @@ export function findSquadHelicopter(ctx) {
         if (ctrl === ctx) continue;
         if (!ctrl.vehicle) continue;
         const v = ctrl.vehicle;
-        if (!v.alive || v.team !== ctx.team) continue;
+        if (!v.alive) continue;
+        if (v.team !== null && v.team !== ctx.team) continue;
         if (v.type === 'helicopter' && v.occupantCount >= 5) continue;
         return v;
     }

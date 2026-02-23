@@ -501,8 +501,8 @@ export class Game {
             if (obj.userData && obj.userData.vehicle) {
                 const vehicle = obj.userData.vehicle;
                 if (!vehicle.alive) return;
-                // No friendly fire on vehicles
-                if (vehicle.team === this.player.team) return;
+                // No friendly fire on vehicles; don't damage neutral (unoccupied)
+                if (vehicle.team === null || vehicle.team === this.player.team) return;
                 if (this.impactVFX) {
                     this.impactVFX.spawn('rock', hit.point, null);
                 }

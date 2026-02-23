@@ -147,7 +147,8 @@ export class Minimap {
                 if (!v.alive || !v.mesh) continue;
                 const vp = v.mesh.position;
                 this._worldToMap(vp.x, vp.z, _m);
-                const vColor = v.team === 'teamA' ? '#66aaff' : '#ff6666';
+                const vColor = v.team === 'teamA' ? '#66aaff'
+                    : v.team === 'teamB' ? '#ff6666' : '#aaaaaa';
                 ctx.save();
                 ctx.translate(_m[0], _m[1]);
                 ctx.rotate(-v.rotationY);

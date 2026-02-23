@@ -190,8 +190,17 @@ export class Helicopter extends Vehicle {
         this.body.quaternion.setFromAxisAngle(_cannonYAxis, this.rotationY);
     }
 
+    _updateStripeColor() {
+        if (!this._stripeMat) return;
+        const c = this.team === 'teamA' ? 0x3366cc
+            : this.team === 'teamB' ? 0xcc3333 : 0x888888;
+        this._stripeMat.color.setHex(c);
+    }
+
     _createMesh() {
-        const teamColor = this.team === 'teamA' ? 0x3366cc : 0xcc3333;
+        const teamColor = this.team === 'teamA' ? 0x3366cc
+            : this.team === 'teamB' ? 0xcc3333
+            : 0x888888;
         const OD = 0x4a5a2a;  // olive drab
         const DK = 0x333333;  // dark grey
         const mat = (c, opts) => new THREE.MeshLambertMaterial({ color: c, flatShading: true, ...opts });
@@ -366,7 +375,7 @@ export class Helicopter extends Vehicle {
 
     canEnter(entity) {
         if (!this.alive || this._crashing) return false;
-        if (entity.team !== this.team) return false;
+        if (this.team !== null && entity.team !== this.team) return false;
         if (this.occupantCount >= 5) return false;
         const pos = entity.getPosition();
         const vp = this.mesh ? this.mesh.position : this.spawnPosition;
@@ -386,6 +395,11 @@ export class Helicopter extends Vehicle {
         if (entity.body) {
             entity.body.collisionResponse = false;
         }
+        // First occupant claims the helicopter for their team
+        if (this.team === null) {
+            this.team = entity.team;
+            this._updateStripeColor();
+        }
     }
 
     exit(entity) {
@@ -403,6 +417,11 @@ export class Helicopter extends Vehicle {
         } else {
             const idx = this.passengers.indexOf(entity);
             if (idx >= 0) this.passengers.splice(idx, 1);
+        }
+        // All occupants gone → revert to neutral
+        if (!this.driver && this.passengers.length === 0) {
+            this.team = null;
+            this._updateStripeColor();
         }
         // Return exit position
         const exitPos = this.mesh.position.clone();
@@ -449,6 +468,8 @@ export class Helicopter extends Vehicle {
 
         // Kill all occupants
         this._killAllOccupants();
+        this.team = null;
+        this._updateStripeColor();
     }
 
     _killAllOccupants() {
@@ -706,15 +727,9 @@ export class Helicopter extends Vehicle {
     }
 
     respawn() {
-        // Switch team based on spawn flag ownership
-        if (this.spawnFlag && this.spawnFlag.owner !== 'neutral' && this.spawnFlag.owner !== this.team) {
-            this.team = this.spawnFlag.owner;
-            // Update team stripe color
-            if (this._stripeMat) {
-                const teamColor = this.team === 'teamA' ? 0x3366cc : 0xcc3333;
-                this._stripeMat.color.setHex(teamColor);
-            }
-        }
+        // Reset to neutral on respawn — first boarder claims it
+        this.team = null;
+        this._updateStripeColor();
 
         this.alive = true;
         this.hp = this.maxHP;

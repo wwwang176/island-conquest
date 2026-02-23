@@ -348,7 +348,7 @@ export function fireShot(ctx) {
         while (hitObj) {
             if (hitObj.userData && hitObj.userData.vehicle) {
                 const vehicle = hitObj.userData.vehicle;
-                if (vehicle.alive && vehicle.team !== ctx.team) {
+                if (vehicle.alive && vehicle.team !== null && vehicle.team !== ctx.team) {
                     const dmg = applyFalloff(ctx.weaponDef.damage, hitEnv.distance, ctx.weaponDef.falloffStart, ctx.weaponDef.falloffEnd, ctx.weaponDef.falloffMinScale);
                     vehicle.takeDamage(dmg);
                     if (ctx.impactVFX) {

@@ -33,31 +33,23 @@ export class VehicleManager {
     }
 
     _spawnInitialVehicles() {
-        const flagA = this.flags[0];
-        const flagB = this.flags[this.flags.length - 1];
-
-        // Team A: 1 helicopter near flag 0
-        this._spawnTeamVehicles('teamA', flagA.position);
-        // Team B: 1 helicopter near last flag
-        this._spawnTeamVehicles('teamB', flagB.position);
+        // Two neutral helicopters, one near each end flag
+        this._spawnHelicopter(0, this.flags[0]);
+        this._spawnHelicopter(1, this.flags[this.flags.length - 1]);
     }
 
-    _spawnTeamVehicles(team, basePos) {
-        const baseFlag = team === 'teamA' ? this.flags[0] : this.flags[this.flags.length - 1];
-
-        // Helicopter: use pre-computed position (Island already cleared the area)
-        const spawnIdx = team === 'teamA' ? 0 : 1;
+    _spawnHelicopter(spawnIdx, flag) {
         const precomputed = this._heliSpawnPositions && this._heliSpawnPositions[spawnIdx];
         const heliPos = precomputed
             ? new THREE.Vector3(precomputed.x, precomputed.y, precomputed.z)
-            : this._findLandSpawn(basePos, 8);
+            : this._findLandSpawn(flag.position, 8);
         if (heliPos) {
-            const heli = new Helicopter(this.scene, team, heliPos);
-            heli.rotationY = team === 'teamA' ? 0 : Math.PI;
+            const heli = new Helicopter(this.scene, null, heliPos);
+            heli.rotationY = spawnIdx === 0 ? 0 : Math.PI;
             heli.spawnRotationY = heli.rotationY;
             heli.mesh.rotation.y = heli.rotationY;
             heli.getHeightAt = this.getHeightAt;
-            heli.spawnFlag = baseFlag;
+            heli.spawnFlag = flag;
             heli.initPhysicsBody(this.physics);
             this.vehicles.push(heli);
         }
@@ -159,7 +151,7 @@ export class VehicleManager {
 
         for (const v of this.vehicles) {
             if (!v.alive) continue;
-            if (v.team !== entity.team) continue;
+            if (v.team !== null && v.team !== entity.team) continue;
             // Check if vehicle has room
             if (v.type === 'helicopter') {
                 if (v.occupantCount >= 5) continue;
