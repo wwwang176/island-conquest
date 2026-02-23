@@ -135,7 +135,7 @@ export class AIManager {
 
     // Float32Array strides for worker communication
     static AI_STRIDE = 8;    // x, y, z, facingX, facingY, facingZ, range, flags
-    static EN_STRIDE = 5;    // x, y, z, visRange, alive
+    static EN_STRIDE = 5;    // x, y, z, visRange, flags (bit0=alive, bit1=inHeli)
 
     /**
      * Initialize the threat scan Web Worker.
@@ -204,7 +204,8 @@ export class AIManager {
             enData[off + 1] = pos.y;
             enData[off + 2] = pos.z;
             enData[off + 3] = e.vehicle ? e.vehicle.visibilityRange : 80;
-            enData[off + 4] = e.alive ? 1 : 0;
+            const eInHeli = e.vehicle && e.vehicle.type === 'helicopter';
+            enData[off + 4] = (e.alive ? 1 : 0) | (eInHeli ? 2 : 0);
         }
 
         return { aiData, enData };

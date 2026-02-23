@@ -10,7 +10,7 @@
  *   Worker → Main: { type: 'scanResult', teamAResults, teamBResults }
  *
  * AI stride  = 8: x, y, z, facingX, facingY, facingZ, range, flags (bit0=alive, bit1=inHeli)
- * Enemy stride = 5: x, y, z, visRange, alive
+ * Enemy stride = 5: x, y, z, visRange, flags (bit0=alive, bit1=inHeli)
  */
 
 const EYE_HEIGHT = 1.5;
@@ -93,8 +93,9 @@ function scanTeam(aiData, aiCount, enData, enCount) {
 
         for (let ei = 0; ei < enCount; ei++) {
             const eo = ei * EN_STRIDE;
-            const enAlive = enData[eo + 4];
-            if (enAlive < 0.5) continue;
+            const enFlags = enData[eo + 4];
+            if ((enFlags & 1) === 0) continue; // not alive
+            const enInHeli = (enFlags & 2) !== 0;
 
             const ex = enData[eo], ey = enData[eo + 1], ez = enData[eo + 2];
             const visRange = enData[eo + 3];
@@ -115,9 +116,9 @@ function scanTeam(aiData, aiCount, enData, enCount) {
                 if (dot2d < -0.2) continue;
             }
 
-            // LOS check — skip in helicopter
+            // LOS check — skip when shooter or target is airborne
             let losLevel = 1;
-            if (!inHeli && heightGrid) {
+            if (!inHeli && !enInHeli && heightGrid) {
                 const eGrid = _worldToGrid(ex, ez);
                 losLevel = _hasGridLOS(
                     aiGrid.col, aiGrid.row, aiEyeY,

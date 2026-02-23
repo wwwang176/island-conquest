@@ -81,7 +81,17 @@ export function updateAiming(ctx, dt) {
     // Aim at enemy — head-only if only head is exposed, otherwise center mass
     const enemyPos = ctx.targetEnemy.getPosition();
     ctx.aimPoint.copy(enemyPos);
-    ctx.aimPoint.y += ctx._targetLOSLevel === 2 ? 1.6 : 1.2;
+    const aimH = ctx._targetLOSLevel === 2 ? 1.6 : 1.2;
+    const heli = ctx.targetEnemy.vehicle;
+    if (heli && heli.type === 'helicopter' && heli._cachedWorldQuat) {
+        // Offset along helicopter's local up axis (accounts for pitch/roll)
+        _tmpVec.set(0, aimH, 0).applyQuaternion(heli._cachedWorldQuat);
+        ctx.aimPoint.x += _tmpVec.x;
+        ctx.aimPoint.y += _tmpVec.y;
+        ctx.aimPoint.z += _tmpVec.z;
+    } else {
+        ctx.aimPoint.y += aimH;
+    }
 
     // Gradually reduce aim offset
     ctx.aimOffset.multiplyScalar(1 - ctx.aimCorrectionSpeed * dt);
@@ -218,7 +228,14 @@ export function updateShooting(ctx, dt) {
 export function fireShot(ctx) {
     const myPos = ctx.soldier.getPosition();
     _origin.copy(myPos);
-    _origin.y += 1.5;
+    const myHeli = ctx.soldier.vehicle;
+    if (myHeli && myHeli.type === 'helicopter' && myHeli._cachedWorldQuat) {
+        // Eye offset along helicopter's local up (accounts for pitch/roll)
+        _tmpVec.set(0, 1.5, 0).applyQuaternion(myHeli._cachedWorldQuat);
+        _origin.add(_tmpVec);
+    } else {
+        _origin.y += 1.5;
+    }
 
     // Direction to aim point + offset + random spread
     _target.copy(ctx.aimPoint).add(ctx.aimOffset);
