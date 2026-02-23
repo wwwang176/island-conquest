@@ -3,6 +3,7 @@ import * as CANNON from 'cannon-es';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Vehicle } from './Vehicle.js';
 
+const GRAVITY = 9.82;
 const WATER_Y = -0.3;
 const MAP_HALF_W = 150;  // island.width / 2
 const MAP_HALF_D = 60;   // island.depth / 2
@@ -145,7 +146,7 @@ export class Helicopter extends Vehicle {
         // Anti-gravity: runs per sub-step so it perfectly cancels world gravity
         this._preStepListener = () => {
             if (!this.body || !this.alive || this._crashing) return;
-            this.body.force.y += this.body.mass * 9.82;
+            this.body.force.y += this.body.mass * GRAVITY;
         };
         physics.world.addEventListener('preStep', this._preStepListener);
     }
@@ -561,7 +562,7 @@ export class Helicopter extends Vehicle {
         if (!this.driver && this.passengers.length === 0) {
             if (this.body) {
                 this.body.linearDamping = 0.8;
-                this.body.force.y -= this.body.mass * 6;
+                this.body.force.y -= this.body.mass * GRAVITY;
             }
             this._yawRate *= Math.max(0, 1 - 5 * dt);
             // Self-destruct if team helicopter is unmanned over water for too long
