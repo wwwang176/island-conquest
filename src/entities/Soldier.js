@@ -482,6 +482,19 @@ export class Soldier {
         this.alive = false;
         this.hp = 0;
         this.deathTimer = this.respawnDelay;
+
+        // Exit vehicle so Helicopter.exit() can promote a passenger to driver
+        if (this.vehicle) {
+            this.vehicle.exit(this);
+            this.vehicle = null;
+            // Clear AI controller vehicle refs to prevent staggered update re-exit
+            if (this.controller) {
+                this.controller.vehicle = null;
+                this.controller._vehicleMoveTarget = null;
+                this.controller._vehicleOrbitAngle = 0;
+            }
+        }
+
         this.ragdollActive = true;
 
         // Ragdoll needs physics — re-add if removed (kinematic AI)
