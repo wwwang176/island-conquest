@@ -346,7 +346,7 @@ export function updateMovement(ctx, dt) {
     ctx._preAimActive = false;
     if (ctx._grenadeThrowTimer > 0) {
         // During grenade throw, keep aimPoint on the throw arc — skip pre-aim
-    } else if (!ctx.targetEnemy || !ctx.targetEnemy.alive) {
+    } else if (!ctx.targetEnemy || !ctx.targetEnemy.alive || !ctx.hasReacted) {
         let preAimed = false;
         if (ctx.teamIntel) {
             // Re-evaluate intel target only when cooldown expires or current contact is stale
