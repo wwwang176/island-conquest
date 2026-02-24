@@ -358,7 +358,6 @@ export function updateMovement(ctx, dt) {
                 nearest = null;
                 let nearestDist = Infinity;
                 for (const contact of ctx.teamIntel.contacts.values()) {
-                    if (contact.status === 'visible') continue;
                     const d = myPos.distanceTo(contact.lastSeenPos);
                     if (d < ctx.weaponDef.maxRange && d < nearestDist) {
                         nearestDist = d;
