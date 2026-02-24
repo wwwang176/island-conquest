@@ -100,8 +100,8 @@ export function findRidgelineAimPoint(eyePos, targetPos, getHeightAt, out) {
         return out;
     }
 
-    const step = 5; // sample every 5m
-    const steps = Math.min(Math.floor(hDist / step), 30);
+    const step = 1; // sample every 1m
+    const steps = Math.min(Math.floor(hDist / step), 100);
     const invDist = 1 / hDist;
     const dirX = dx * invDist;
     const dirZ = dz * invDist;
