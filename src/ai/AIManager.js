@@ -48,6 +48,8 @@ export class AIManager {
         // Threat scan worker state
         this._scanWorker = null;
         this._scanPending = false;
+        this._pendingLostA = [];
+        this._pendingLostB = [];
 
         // Soldiers are created but not yet positioned — call spawnAll() after NavGrid is ready
         this._spawned = false;
@@ -164,6 +166,21 @@ export class AIManager {
             if (e.data.type === 'scanResult') {
                 this._applyTeamResults(this.teamA.controllers, this._teamAEnemies, e.data.teamAResults);
                 this._applyTeamResults(this.teamB.controllers, this._teamBEnemies, e.data.teamBResults);
+
+                // Apply LOST contact clearing — friendly AI confirmed position is clear
+                if (e.data.clearedA) {
+                    for (const idx of e.data.clearedA) {
+                        const contact = this._pendingLostA[idx];
+                        if (contact) this.intelA.confirmClear(contact.enemy);
+                    }
+                }
+                if (e.data.clearedB) {
+                    for (const idx of e.data.clearedB) {
+                        const contact = this._pendingLostB[idx];
+                        if (contact) this.intelB.confirmClear(contact.enemy);
+                    }
+                }
+
                 this._scanPending = false;
             }
         };
@@ -212,6 +229,59 @@ export class AIManager {
     }
 
     /**
+     * Build split threat data from TeamIntel contacts + friendly AI positions.
+     * Returns { visible, lost, friendlies } for ThreatMap.
+     */
+    _buildThreatData(teamIntel, controllers) {
+        const THREAT_DECAY_TIME = 15;
+        const visible = [];
+        const lost = [];
+
+        for (const contact of teamIntel.contacts.values()) {
+            const pos = contact.lastSeenPos;
+            if (contact.status === 'visible') {
+                visible.push({ x: pos.x, y: pos.y, z: pos.z });
+            } else {
+                const conf = Math.max(0, 1.0 - contact.lastSeenTime / THREAT_DECAY_TIME);
+                if (conf <= 0) continue;
+                lost.push({ x: pos.x, y: pos.y, z: pos.z, confidence: conf });
+            }
+        }
+
+        const friendlies = [];
+        for (const ctrl of controllers) {
+            if (!ctrl.soldier.alive) continue;
+            const pos = ctrl.soldier.getPosition();
+            friendlies.push({
+                x: pos.x, y: pos.y, z: pos.z,
+                fx: ctrl.facingDir.x, fz: ctrl.facingDir.z,
+            });
+        }
+
+        return { visible, lost, friendlies };
+    }
+
+    /**
+     * Pack LOST/SUSPECTED contacts from a TeamIntel into a Float32Array.
+     * Stride = 3: x, y, z.  Also returns the contact references for clearing.
+     */
+    _packLostContacts(teamIntel) {
+        const contacts = [];
+        for (const contact of teamIntel.contacts.values()) {
+            if (contact.status === 'visible') continue;
+            contacts.push(contact);
+        }
+        const data = new Float32Array(contacts.length * 3);
+        for (let i = 0; i < contacts.length; i++) {
+            const pos = contacts[i].lastSeenPos;
+            data[i * 3]     = pos.x;
+            data[i * 3 + 1] = pos.y;
+            data[i * 3 + 2] = pos.z;
+        }
+        return { data, contacts };
+    }
+
+    /**
      * Collect per-team AI + enemy data and send to scan worker.
      */
     _dispatchScan(teamAEnemies, teamBEnemies) {
@@ -220,6 +290,16 @@ export class AIManager {
         const a = this._packTeam(this.teamA.controllers, teamAEnemies);
         const b = this._packTeam(this.teamB.controllers, teamBEnemies);
 
+        // Pack LOST contact positions for clearing check
+        const lostA = this._packLostContacts(this.intelA);
+        const lostB = this._packLostContacts(this.intelB);
+        this._pendingLostA = lostA.contacts;
+        this._pendingLostB = lostB.contacts;
+
+        const transfers = [a.aiData.buffer, a.enData.buffer, b.aiData.buffer, b.enData.buffer];
+        if (lostA.data.length) transfers.push(lostA.data.buffer);
+        if (lostB.data.length) transfers.push(lostB.data.buffer);
+
         this._scanPending = true;
         this._scanWorker.postMessage({
             type: 'scan',
@@ -227,7 +307,9 @@ export class AIManager {
             aiACount: this.teamA.controllers.length, enACount: teamAEnemies.length,
             aiBData: b.aiData, enBData: b.enData,
             aiBCount: this.teamB.controllers.length, enBCount: teamBEnemies.length,
-        }, [a.aiData.buffer, a.enData.buffer, b.aiData.buffer, b.enData.buffer]);
+            lostAData: lostA.data, lostACount: lostA.contacts.length,
+            lostBData: lostB.data, lostBCount: lostB.contacts.length,
+        }, transfers);
     }
 
     /**
@@ -456,9 +538,12 @@ export class AIManager {
             teamAEnemies.push(playerAsEnemy);
         }
 
-        // Update threat maps: teamA's threats come from teamB soldiers (+ player) and vice versa
-        this.threatMapA.update(dt, teamAEnemies);
-        this.threatMapB.update(dt, teamBEnemies);
+        // Update threat maps using TeamIntel contacts (not god-view enemy lists).
+        // VISIBLE threat is always applied; LOST threat is masked by friendly AI coverage.
+        const srcA = this._buildThreatData(this.intelA, this.teamA.controllers);
+        this.threatMapA.update(dt, srcA.visible, srcA.lost, srcA.friendlies);
+        const srcB = this._buildThreatData(this.intelB, this.teamB.controllers);
+        this.threatMapB.update(dt, srcB.visible, srcB.lost, srcB.friendlies);
 
         // Staggered AI controller updates: update 8 AIs per frame (BT + movement)
         const updatesPerFrame = 8;

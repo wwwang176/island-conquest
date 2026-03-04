@@ -1,13 +1,24 @@
 /**
  * Web Worker for ThreatMap computation.
  * Receives heightGrid + enemy positions, computes threat grid off main thread.
+ *
+ * Threat sources are split into:
+ *   - visible: VISIBLE contacts (always applied, full confidence)
+ *   - lost:    LOST/SUSPECTED contacts (masked by friendly coverage)
+ *
+ * Friendly AI coverage: cells visible to at least one friendly AI
+ * are exempt from LOST threat (confirmed clear).
  */
 
 const EYE_HEIGHT = 1.5;
+const FOV_DOT = -0.2; // cos(~100°) — matches AI scan FOV threshold
+const COVER_RANGE = 80;
+const COVER_RANGE2 = COVER_RANGE * COVER_RANGE;
 
 let cols = 0, rows = 0, cellSize = 1, originX = 0, originZ = 0;
 let heightGrid = null;
 let threat = null;
+let coverage = null; // Uint8Array — 1 if any friendly AI can see this cell
 
 self.onmessage = (e) => {
     const msg = e.data;
@@ -20,47 +31,118 @@ self.onmessage = (e) => {
         originZ = msg.originZ;
         heightGrid = new Float32Array(msg.heightGrid);
         threat = new Float32Array(cols * rows);
+        coverage = new Uint8Array(cols * rows);
         return;
     }
 
     if (msg.type === 'update') {
-        const enemies = msg.enemies; // [{x, z}, ...]
-        computeThreat(enemies);
+        computeThreat(msg.visible || [], msg.lost || [], msg.friendlies || []);
         // Post threat back (copy, don't transfer — we reuse the buffer)
         self.postMessage({ type: 'result', threat: threat.slice() });
     }
 };
 
-function computeThreat(enemies) {
+function computeThreat(visible, lost, friendlies) {
     threat.fill(0);
 
-    for (const enemy of enemies) {
-        const eCol = Math.max(0, Math.min(Math.floor((enemy.x - originX) / cellSize), cols - 1));
-        const eRow = Math.max(0, Math.min(Math.floor((enemy.z - originZ) / cellSize), rows - 1));
-        // Use actual Y position if above terrain (e.g. helicopter passengers)
-        const terrainEyeY = heightGrid[eRow * cols + eCol] + EYE_HEIGHT;
-        const actualEyeY = (enemy.y !== undefined) ? enemy.y + EYE_HEIGHT : terrainEyeY;
-        const enemyEyeY = Math.max(terrainEyeY, actualEyeY);
+    // 1) Radiate threat from VISIBLE contacts (always applied)
+    for (const src of visible) {
+        radiate(src, 1.0, false);
+    }
 
-        const radius = 160;
-        const radius2 = radius * radius;
-        const minCol = Math.max(0, eCol - radius);
-        const maxCol = Math.min(cols - 1, eCol + radius);
-        const minRow = Math.max(0, eRow - radius);
-        const maxRow = Math.min(rows - 1, eRow + radius);
+    // 2) Radiate threat from LOST contacts, masked by friendly coverage
+    if (lost.length > 0) {
+        const hasCoverage = friendlies.length > 0;
+        if (hasCoverage) computeCoverage(friendlies);
 
-        for (let r = minRow; r <= maxRow; r++) {
-            for (let c = minCol; c <= maxCol; c++) {
-                const dc = c - eCol;
-                const dr = r - eRow;
+        for (const src of lost) {
+            radiate(src, src.confidence, hasCoverage);
+        }
+
+        if (hasCoverage) coverage.fill(0);
+    }
+}
+
+/**
+ * Radiate threat from a single source position.
+ * @param {{x,y,z}} src — world position
+ * @param {number} conf — confidence multiplier (0-1)
+ * @param {boolean} masked — if true, skip cells covered by friendly visibility
+ */
+function radiate(src, conf, masked) {
+    if (conf <= 0) return;
+
+    const eCol = Math.max(0, Math.min(Math.floor((src.x - originX) / cellSize), cols - 1));
+    const eRow = Math.max(0, Math.min(Math.floor((src.z - originZ) / cellSize), rows - 1));
+    const terrainEyeY = heightGrid[eRow * cols + eCol] + EYE_HEIGHT;
+    const actualEyeY = (src.y !== undefined) ? src.y + EYE_HEIGHT : terrainEyeY;
+    const enemyEyeY = Math.max(terrainEyeY, actualEyeY);
+
+    const radius = 160;
+    const radius2 = radius * radius;
+    const minCol = Math.max(0, eCol - radius);
+    const maxCol = Math.min(cols - 1, eCol + radius);
+    const minRow = Math.max(0, eRow - radius);
+    const maxRow = Math.min(rows - 1, eRow + radius);
+
+    for (let r = minRow; r <= maxRow; r++) {
+        for (let c = minCol; c <= maxCol; c++) {
+            const dc = c - eCol;
+            const dr = r - eRow;
+            const dist2 = dc * dc + dr * dr;
+            if (dist2 > radius2) continue;
+
+            // Skip cells confirmed clear by friendly coverage
+            if (masked && coverage[r * cols + c]) continue;
+
+            if (!hasLOS(eCol, eRow, enemyEyeY, c, r)) continue;
+
+            const dy = enemyEyeY - (heightGrid[r * cols + c] + EYE_HEIGHT);
+            const dist3Dsq = dist2 * cellSize * cellSize + dy * dy;
+            threat[r * cols + c] += conf / (1 + dist3Dsq * 0.001);
+        }
+    }
+}
+
+/**
+ * Compute friendly AI visibility coverage grid.
+ * For each friendly AI, mark cells within their FOV + LOS as covered.
+ */
+function computeCoverage(friendlies) {
+    coverage.fill(0);
+
+    for (const f of friendlies) {
+        const fCol = Math.max(0, Math.min(Math.floor((f.x - originX) / cellSize), cols - 1));
+        const fRow = Math.max(0, Math.min(Math.floor((f.z - originZ) / cellSize), rows - 1));
+        const fTerrainEyeY = heightGrid[fRow * cols + fCol] + EYE_HEIGHT;
+        const fEyeY = Math.max(fTerrainEyeY, f.y + EYE_HEIGHT);
+
+        const minC = Math.max(0, fCol - COVER_RANGE);
+        const maxC = Math.min(cols - 1, fCol + COVER_RANGE);
+        const minR = Math.max(0, fRow - COVER_RANGE);
+        const maxR = Math.min(rows - 1, fRow + COVER_RANGE);
+
+        for (let r = minR; r <= maxR; r++) {
+            for (let c = minC; c <= maxC; c++) {
+                if (coverage[r * cols + c]) continue; // already covered by another AI
+
+                const dc = c - fCol;
+                const dr = r - fRow;
                 const dist2 = dc * dc + dr * dr;
-                if (dist2 > radius2) continue;
+                if (dist2 > COVER_RANGE2) continue;
 
-                if (!hasLOS(eCol, eRow, enemyEyeY, c, r)) continue;
+                // Cell at feet — always covered
+                if (dist2 < 1) { coverage[r * cols + c] = 1; continue; }
 
-                const dy = enemyEyeY - (heightGrid[r * cols + c] + EYE_HEIGHT);
-                const dist3Dsq = dist2 * cellSize * cellSize + dy * dy;
-                threat[r * cols + c] += 1 / (1 + dist3Dsq * 0.001);
+                // FOV check (120°, horizontal)
+                const invDist = 1 / Math.sqrt(dist2);
+                const dot = f.fx * (dc * invDist) + f.fz * (dr * invDist);
+                if (dot < FOV_DOT) continue;
+
+                // LOS check
+                if (hasLOS(fCol, fRow, fEyeY, c, r)) {
+                    coverage[r * cols + c] = 1;
+                }
             }
         }
     }

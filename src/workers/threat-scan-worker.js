@@ -139,6 +139,63 @@ function scanTeam(aiData, aiCount, enData, enCount) {
     return results;
 }
 
+/**
+ * Check if any friendly AI has LOS to LOST contact positions.
+ * Returns array of indices into lostData that are confirmed clear.
+ * lostData stride = 3: x, y, z.
+ */
+function scanLostContacts(aiData, aiCount, lostData, lostCount) {
+    const LOST_STRIDE = 3;
+    const cleared = [];
+
+    for (let li = 0; li < lostCount; li++) {
+        const lo = li * LOST_STRIDE;
+        const lx = lostData[lo], ly = lostData[lo + 1], lz = lostData[lo + 2];
+        const lGrid = _worldToGrid(lx, lz);
+        const lTerrainY = heightGrid ? heightGrid[lGrid.row * cols + lGrid.col] : ly;
+
+        let anySees = false;
+        for (let a = 0; a < aiCount; a++) {
+            const ao = a * AI_STRIDE;
+            const flags = aiData[ao + 7];
+            if ((flags & 1) === 0) continue; // not alive
+
+            const ax = aiData[ao], ay = aiData[ao + 1], az = aiData[ao + 2];
+            const facingX = aiData[ao + 3], facingZ = aiData[ao + 5];
+            const inHeli = (flags & 2) !== 0;
+
+            const dx = lx - ax, dz = lz - az;
+            const dist2d = Math.sqrt(dx * dx + dz * dz);
+            if (dist2d > 80) continue; // beyond reasonable scan range
+
+            // FOV check (120°, horizontal only) — skip for helicopter
+            if (!inHeli && dist2d > 0.001) {
+                const inv = 1 / dist2d;
+                const dot2d = facingX * (dx * inv) + facingZ * (dz * inv);
+                if (dot2d < -0.2) continue;
+            }
+
+            // LOS check
+            if (!inHeli && heightGrid) {
+                const aiGrid = _worldToGrid(ax, az);
+                const aiEyeY = heightGrid[aiGrid.row * cols + aiGrid.col] + EYE_HEIGHT;
+                const losLevel = _hasGridLOS(
+                    aiGrid.col, aiGrid.row, aiEyeY,
+                    lGrid.col, lGrid.row, lTerrainY
+                );
+                if (losLevel === 0) continue;
+            }
+
+            anySees = true;
+            break;
+        }
+
+        if (anySees) cleared.push(li);
+    }
+
+    return cleared;
+}
+
 self.onmessage = (e) => {
     const msg = e.data;
 
@@ -155,6 +212,11 @@ self.onmessage = (e) => {
     if (msg.type === 'scan') {
         const teamAResults = scanTeam(msg.aiAData, msg.aiACount, msg.enAData, msg.enACount);
         const teamBResults = scanTeam(msg.aiBData, msg.aiBCount, msg.enBData, msg.enBCount);
-        self.postMessage({ type: 'scanResult', teamAResults, teamBResults });
+
+        // Check LOST contact positions — see if any friendly AI has LOS to them
+        const clearedA = msg.lostAData ? scanLostContacts(msg.aiAData, msg.aiACount, msg.lostAData, msg.lostACount) : [];
+        const clearedB = msg.lostBData ? scanLostContacts(msg.aiBData, msg.aiBCount, msg.lostBData, msg.lostBCount) : [];
+
+        self.postMessage({ type: 'scanResult', teamAResults, teamBResults, clearedA, clearedB });
     }
 };
