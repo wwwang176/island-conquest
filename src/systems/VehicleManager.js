@@ -50,6 +50,7 @@ export class VehicleManager {
             heli.mesh.rotation.y = heli.rotationY;
             heli.getHeightAt = this.getHeightAt;
             heli.spawnFlag = flag;
+            heli.eventBus = this.eventBus;
             heli.initPhysicsBody(this.physics);
             this.vehicles.push(heli);
         }
@@ -105,7 +106,7 @@ export class VehicleManager {
             if (!v.canEnter(entity)) continue;
             const pos = entity.getPosition();
             const vp = v.mesh.position;
-            const dist = (pos.x - vp.x) ** 2 + (pos.z - vp.z) ** 2;
+            const dist = (pos.x - vp.x) ** 2 + (pos.y - vp.y) ** 2 + (pos.z - vp.z) ** 2;
             if (dist < closestDist) {
                 closestDist = dist;
                 closest = v;
@@ -160,7 +161,7 @@ export class VehicleManager {
             }
             const pos = entity.getPosition();
             const vp = v.mesh.position;
-            const dist = (pos.x - vp.x) ** 2 + (pos.z - vp.z) ** 2;
+            const dist = (pos.x - vp.x) ** 2 + (pos.y - vp.y) ** 2 + (pos.z - vp.z) ** 2;
             if (dist < closestDist) {
                 closestDist = dist;
                 closest = v;

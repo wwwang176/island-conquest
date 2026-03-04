@@ -506,7 +506,7 @@ export class Game {
                 if (this.impactVFX) {
                     this.impactVFX.spawn('rock', hit.point, null);
                 }
-                const result = vehicle.takeDamage(hit.damage);
+                const result = vehicle.takeDamage(hit.damage, 'You', this.player.team);
                 this.hud.showHitMarker('hit');
                 if (result.destroyed) {
                     this.eventBus.emit('vehicleDestroyed', {

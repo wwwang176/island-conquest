@@ -487,8 +487,25 @@ export class Helicopter extends Vehicle {
                 occ.controller._vehicleOrbitAngle = 0;
             }
             // Kill them (deal lethal damage — vehicle ref already cleared above)
+            const wasAlive = occ.alive;
             if (occ.takeDamage) {
                 occ.takeDamage(9999);
+            }
+            // Emit kill event for kill feed
+            if (wasAlive && !occ.alive && this.eventBus) {
+                const vTeam = occ.team || 'teamA';
+                const isPlayer = occ.isPlayer;
+                const victimName = isPlayer
+                    ? 'You'
+                    : `${vTeam === 'teamA' ? 'A' : 'B'}-${occ.id}`;
+                this.eventBus.emit('kill', {
+                    killerName: this._lastAttackerName || '?',
+                    killerTeam: this._lastAttackerTeam || 'teamA',
+                    victimName,
+                    victimTeam: vTeam,
+                    headshot: false,
+                    weapon: 'VEHICLE',
+                });
             }
         }
         this.driver = null;

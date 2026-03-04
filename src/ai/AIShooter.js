@@ -367,7 +367,7 @@ export function fireShot(ctx) {
                 const vehicle = hitObj.userData.vehicle;
                 if (vehicle.alive && vehicle.team !== null && vehicle.team !== ctx.team) {
                     const dmg = applyFalloff(ctx.weaponDef.damage, hitEnv.distance, ctx.weaponDef.falloffStart, ctx.weaponDef.falloffEnd, ctx.weaponDef.falloffMinScale);
-                    vehicle.takeDamage(dmg);
+                    vehicle.takeDamage(dmg, myName, ctx.team);
                     if (ctx.impactVFX) {
                         ctx.impactVFX.spawn('spark', hitEnv.point, _v1.copy(dir).negate());
                     }

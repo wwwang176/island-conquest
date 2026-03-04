@@ -76,8 +76,12 @@ export class Vehicle {
      * @param {number} amount
      * @returns {{ destroyed: boolean, damage: number }}
      */
-    takeDamage(amount) {
+    takeDamage(amount, attackerName, attackerTeam) {
         if (!this.alive) return { destroyed: false, damage: 0 };
+        if (attackerName) {
+            this._lastAttackerName = attackerName;
+            this._lastAttackerTeam = attackerTeam;
+        }
         this.hp = Math.max(0, this.hp - amount);
         if (this.hp <= 0) {
             this.destroy();
