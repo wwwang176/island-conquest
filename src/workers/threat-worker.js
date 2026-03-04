@@ -1,6 +1,15 @@
 /**
  * Web Worker for ThreatMap computation.
  * Receives heightGrid + enemy positions, computes threat grid off main thread.
+ *
+ * Threat sources are split into:
+ *   - visible: VISIBLE contacts (always applied, full confidence)
+ *   - lost:    LOST/SUSPECTED contacts (confidence decays over time)
+ *
+ * LOST threat is NOT masked by friendly coverage — threat represents
+ * "can be shot from enemy position", not "enemy is here". Friendly
+ * scan clearing (confirmClear in scan-worker) handles source-level
+ * decay acceleration instead.
  */
 
 const EYE_HEIGHT = 1.5;
@@ -24,44 +33,59 @@ self.onmessage = (e) => {
     }
 
     if (msg.type === 'update') {
-        const enemies = msg.enemies; // [{x, z}, ...]
-        computeThreat(enemies);
+        computeThreat(msg.visible || [], msg.lost || []);
         // Post threat back (copy, don't transfer — we reuse the buffer)
         self.postMessage({ type: 'result', threat: threat.slice() });
     }
 };
 
-function computeThreat(enemies) {
+function computeThreat(visible, lost) {
     threat.fill(0);
 
-    for (const enemy of enemies) {
-        const eCol = Math.max(0, Math.min(Math.floor((enemy.x - originX) / cellSize), cols - 1));
-        const eRow = Math.max(0, Math.min(Math.floor((enemy.z - originZ) / cellSize), rows - 1));
-        // Use actual Y position if above terrain (e.g. helicopter passengers)
-        const terrainEyeY = heightGrid[eRow * cols + eCol] + EYE_HEIGHT;
-        const actualEyeY = (enemy.y !== undefined) ? enemy.y + EYE_HEIGHT : terrainEyeY;
-        const enemyEyeY = Math.max(terrainEyeY, actualEyeY);
+    // 1) Radiate threat from VISIBLE contacts (always applied)
+    for (const src of visible) {
+        radiate(src, 1.0);
+    }
 
-        const radius = 160;
-        const radius2 = radius * radius;
-        const minCol = Math.max(0, eCol - radius);
-        const maxCol = Math.min(cols - 1, eCol + radius);
-        const minRow = Math.max(0, eRow - radius);
-        const maxRow = Math.min(rows - 1, eRow + radius);
+    // 2) Radiate threat from LOST contacts (confidence-weighted, time-decayed)
+    for (const src of lost) {
+        radiate(src, src.confidence);
+    }
+}
 
-        for (let r = minRow; r <= maxRow; r++) {
-            for (let c = minCol; c <= maxCol; c++) {
-                const dc = c - eCol;
-                const dr = r - eRow;
-                const dist2 = dc * dc + dr * dr;
-                if (dist2 > radius2) continue;
+/**
+ * Radiate threat from a single source position.
+ * @param {{x,y,z}} src — world position
+ * @param {number} conf — confidence multiplier (0-1)
+ */
+function radiate(src, conf) {
+    if (conf <= 0) return;
 
-                if (!hasLOS(eCol, eRow, enemyEyeY, c, r)) continue;
+    const eCol = Math.max(0, Math.min(Math.floor((src.x - originX) / cellSize), cols - 1));
+    const eRow = Math.max(0, Math.min(Math.floor((src.z - originZ) / cellSize), rows - 1));
+    const terrainEyeY = heightGrid[eRow * cols + eCol] + EYE_HEIGHT;
+    const actualEyeY = (src.y !== undefined) ? src.y + EYE_HEIGHT : terrainEyeY;
+    const enemyEyeY = Math.max(terrainEyeY, actualEyeY);
 
-                const dy = enemyEyeY - (heightGrid[r * cols + c] + EYE_HEIGHT);
-                const dist3Dsq = dist2 * cellSize * cellSize + dy * dy;
-                threat[r * cols + c] += 1 / (1 + dist3Dsq * 0.001);
-            }
+    const radius = 160;
+    const radius2 = radius * radius;
+    const minCol = Math.max(0, eCol - radius);
+    const maxCol = Math.min(cols - 1, eCol + radius);
+    const minRow = Math.max(0, eRow - radius);
+    const maxRow = Math.min(rows - 1, eRow + radius);
+
+    for (let r = minRow; r <= maxRow; r++) {
+        for (let c = minCol; c <= maxCol; c++) {
+            const dc = c - eCol;
+            const dr = r - eRow;
+            const dist2 = dc * dc + dr * dr;
+            if (dist2 > radius2) continue;
+
+            if (!hasLOS(eCol, eRow, enemyEyeY, c, r)) continue;
+
+            const dy = enemyEyeY - (heightGrid[r * cols + c] + EYE_HEIGHT);
+            const dist3Dsq = dist2 * cellSize * cellSize + dy * dy;
+            threat[r * cols + c] += conf / (1 + dist3Dsq * 0.001);
         }
     }
 }

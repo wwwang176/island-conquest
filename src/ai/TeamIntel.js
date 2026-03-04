@@ -156,6 +156,20 @@ export class TeamIntel {
     }
 
     /**
+     * Accelerate decay of a LOST/SUSPECTED contact when a friendly AI
+     * has confirmed the last-seen position is clear (no enemy there).
+     * Pushes lastSeenTime forward so confidence drops faster.
+     */
+    confirmClear(enemy) {
+        const contact = this.contacts.get(enemy);
+        if (!contact) return;
+        if (contact.status === ContactStatus.VISIBLE) return; // still being observed
+        // Jump time forward to start confidence decay immediately
+        contact.lastSeenTime = Math.max(contact.lastSeenTime, DECAY_START);
+        contact.status = ContactStatus.SUSPECTED;
+    }
+
+    /**
      * Update decay: advance timers, transition statuses, prune old contacts.
      */
     update(dt) {
