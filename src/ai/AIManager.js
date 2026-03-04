@@ -229,10 +229,10 @@ export class AIManager {
     }
 
     /**
-     * Build split threat data from TeamIntel contacts + friendly AI positions.
-     * Returns { visible, lost, friendlies } for ThreatMap.
+     * Build split threat data from TeamIntel contacts.
+     * Returns { visible, lost } for ThreatMap.
      */
-    _buildThreatData(teamIntel, controllers) {
+    _buildThreatData(teamIntel) {
         const THREAT_DECAY_TIME = 15;
         const visible = [];
         const lost = [];
@@ -248,17 +248,7 @@ export class AIManager {
             }
         }
 
-        const friendlies = [];
-        for (const ctrl of controllers) {
-            if (!ctrl.soldier.alive) continue;
-            const pos = ctrl.soldier.getPosition();
-            friendlies.push({
-                x: pos.x, y: pos.y, z: pos.z,
-                fx: ctrl.facingDir.x, fz: ctrl.facingDir.z,
-            });
-        }
-
-        return { visible, lost, friendlies };
+        return { visible, lost };
     }
 
     /**
@@ -539,11 +529,13 @@ export class AIManager {
         }
 
         // Update threat maps using TeamIntel contacts (not god-view enemy lists).
-        // VISIBLE threat is always applied; LOST threat is masked by friendly AI coverage.
-        const srcA = this._buildThreatData(this.intelA, this.teamA.controllers);
-        this.threatMapA.update(dt, srcA.visible, srcA.lost, srcA.friendlies);
-        const srcB = this._buildThreatData(this.intelB, this.teamB.controllers);
-        this.threatMapB.update(dt, srcB.visible, srcB.lost, srcB.friendlies);
+        // VISIBLE = full threat; LOST = confidence-weighted, time-decayed.
+        // No cell-level coverage mask — threat means "can be shot from enemy pos",
+        // not "enemy is here". Source-level clearing (confirmClear) handles decay.
+        const srcA = this._buildThreatData(this.intelA);
+        this.threatMapA.update(dt, srcA.visible, srcA.lost);
+        const srcB = this._buildThreatData(this.intelB);
+        this.threatMapB.update(dt, srcB.visible, srcB.lost);
 
         // Staggered AI controller updates: update 8 AIs per frame (BT + movement)
         const updatesPerFrame = 8;

@@ -115,11 +115,10 @@ export class ThreatMap {
 
     /**
      * @param {number} dt
-     * @param {Array<{x,y,z}>} visible — VISIBLE contacts (full threat, never masked)
-     * @param {Array<{x,y,z,confidence}>} lost — LOST/SUSPECTED contacts (masked by friendly coverage)
-     * @param {Array<{x,y,z,fx,fz}>} friendlies — friendly AI positions + facing for coverage
+     * @param {Array<{x,y,z}>} visible — VISIBLE contacts (full threat)
+     * @param {Array<{x,y,z,confidence}>} lost — LOST/SUSPECTED contacts (confidence-weighted)
      */
-    update(dt, visible, lost, friendlies) {
+    update(dt, visible, lost) {
         this._timer += dt;
         if (this._timer < this._interval) return;
         if (this._workerBusy) return; // skip if worker still computing
@@ -127,7 +126,7 @@ export class ThreatMap {
         this._timer = 0;
 
         this._workerBusy = true;
-        this._worker.postMessage({ type: 'update', visible, lost, friendlies });
+        this._worker.postMessage({ type: 'update', visible, lost });
     }
 
     /**
