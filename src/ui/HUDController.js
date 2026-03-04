@@ -483,7 +483,9 @@ export class HUDController {
         const border = selected ? '#4488ff' : '#888';
         const bg = selected ? 'rgba(68,136,255,0.15)' : 'transparent';
         return `<div id="${idPrefix}-${shortId}" style="border:2px solid ${border};border-radius:8px;padding:10px 14px;
-            background:${bg};cursor:default;min-width:140px;">
+            background:${bg};cursor:pointer;min-width:140px;transition:background 0.15s,border-color 0.15s;"
+            onmouseenter="if(this.style.borderColor!=='rgb(68, 136, 255)')this.style.background='rgba(255,255,255,0.07)'"
+            onmouseleave="if(this.style.borderColor!=='rgb(68, 136, 255)')this.style.background='transparent'">
             <div style="font-size:16px;font-weight:bold;">[${num}] ${def.name}</div>
             <div style="font-size:11px;color:#aaa;margin-top:3px;">${def.fireRate} RPM &middot; ${def.magazineSize} rds</div>
             ${this._weaponStatBars(weaponId)}
@@ -495,7 +497,7 @@ export class HUDController {
         el.id = 'join-screen';
         el.style.cssText = `position:fixed;top:0;left:0;width:100%;height:100%;
             background:rgba(0,0,0,0.5);display:none;align-items:center;justify-content:center;
-            flex-direction:column;pointer-events:none;z-index:101;`;
+            flex-direction:column;z-index:101;`;
         el.innerHTML = `
             <div style="color:white;font-family:Arial,sans-serif;text-align:center;">
                 <div id="join-team-label" style="font-size:28px;font-weight:bold;margin-bottom:16px;"></div>
@@ -506,8 +508,12 @@ export class HUDController {
                     ${this._weaponCardHTML('join-wp', 3, 'LMG', 'lmg', false)}
                     ${this._weaponCardHTML('join-wp', 4, 'BOLT', 'bolt', false)}
                 </div>
-                <div style="font-size:16px;color:#aaa;margin-top:14px;">
-                    Press <b>SPACE</b> to deploy &nbsp; | &nbsp; <b>ESC</b> to cancel
+                <div style="display:flex;gap:12px;margin-top:16px;justify-content:center;">
+                    <button id="join-cancel-btn" style="padding:8px 24px;font-size:14px;border:1px solid #666;
+                        border-radius:4px;background:transparent;color:#aaa;cursor:pointer">Cancel (Esc)</button>
+                    <button id="join-deploy-btn" style="padding:8px 32px;font-size:16px;font-weight:bold;
+                        border:2px solid #4488ff;border-radius:4px;background:rgba(68,136,255,0.3);
+                        color:#fff;cursor:pointer">DEPLOY (Space)</button>
                 </div>
             </div>`;
         document.body.appendChild(el);
@@ -519,6 +525,21 @@ export class HUDController {
             BOLT: document.getElementById('join-wp-bolt'),
         };
         this._lastJoinWeapon = null;
+
+        // Mouse click on weapon cards
+        const joinWpMap = { 'join-wp-ar': 'AR15', 'join-wp-smg': 'SMG', 'join-wp-lmg': 'LMG', 'join-wp-bolt': 'BOLT' };
+        for (const [elId, wpId] of Object.entries(joinWpMap)) {
+            document.getElementById(elId).addEventListener('click', () => {
+                this.game._pendingWeapon = wpId;
+                this._lastJoinWeapon = null; // force highlight update
+            });
+        }
+        document.getElementById('join-deploy-btn').addEventListener('click', () => {
+            this.game._joinTeam(this.game._pendingTeam, this.game._pendingWeapon);
+        });
+        document.getElementById('join-cancel-btn').addEventListener('click', () => {
+            this.game._cancelJoin();
+        });
     }
 
     _createDeathScreen() {
@@ -526,7 +547,7 @@ export class HUDController {
         el.id = 'death-screen';
         el.style.cssText = `position:fixed;top:0;left:0;width:100%;height:100%;
             background:rgba(139,0,0,0.3);display:none;align-items:center;justify-content:center;
-            flex-direction:column;pointer-events:none;z-index:101;`;
+            flex-direction:column;z-index:101;`;
         el.innerHTML = `
             <div style="color:white;font-family:Arial,sans-serif;text-align:center;">
                 <div style="font-size:36px;font-weight:bold;margin-bottom:10px;">YOU DIED</div>
@@ -540,8 +561,14 @@ export class HUDController {
                         ${this._weaponCardHTML('weapon', 4, 'BOLT', 'bolt', false)}
                     </div>
                 </div>
-                <div id="respawn-prompt" style="font-size:16px;color:#aaa;margin-top:10px;display:none;">
-                    Press <b>SPACE</b> to respawn &nbsp; | &nbsp; <b>ESC</b> to spectate
+                <div id="respawn-prompt" style="display:none;flex-direction:column;align-items:center;margin-top:14px;gap:10px;">
+                    <div style="display:flex;gap:12px;">
+                        <button id="sp-spectate-btn" style="padding:8px 24px;font-size:14px;border:1px solid #666;
+                            border-radius:4px;background:transparent;color:#aaa;cursor:pointer">Spectate (Esc)</button>
+                        <button id="sp-respawn-btn" style="padding:8px 32px;font-size:16px;font-weight:bold;
+                            border:2px solid #4488ff;border-radius:4px;background:rgba(68,136,255,0.3);
+                            color:#fff;cursor:pointer">RESPAWN (Space)</button>
+                    </div>
                 </div>
             </div>`;
         document.body.appendChild(el);
@@ -556,6 +583,33 @@ export class HUDController {
             BOLT: document.getElementById('weapon-bolt'),
         };
         this._lastDeathWeapon = null;
+
+        // Mouse click on weapon cards
+        const deathWpMap = { 'weapon-ar': 'AR15', 'weapon-smg': 'SMG', 'weapon-lmg': 'LMG', 'weapon-bolt': 'BOLT' };
+        for (const [elId, wpId] of Object.entries(deathWpMap)) {
+            document.getElementById(elId).addEventListener('click', () => {
+                if (this.game.player) {
+                    this.game.player.selectedWeaponId = wpId;
+                    this._lastDeathWeapon = null; // force highlight update
+                }
+            });
+        }
+        document.getElementById('sp-respawn-btn').addEventListener('click', () => {
+            const game = this.game;
+            const p = game.player;
+            if (p && !p.alive && p.canRespawn()) {
+                const spawnPos = game.aiManager.findSafeSpawn(p.team);
+                if (spawnPos) {
+                    p.respawn(spawnPos);
+                    game.gameMode = 'playing';
+                    this.applyUIState('playing');
+                    game.input.requestPointerLock();
+                }
+            }
+        });
+        document.getElementById('sp-spectate-btn').addEventListener('click', () => {
+            this.game._leaveTeam();
+        });
     }
 
     _createGameOverScreen() {
@@ -1011,7 +1065,7 @@ export class HUDController {
             }
             if (p.canRespawn()) {
                 this._deathTimer.textContent = '';
-                this._deathPrompt.style.display = 'block';
+                this._deathPrompt.style.display = 'flex';
                 this._deathWeaponSelect.style.display = 'block';
 
                 // Weapon selection via keys
