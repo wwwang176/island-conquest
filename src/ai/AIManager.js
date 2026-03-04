@@ -308,11 +308,11 @@ export class AIManager {
                 const cz = spawnFlag.position.z + Math.sin(angle) * dist;
                 const safe = this._findSafeCell(cx, cz, threatMap, 30);
                 if (safe) {
-                    soldier.body.position.set(safe.x, safe.y + 1, safe.z);
+                    soldier.body.position.set(safe.x, safe.y + 0.05, safe.z);
                 } else {
                     // Fallback: flag position directly
                     const h = this.getHeightAt(spawnFlag.position.x, spawnFlag.position.z);
-                    soldier.body.position.set(spawnFlag.position.x, h + 1, spawnFlag.position.z);
+                    soldier.body.position.set(spawnFlag.position.x, h + 0.05, spawnFlag.position.z);
                 }
             }
         };

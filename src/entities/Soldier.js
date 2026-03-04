@@ -616,9 +616,9 @@ export class Soldier {
         this.body.updateMassProperties();
         this.body.quaternion.set(0, 0, 0, 1);
         this.body.angularVelocity.set(0, 0, 0);
-        this.body.position.set(position.x, position.y + 1, position.z); // back to feet level
+        this.body.position.set(position.x, position.y + 0.05, position.z); // back to feet level
         this.body.velocity.set(0, 0, 0);
-        this.mesh.position.set(position.x, position.y + 1, position.z); // sync mesh immediately to avoid 1-frame flash at old position
+        this.mesh.position.set(position.x, position.y + 0.05, position.z); // sync mesh immediately to avoid 1-frame flash at old position
         this.ragdollActive = false;
         this._waterSplashed = false;
 
