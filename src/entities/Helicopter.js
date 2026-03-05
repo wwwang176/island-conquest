@@ -639,6 +639,8 @@ export class Helicopter extends Vehicle {
         // ── Sync body back; constrain to Y-only rotation ──
         if (this.body) {
             this.body.position.set(this.mesh.position.x, this.mesh.position.y, this.mesh.position.z);
+            // Yaw damping — always apply (air resistance)
+            this._yawRate *= Math.exp(-3 * dt);
             // Lock X/Z angular velocity — helicopter stays upright
             this.body.angularVelocity.x = 0;
             this.body.angularVelocity.z = 0;
@@ -724,13 +726,14 @@ export class Helicopter extends Vehicle {
             this.body.force.z -= this.body.velocity.z * excess * mass * 10;
         }
 
-        // Steering — smooth yaw rate (direct control, not torque)
-        let targetYaw = 0;
-        if (input.steerLeft) targetYaw = this.turnSpeed;
-        if (input.steerRight) targetYaw = -this.turnSpeed;
-        const yawLerp = 1 - Math.exp(-5 * dt);
-        this._yawRate += (targetYaw - this._yawRate) * yawLerp;
-        // rotationY integrated by CANNON via body.angularVelocity.y (set in update)
+        // Steering — yaw with inertia (damping handled in update())
+        if (input.steerLeft || input.steerRight) {
+            let targetYaw = 0;
+            if (input.steerLeft) targetYaw = this.turnSpeed;
+            if (input.steerRight) targetYaw = -this.turnSpeed;
+            const yawAccel = 1 - Math.exp(-5 * dt);
+            this._yawRate += (targetYaw - this._yawRate) * yawAccel;
+        }
         this.rotationY += this._yawRate * dt;
 
         // Vertical thrust (ascendScale/descendScale: 0–1, default 1)
