@@ -196,6 +196,8 @@ export class AIController {
         this._vehicleOrbitAngle = 0;     // helicopter orbit angle
         this._heliWaitingForPassengers = false;
         this._heliWaitTimer = 0;      // countdown after first passenger boards
+        this._heliReturning = false;  // returning to friendly flag after passengers lost
+        this._heliHadPassengers = false; // true once at least one passenger has boarded
         this._vehicleFireBlocked = false;
         this.vehicleManager = null;   // set by AIManager
 

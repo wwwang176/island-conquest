@@ -36,7 +36,7 @@ export class Helicopter extends Vehicle {
     constructor(scene, team, spawnPosition) {
         super(scene, team, 'helicopter', spawnPosition);
 
-        this.maxHP = 6000;
+        this.maxHP = 60000;
         this.hp = this.maxHP;
 
         // Helicopters are large, loud, and unobstructed in the sky
@@ -733,11 +733,11 @@ export class Helicopter extends Vehicle {
         // rotationY integrated by CANNON via body.angularVelocity.y (set in update)
         this.rotationY += this._yawRate * dt;
 
-        // Vertical thrust
+        // Vertical thrust (ascendScale/descendScale: 0–1, default 1)
         if (input.ascend) {
-            this.body.force.y += mass * this.vAccel;
+            this.body.force.y += mass * this.vAccel * (input.ascendScale ?? 1);
         } else if (input.descend) {
-            this.body.force.y -= mass * this.vAccel;
+            this.body.force.y -= mass * this.vAccel * (input.descendScale ?? 1);
         }
         // Anti-gravity is in preStep callback (per sub-step), not here
     }
