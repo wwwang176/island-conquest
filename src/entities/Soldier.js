@@ -451,11 +451,6 @@ export class Soldier {
     takeDamage(amount, fromPosition, hitY = null, attacker = null) {
         if (!this.alive) return { killed: false, damage: 0, headshot: false };
 
-        // Helicopter pilot is invincible while driving
-        if (this.vehicle && this.vehicle.type === 'helicopter' && this.vehicle.driver === this) {
-            return { killed: false, damage: 0, headshot: false };
-        }
-
         const baseY = this.body.position.y;
         const { actualDamage, headshot } = computeHitDamage(amount, hitY, baseY);
         this.hp = Math.max(0, this.hp - actualDamage);

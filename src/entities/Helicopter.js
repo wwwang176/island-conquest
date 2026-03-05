@@ -36,7 +36,7 @@ export class Helicopter extends Vehicle {
     constructor(scene, team, spawnPosition) {
         super(scene, team, 'helicopter', spawnPosition);
 
-        this.maxHP = 60000;
+        this.maxHP = 12000;
         this.hp = this.maxHP;
 
         // Helicopters are large, loud, and unobstructed in the sky
