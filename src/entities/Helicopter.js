@@ -14,7 +14,7 @@ const _threeQuat = new THREE.Quaternion();
 /**
  * World-space offsets from helicopter mesh center (rotY=0, facing +Z).
  * Hull is rotated PI internally, so hull-local (x,y,z) → world (-x,y,-z).
- * Cabin sides at world x≈±0.9, cabin floor at y≈-0.55, cabin z from -1.3 to +1.3.
+ * Cabin sides at world x≈±0.9, cabin floor at y≈-0.70, cabin z from -1.3 to +1.3.
  */
 const PILOT_OFFSET = { x: 0, y: -1.15, z: 1.4 }; // cockpit (nose area, sunk into seat)
 
@@ -104,7 +104,7 @@ export class Helicopter extends Vehicle {
 
         // Position
         this.mesh.position.copy(spawnPosition);
-        this.mesh.position.y = spawnPosition.y + 1.1;
+        this.mesh.position.y = spawnPosition.y + 1.25;
     }
 
     /**
@@ -126,18 +126,13 @@ export class Helicopter extends Vehicle {
 
         // Main fuselage box (cabin + nose area)
         this.body.addShape(
-            new CANNON.Box(new CANNON.Vec3(0.9, 0.7, 2.5)),
-            new CANNON.Vec3(0, -0.15, 0)
-        );
-        // Nose cone
-        this.body.addShape(
-            new CANNON.Box(new CANNON.Vec3(0.5, 0.5, 0.5)),
-            new CANNON.Vec3(0, -0.2, 2.8)
+            new CANNON.Box(new CANNON.Vec3(0.9, 0.675, 2.05)),
+            new CANNON.Vec3(0, -0.025, 0.75)
         );
         // Tail boom
         this.body.addShape(
             new CANNON.Box(new CANNON.Vec3(0.2, 0.2, 1.8)),
-            new CANNON.Vec3(0, 0.1, -3.2) // behind center (world -Z = hull +Z tail)
+            new CANNON.Vec3(0, 0.1, -3.2)
         );
 
         this._syncBody();
@@ -226,9 +221,12 @@ export class Helicopter extends Vehicle {
         const dkGeos = [];  // dark grey
 
         // Cabin: floor, roof, back wall
-        odGeos.push(place(new THREE.BoxGeometry(1.8, 0.12, 2.6), 0, -0.55, 0));
+        odGeos.push(place(new THREE.BoxGeometry(1.8, 0.12, 2.6), 0, -0.70, 0));
         odGeos.push(place(new THREE.BoxGeometry(1.8, 0.12, 2.6), 0, 0.65, 0));
-        odGeos.push(place(new THREE.BoxGeometry(1.8, 1.2, 0.12), 0, 0.05, 1.3));
+        odGeos.push(place(new THREE.BoxGeometry(1.8, 1.35, 0.12), 0, -0.025, 1.3));
+
+        // Cockpit bulkhead (half-height, protects pilot lower body from side/rear fire)
+        odGeos.push(place(new THREE.BoxGeometry(1.8, 0.675, 0.12), 0, -0.3625, -1.3));
 
         // Door-frame pillars
         odGeos.push(place(new THREE.BoxGeometry(0.08, 1.2, 0.08), -0.9, 0.05, -1.25));
@@ -268,13 +266,13 @@ export class Helicopter extends Vehicle {
         const frontW = 1.7 * (1 - TAPER);
         odGeos.push(place(new THREE.BoxGeometry(frontW, 0.10, 0.10), 0, 0.0, -2.80));
         // Vertical keel: front bar at nose tip
-        odGeos.push(place(new THREE.BoxGeometry(0.10, 0.29, 0.10), 0, -0.145, -2.80));
+        odGeos.push(place(new THREE.BoxGeometry(0.10, 0.40, 0.10), 0, -0.21, -2.80));
         // Vertical keel: bottom bar (5cm below glass bottom surface)
-        // Glass bottom: y=-0.49 at back → y=-0.294 at front
+        // Glass bottom: y=-0.70 at back → y=-0.42 at front
         const kbGeo = new THREE.BoxGeometry(0.15, 0.06, noseLen);
         kbGeo.applyMatrix4(new THREE.Matrix4().makeRotationX(
-            Math.atan2(0.196, noseLen)));
-        odGeos.push(place(kbGeo, 0, -0.442, noseCZ));
+            Math.atan2(0.28, noseLen)));
+        odGeos.push(place(kbGeo, 0, -0.61, noseCZ));
 
         // Tail boom
         odGeos.push(place(new THREE.BoxGeometry(0.35, 0.35, 3.5), 0, 0.1, 3.2));
@@ -287,9 +285,9 @@ export class Helicopter extends Vehicle {
 
         // Landing skids + struts
         for (const side of [-1, 1]) {
-            dkGeos.push(place(new THREE.BoxGeometry(0.08, 0.08, 3.0), side * 0.95, -1.0, -0.2));
+            dkGeos.push(place(new THREE.BoxGeometry(0.08, 0.08, 3.0), side * 0.95, -1.15, -0.2));
             for (const zOff of [-0.8, 0.6]) {
-                dkGeos.push(place(new THREE.BoxGeometry(0.06, 0.45, 0.06), side * 0.95, -0.75, zOff));
+                dkGeos.push(place(new THREE.BoxGeometry(0.06, 0.45, 0.06), side * 0.95, -0.925, zOff));
             }
         }
 
@@ -311,7 +309,7 @@ export class Helicopter extends Vehicle {
 
         // ── Nose glass: truncated pyramid, 5 faces (no back face at cabin) ──
         const halfLen = noseLen / 2;
-        const bx = 0.9, bTop = 0.59, bBot = -0.49;       // back (cabin junction)
+        const bx = 0.9, bTop = 0.59, bBot = -0.70;       // back (cabin junction, lowered to cover pilot legs)
         const fx = bx * (1 - TAPER);                       // front X  (0.54)
         const fTop = bTop * (1 - TAPER);                    // front top (0.354)
         const fBot = bBot * (1 - TAPER);                    // front bot (-0.294)
@@ -614,7 +612,7 @@ export class Helicopter extends Vehicle {
         let floorY = this.minAltitude;
         if (this.getHeightAt) {
             this._groundY = this.getHeightAt(this.mesh.position.x, this.mesh.position.z);
-            floorY = Math.max(floorY, this._groundY + 1.1);
+            floorY = Math.max(floorY, this._groundY + 1.25);
         }
         if (this.mesh.position.y <= floorY) {
             this.mesh.position.y = floorY;
@@ -781,7 +779,7 @@ export class Helicopter extends Vehicle {
         if (this.mesh) {
             this.mesh.visible = true;
             this.mesh.position.copy(this.spawnPosition);
-            this.mesh.position.y = this.spawnPosition.y + 1.1;
+            this.mesh.position.y = this.spawnPosition.y + 1.25;
             this.mesh.rotation.set(0, this.rotationY, 0);
             this._attitudeGroup.rotation.set(0, 0, 0);
         }
