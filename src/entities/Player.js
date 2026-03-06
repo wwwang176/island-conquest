@@ -360,9 +360,9 @@ export class Player extends Soldier {
         this.alive = false;
         this.hp = 0;
         this.deathTimer = this.respawnDelay;
-        // Exit vehicle on death
+        // Exit vehicle on death — pass died=true so driver death can promote a passenger
         if (this.vehicle) {
-            this.vehicle.exit(this);
+            this.vehicle.exit(this, true);
             this.vehicle = null;
         }
         // Unscope on death
@@ -421,7 +421,7 @@ export class Player extends Soldier {
             let sideBlocked = false;
             // Helicopter passengers: restricted to their side
             if (this.vehicle && !isPilot && this.vehicle.type === 'helicopter') {
-                const slotIdx = this.vehicle.passengers.indexOf(this);
+                const slotIdx = this.seatIndex >= 0 ? this.seatIndex : -1;
                 const isLeftSeat = slotIdx >= 0 && slotIdx % 2 === 0;
                 const aimDir = this.getAimDirection();
                 const rY = this.vehicle.rotationY;
@@ -484,7 +484,7 @@ export class Player extends Soldier {
                 camZ = _seatPos.z;
             } else {
                 // Passenger: full world-space transform (eye offset baked in)
-                const slotIdx = v.passengers ? v.passengers.indexOf(this) : -1;
+                const slotIdx = this.seatIndex >= 0 ? this.seatIndex : -1;
                 if (slotIdx >= 0 && slotIdx < HELI_PASSENGER_SLOTS.length) {
                     const slot = HELI_PASSENGER_SLOTS[slotIdx];
                     _eyeOffset.x = slot.x;
@@ -508,8 +508,9 @@ export class Player extends Soldier {
         _euler.set(this.pitch, this.yaw, 0);
         this.camera.quaternion.setFromEuler(_euler);
 
-        // Sync physics body to vehicle position
+        // Sync physics body and mesh to vehicle position (mesh needed for AI raycast targeting)
         this.body.position.set(camX, vp.y, camZ);
+        this.mesh.position.set(camX, camY - 1.6, camZ);
     }
 
     /**
