@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { BTState } from './BehaviorTree.js';
 
-const _heliInput = { thrust: 0, brake: 0, steerLeft: false, steerRight: false, ascend: false, descend: false };
+const _heliInput = { thrust: 0, brake: 0, steerLeft: false, steerRight: false, ascend: false, descend: false, ascendScale: 1, descendScale: 1 };
 
 /** Find a helicopter that a squad mate is already in (with room left). */
 export function findSquadHelicopter(ctx) {
@@ -121,14 +121,28 @@ export function actionDriveVehicle(ctx) {
         return BTState.FAILURE;
     }
 
-    // Helicopter: air fire support, never disembark
+    // Helicopter: air fire support, return to safe flag when no passengers
     if (v.type === 'helicopter') {
-        if (v.driver === ctx.soldier && ctx.targetFlag) {
-            ctx._vehicleMoveTarget = ctx.targetFlag.position.clone();
-        }
-        ctx.missionPressure = 0.3;
-        // Pilot wait logic
         if (v.driver === ctx.soldier) {
+            const pax = v.passengers.length;
+
+            // Cancel return if passengers boarded mid-flight
+            if (pax > 0 && ctx._heliReturning) {
+                ctx._heliReturning = false;
+            }
+
+            // Airborne with no passengers and not already waiting/returning → return
+            if (pax === 0 && !ctx._heliWaitingForPassengers && !ctx._heliReturning) {
+                ctx._heliReturning = true;
+                ctx._heliReturnRevalTimer = 0; // evaluate immediately
+            }
+
+            // Normal orbit target (only when flying with passengers)
+            if (!ctx._heliReturning && !ctx._heliWaitingForPassengers && ctx.targetFlag) {
+                ctx._vehicleMoveTarget = ctx.targetFlag.position.clone();
+            }
+
+            // Pilot wait logic: first passenger starts 10s timer, full = take off fast
             if (v.passengers.length >= v.maxPassengers) {
                 ctx._heliWaitingForPassengers = true;
                 ctx._heliWaitTimer = Math.min(ctx._heliWaitTimer, 0.5);
@@ -138,6 +152,7 @@ export function actionDriveVehicle(ctx) {
                 ctx._heliWaitingForPassengers = false;
             }
         }
+        ctx.missionPressure = 0.3;
         return BTState.RUNNING;
     }
 
@@ -156,6 +171,35 @@ export function updateVehicleDriving(ctx, dt) {
     }
 }
 
+/** Find the safest friendly flag (lowest threat, break ties by distance). */
+function findNearestFriendlyFlag(ctx) {
+    if (!ctx.flags) return null;
+    const vPos = ctx.vehicle.mesh.position;
+    let best = null, bestScore = Infinity;
+    for (const flag of ctx.flags) {
+        if (flag.owner !== ctx.team) continue;
+        const threat = ctx.threatMap
+            ? ctx.threatMap.getThreat(flag.position.x, flag.position.z)
+            : 0;
+        const dist = vPos.distanceTo(flag.position);
+        // Prioritize low threat; use distance as tiebreaker
+        const score = threat * 1000 + dist;
+        if (score < bestScore) { bestScore = score; best = flag; }
+    }
+    // Fallback: any flag if none owned, still prefer low threat
+    if (!best) {
+        for (const flag of ctx.flags) {
+            const threat = ctx.threatMap
+                ? ctx.threatMap.getThreat(flag.position.x, flag.position.z)
+                : 0;
+            const dist = vPos.distanceTo(flag.position);
+            const score = threat * 1000 + dist;
+            if (score < bestScore) { bestScore = score; best = flag; }
+        }
+    }
+    return best;
+}
+
 /** Helicopter orbit AI — fly in circles around target, maintaining altitude. */
 export function updateHelicopterOrbit(ctx, dt) {
     const v = ctx.vehicle;
@@ -163,16 +207,52 @@ export function updateHelicopterOrbit(ctx, dt) {
     const target = ctx._vehicleMoveTarget || (ctx.targetFlag ? ctx.targetFlag.position : null);
     if (!target) return;
 
+    // Reset scales each frame
+    _heliInput.ascendScale = 1;
+    _heliInput.descendScale = 1;
+
     // Wait on ground until passengers board + grace period expires
     if (ctx._heliWaitingForPassengers) {
-        if (v.passengers.length >= v.maxPassengers) {
-            ctx._heliWaitTimer = Math.min(ctx._heliWaitTimer, 0.5);
+        // Threat check every 3s — relocate immediately if current spot is dangerous
+        ctx._heliReturnRevalTimer -= dt;
+        if (ctx._heliReturnRevalTimer <= 0) {
+            ctx._heliReturnRevalTimer = 3;
+            const safeFlag = findNearestFriendlyFlag(ctx);
+            if (safeFlag && ctx.threatMap) {
+                const curThreat = ctx.threatMap.getThreat(vPos.x, vPos.z);
+                const safeThreat = ctx.threatMap.getThreat(
+                    safeFlag.position.x, safeFlag.position.z);
+                if (safeThreat < curThreat - 0.1) {
+                    ctx._heliWaitingForPassengers = false;
+                    ctx._heliReturning = true;
+                    ctx._vehicleMoveTarget = safeFlag.position.clone();
+                }
+            }
         }
-        ctx._heliWaitTimer -= dt;
-        if (ctx._heliWaitTimer <= 0) {
-            ctx._heliWaitingForPassengers = false;
+        if (!ctx._heliWaitingForPassengers) { /* relocated — fall through */ }
+        else {
+            if (v.passengers.length >= v.maxPassengers) {
+                ctx._heliWaitTimer = Math.min(ctx._heliWaitTimer, 0.5);
+            }
+            ctx._heliWaitTimer -= dt;
+            if (ctx._heliWaitTimer <= 0) {
+                if (v.passengers.length > 0) {
+                    // Has passengers — take off normally
+                    ctx._heliWaitingForPassengers = false;
+                    ctx._heliReturning = false;
+                } else {
+                    // No passengers, safe spot — keep waiting, reset timer
+                    ctx._heliWaitTimer = 0;
+                }
+            }
+            if (ctx._heliWaitingForPassengers) return;
         }
-        if (ctx._heliWaitingForPassengers) return;
+    }
+
+    // ── Returning mode: fly to target overhead, then descend and land ──
+    if (ctx._heliReturning) {
+        updateHelicopterReturn(ctx, dt, target);
+        return;
     }
 
     const orbitRadius = 35;
@@ -217,6 +297,96 @@ export function updateHelicopterOrbit(ctx, dt) {
     if (vPos.y < aheadGround + minClearance) {
         _heliInput.ascend = true;
         _heliInput.descend = false;
+    }
+
+    v.applyInput(_heliInput, dt);
+}
+
+/** Return flight: fly to target position at altitude, then descend to land. */
+function updateHelicopterReturn(ctx, dt, target) {
+    const v = ctx.vehicle;
+
+    // Re-evaluate return target every 3 seconds
+    ctx._heliReturnRevalTimer -= dt;
+    if (ctx._heliReturnRevalTimer <= 0) {
+        ctx._heliReturnRevalTimer = 3;
+        const safeFlag = findNearestFriendlyFlag(ctx);
+        if (safeFlag) {
+            ctx._vehicleMoveTarget = safeFlag.position.clone();
+            target = ctx._vehicleMoveTarget;
+        }
+    }
+    const vPos = v.mesh.position;
+    const cruiseAlt = 22;
+    const landingThreshold = 15; // horizontal distance to start descent
+
+    const dx = target.x - vPos.x;
+    const dz = target.z - vPos.z;
+    const horizDist = Math.sqrt(dx * dx + dz * dz);
+
+    const waypointAngle = Math.atan2(dx, dz);
+    let angleDiff = waypointAngle - v.rotationY;
+    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+    const groundBelow = ctx.getHeightAt(vPos.x, vPos.z);
+
+    if (horizDist > landingThreshold) {
+        // Phase 1: Fly toward target at cruise altitude
+        _heliInput.thrust = Math.min(0.7, horizDist / 20);
+        _heliInput.brake = 0;
+        _heliInput.steerLeft = angleDiff > 0.1;
+        _heliInput.steerRight = angleDiff < -0.1;
+        _heliInput.ascend = vPos.y < cruiseAlt;
+        _heliInput.descend = vPos.y > cruiseAlt + 5;
+
+        // Terrain clearance during transit
+        const minClearance = 12;
+        if (vPos.y < groundBelow + minClearance) {
+            _heliInput.ascend = true;
+            _heliInput.descend = false;
+        }
+        const aheadX = vPos.x + Math.sin(v.rotationY) * 20;
+        const aheadZ = vPos.z + Math.cos(v.rotationY) * 20;
+        const aheadGround = ctx.getHeightAt(aheadX, aheadZ);
+        if (vPos.y < aheadGround + minClearance) {
+            _heliInput.ascend = true;
+            _heliInput.descend = false;
+        }
+    } else {
+        // Phase 2: Over target — gradual descent based on altitude above ground
+        const altAboveGround = vPos.y - groundBelow;
+
+        _heliInput.thrust = Math.min(0.3, horizDist / 10); // slow drift to center
+        _heliInput.brake = 0;
+        _heliInput.steerLeft = angleDiff > 0.1;
+        _heliInput.steerRight = angleDiff < -0.1;
+
+        // Desired sink rate scales with altitude: fast high up, slow near ground
+        const vy = v.body.velocity.y; // negative = falling
+        const maxSinkRate = -Math.min(altAboveGround * 0.5, 8); // e.g. at 4m → -2 m/s, at 20m → -8 m/s
+
+        if (vy < maxSinkRate) {
+            // Falling too fast — brake with ascend
+            _heliInput.ascend = true;
+            _heliInput.descend = false;
+            _heliInput.ascendScale = altAboveGround < 5 ? 0.5 : 1;
+        } else {
+            // Sink rate OK — keep descending
+            _heliInput.ascend = false;
+            _heliInput.descend = altAboveGround > 2;
+            _heliInput.descendScale = altAboveGround < 8 ? 0.4 : 1;
+        }
+
+        // Landed — switch to waiting for passengers
+        if (altAboveGround < 2) {
+            ctx._heliReturning = false;
+            ctx._heliWaitingForPassengers = true;
+            ctx._heliWaitTimer = 10;
+            _heliInput.thrust = 0;
+            _heliInput.descend = false;
+            _heliInput.ascend = false;
+        }
     }
 
     v.applyInput(_heliInput, dt);

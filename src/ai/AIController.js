@@ -196,6 +196,8 @@ export class AIController {
         this._vehicleOrbitAngle = 0;     // helicopter orbit angle
         this._heliWaitingForPassengers = false;
         this._heliWaitTimer = 0;      // countdown after first passenger boards
+        this._heliReturning = false;  // returning to friendly flag after passengers lost
+        this._heliReturnRevalTimer = 0; // re-evaluate return target interval
         this._vehicleFireBlocked = false;
         this.vehicleManager = null;   // set by AIManager
 
@@ -566,7 +568,7 @@ export class AIController {
                         if (this.soldier.rightLeg) this.soldier.rightLeg.rotation.x = Math.PI / 2;
                     } else {
                         // Passenger: door slot (seated, legs face outward)
-                        const slotIdx = heli.passengers.indexOf(this.soldier);
+                        const slotIdx = this.soldier.seatIndex >= 0 ? this.soldier.seatIndex : -1;
                         if (slotIdx >= 0 && slotIdx < HELI_PASSENGER_SLOTS.length) {
                             const slot = HELI_PASSENGER_SLOTS[slotIdx];
                             heli.getWorldSeatPos(_tmpVec, slot);
@@ -631,14 +633,15 @@ export class AIController {
             if (this.vehicle.type === 'helicopter' && isPassenger) {
                 let canFire = false;
                 if (this.targetEnemy && this.targetEnemy.alive) {
-                    const slotIdx = this.vehicle.passengers.indexOf(this.soldier);
+                    const slotIdx = this.soldier.seatIndex >= 0 ? this.soldier.seatIndex : -1;
                     const isLeftSeat = slotIdx >= 0 && slotIdx % 2 === 0;
                     const ep = this.targetEnemy.getPosition();
                     const hx = this.vehicle.mesh.position.x;
                     const hz = this.vehicle.mesh.position.z;
                     const rY = this.vehicle.rotationY;
                     const cross = Math.sin(rY) * (ep.z - hz) - Math.cos(rY) * (ep.x - hx);
-                    canFire = isLeftSeat ? cross > 0 : cross < 0;
+                    const deadZone = 0.174; // sin(10°) — 10° blind spot at front/rear
+                    canFire = isLeftSeat ? cross > deadZone : cross < -deadZone;
                 }
                 this._vehicleFireBlocked = !canFire;
                 if (canFire) {

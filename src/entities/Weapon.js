@@ -299,8 +299,8 @@ export class Weapon {
         if (this.recoilOffset > 0) {
             this.recoilOffset = Math.max(0, this.recoilOffset - this.recoilRecoverySpeed * dt);
         }
-        // Gun tilt: bolt cycling / reload
-        const targetTilt = this.isReloading ? GunAnim.reloadTilt : (this.isBolting ? GunAnim.boltTilt : 0);
+        // Gun tilt: bolt cycling / reload / side-blocked
+        const targetTilt = this.sideBlocked ? GunAnim.reloadTilt : this.isReloading ? GunAnim.reloadTilt : (this.isBolting ? GunAnim.boltTilt : 0);
         if (this._reloadTilt === undefined) this._reloadTilt = 0;
         const tiltSpeed = this.isReloading ? 12 : 8; // faster going down, slower coming back
         this._reloadTilt += (targetTilt - this._reloadTilt) * Math.min(1, tiltSpeed * dt);

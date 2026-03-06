@@ -483,9 +483,9 @@ export class Soldier {
         this.hp = 0;
         this.deathTimer = this.respawnDelay;
 
-        // Exit vehicle so Helicopter.exit() can promote a passenger to driver
+        // Exit vehicle — pass died=true so driver death can promote a passenger
         if (this.vehicle) {
-            this.vehicle.exit(this);
+            this.vehicle.exit(this, true);
             this.vehicle = null;
             // Clear AI controller vehicle refs to prevent staggered update re-exit
             if (this.controller) {
