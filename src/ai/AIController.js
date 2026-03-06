@@ -640,7 +640,8 @@ export class AIController {
                     const hz = this.vehicle.mesh.position.z;
                     const rY = this.vehicle.rotationY;
                     const cross = Math.sin(rY) * (ep.z - hz) - Math.cos(rY) * (ep.x - hx);
-                    canFire = isLeftSeat ? cross > 0 : cross < 0;
+                    const deadZone = 0.174; // sin(10°) — 10° blind spot at front/rear
+                    canFire = isLeftSeat ? cross > deadZone : cross < -deadZone;
                 }
                 this._vehicleFireBlocked = !canFire;
                 if (canFire) {

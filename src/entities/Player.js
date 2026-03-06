@@ -426,7 +426,8 @@ export class Player extends Soldier {
                 const aimDir = this.getAimDirection();
                 const rY = this.vehicle.rotationY;
                 const cross = Math.sin(rY) * aimDir.z - Math.cos(rY) * aimDir.x;
-                sideBlocked = isLeftSeat ? cross < 0 : cross > 0;
+                const deadZone = 0.174; // sin(10°) — 10° blind spot at front/rear
+                sideBlocked = isLeftSeat ? cross < deadZone : cross > -deadZone;
             }
             if (!isPilot) {
                 this._handleShooting(dt, !sideBlocked);
