@@ -429,9 +429,12 @@ export class Player extends Soldier {
                 const deadZone = 0.174; // sin(10°) — 10° blind spot at front/rear
                 sideBlocked = isLeftSeat ? cross < deadZone : cross > -deadZone;
             }
+            this.weapon.sideBlocked = sideBlocked;
             if (!isPilot) {
                 this._handleShooting(dt, !sideBlocked);
             }
+        } else {
+            this.weapon.sideBlocked = false;
         }
         this._syncCameraToVehicle();
         this.weapon.update(dt);
