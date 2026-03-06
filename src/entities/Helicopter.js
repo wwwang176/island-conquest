@@ -126,10 +126,10 @@ export class Helicopter extends Vehicle {
             allowSleep: false,     // helicopter must never sleep
         });
 
-        // Main fuselage box (cabin + nose area) — original ×1.2
+        // Main fuselage box (cabin + nose area) — half-Y covers roof at +0.78
         this.body.addShape(
-            new CANNON.Box(new CANNON.Vec3(1.08, 0.84, 3.0)),
-            new CANNON.Vec3(0, -0.18, 0)
+            new CANNON.Box(new CANNON.Vec3(1.08, 0.94, 3.0)),
+            new CANNON.Vec3(0, -0.08, 0)
         );
         // Nose cone — original ×1.2
         this.body.addShape(
