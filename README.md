@@ -181,14 +181,14 @@ Each team has **15 soldiers** organized into **5 squads of 3**:
 
 Each soldier has one of 6 personality types that govern their behavior:
 
-| Personality | Aim Skill | Reaction | Risk Tolerance | Role |
-|-------------|-----------|----------|----------------|------|
-| **Rusher** | 0.7 | 150ms | High (0.75) | Aggressive point man |
-| **Defender** | 0.8 | 180ms | Low (0.45) | Holds positions cautiously |
-| **Flanker** | 0.75 | 160ms | Medium (0.65) | Flanks around enemies |
-| **Support** | 0.7 | 190ms | Medium (0.55) | Suppression & area denial |
-| **Sniper** | 0.9 | 150ms | Low (0.50) | Long-range precision |
-| **Captain** | 0.8 | 170ms | Medium (0.60) | Squad leader, balanced |
+| Personality | Aim Skill | Base Reaction | Near / Far | Risk Tolerance | Role |
+|-------------|-----------|---------------|------------|----------------|------|
+| **Rusher** | 0.7 | 150ms | 0.3 / 1.4 | High (0.75) | Aggressive point man |
+| **Defender** | 0.8 | 180ms | 0.6 / 0.9 | Low (0.45) | Holds positions cautiously |
+| **Flanker** | 0.75 | 160ms | 0.4 / 1.2 | Medium (0.65) | Flanks around enemies |
+| **Support** | 0.7 | 190ms | 0.7 / 1.1 | Medium (0.55) | Suppression & area denial |
+| **Sniper** | 0.9 | 150ms | 1.4 / 0.5 | Low (0.50) | Long-range precision |
+| **Captain** | 0.8 | 170ms | 0.5 / 1.0 | Medium (0.60) | Squad leader, balanced |
 
 ### Weapon Selection
 
@@ -237,7 +237,11 @@ Scan parameters: 80m max range, 120° forward cone.
 ### Aiming
 
 - **Aim correction speed**: `2 + aimSkill × 3` (range 4.1–4.7)
-- **Reaction delay**: 150–250ms before engaging new targets (per personality)
+- **Reaction delay**: Multi-factor delay before engaging a new target:
+  - `reactionTime × distFactor × losFactor × angleFactor + random(0–150ms)`
+  - **Distance factor**: Lerp between `nearReaction` (0m) and `farReaction` (60m+). Rushers react instantly up close (0.3×) but slowly at range (1.4×); Snipers are the opposite (1.4× / 0.5×).
+  - **LOS factor**: 1.0 for full body visible, 1.4 if only head is exposed (partial cover).
+  - **Angle factor**: `0.933 + 0.5 × (1 − dot)` where `dot` is the cosine between facing direction and enemy direction. Enemies near the crosshair center trigger faster reactions (~0.93×); enemies at the edge of the FOV are much slower (~1.43×).
 - **Pre-aiming**: Aim at predicted position of lost contacts (`lastPos + velocity × 0.5s`)
 - **Head-only targets**: Aim point raised to 1.6m (head level) instead of 1.2m (chest)
 - **BOLT AI delay**: Must hold aim for 0.5s before firing
