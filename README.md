@@ -78,7 +78,20 @@ Scoring:
 | Right Click | Toggle scope (BOLT only) |
 | R | Reload |
 | G | Throw grenade |
+| E | Enter / Exit vehicle |
 | ESC | Release cursor; press again to leave team |
+
+### Helicopter Controls (Pilot)
+
+| Key | Action |
+|-----|--------|
+| W | Thrust forward |
+| S | Thrust backward (brake) |
+| A/D | Yaw left / right |
+| SPACE | Ascend |
+| SHIFT | Descend |
+| E | Exit (only when near ground) |
+| Left Click (hold) | Fire weapon (passengers only) |
 
 ### Debug Overlays (All Modes)
 
@@ -113,6 +126,25 @@ Scoring:
 | **BOLT** | 110 | 40 | 5 | 3.5s | 300m | 0.85x | 2.5x headshot, 1.2s bolt cycle, scope |
 
 **Grenade**: 200 damage at center, 6m blast radius, 2.5s fuse, 2 per life.
+
+### Vehicles
+
+Two neutral **helicopters** spawn near each end flag. The first soldier to board claims it for their team.
+
+| Stat | Value |
+|------|-------|
+| HP | 12,000 |
+| Seats | 1 pilot + 4 passengers |
+| Max horizontal speed | 45 m/s |
+| Max vertical speed | 8 m/s |
+| Altitude range | ~1m – 30m |
+| Enter radius | 3.6m |
+| Respawn delay | 45s |
+
+- **Pilot** steers and cannot fire. **Passengers** can fire their personal weapons with a 160° arc (front and rear blind spots).
+- Helicopter is destroyed when HP reaches 0 — all occupants die. Wreckage lingers 10s before despawning.
+- Exit is only allowed near the ground (< 5m altitude).
+- AI squads will board and use helicopters to reach distant objectives.
 
 ### Damage Model
 
@@ -152,11 +184,11 @@ Each soldier has one of 6 personality types that govern their behavior:
 | Personality | Aim Skill | Reaction | Risk Tolerance | Role |
 |-------------|-----------|----------|----------------|------|
 | **Rusher** | 0.7 | 150ms | High (0.75) | Aggressive point man |
-| **Defender** | 0.8 | 200ms | Low (0.45) | Holds positions cautiously |
-| **Flanker** | 0.75 | 180ms | Medium (0.65) | Flanks around enemies |
-| **Support** | 0.7 | 200ms | Medium (0.55) | Suppression & area denial |
-| **Sniper** | 0.9 | 250ms | Low (0.50) | Long-range precision |
-| **Captain** | 0.8 | 180ms | Medium (0.60) | Squad leader, balanced |
+| **Defender** | 0.8 | 180ms | Low (0.45) | Holds positions cautiously |
+| **Flanker** | 0.75 | 160ms | Medium (0.65) | Flanks around enemies |
+| **Support** | 0.7 | 190ms | Medium (0.55) | Suppression & area denial |
+| **Sniper** | 0.9 | 150ms | Low (0.50) | Long-range precision |
+| **Captain** | 0.8 | 170ms | Medium (0.60) | Squad leader, balanced |
 
 ### Weapon Selection
 
@@ -171,20 +203,22 @@ AI soldiers pick weapons based on personality:
 Each AI runs a priority-ordered behavior tree (ticked every 0.15–0.25s, staggered across soldiers):
 
 1. **Dead** — wait for respawn
-2. **Reloading near threats** — seek cover
-3. **High risk** — seek cover (threshold varies by personality)
-4. **Spatial threat** — move away from threat map hotspots
-5. **Fallback** — retreat to friendly flag (squad tactic)
-6. **Rush** — coordinated assault (squad tactic)
-7. **Suppression fire** — suppress lost contacts (squad tactic)
-8. **Crossfire** — flank to perpendicular positions (squad tactic)
-9. **Throw grenade** — if enemies clustered near flag
-10. **Close-range enemy** (< 20m) — engage immediately
-11. **Uncaptured flag** — move to capture
-12. **Investigate intel** — move toward suspected enemy position
-13. **Visible enemy** (long range) — engage
-14. **Defend owned flag** — patrol nearby
-15. **Default** — random patrol
+2. **Driving vehicle** — drive toward destination
+3. **Board vehicle** — walk toward available vehicle
+4. **Reloading near threats** — seek cover
+5. **High risk** — seek cover (threshold varies by personality)
+6. **Spatial threat** — move away from threat map hotspots
+7. **Fallback** — retreat to friendly flag (squad tactic)
+8. **Rush** — coordinated assault (squad tactic)
+9. **Suppression fire** — suppress lost contacts (squad tactic)
+10. **Crossfire** — flank to perpendicular positions (squad tactic)
+11. **Throw grenade** — if enemies clustered near flag
+12. **Close-range enemy** (< 20m) — engage immediately
+13. **Uncaptured flag** — move to capture
+14. **Investigate intel** — move toward suspected enemy position
+15. **Visible enemy** (long range) — engage
+16. **Defend owned flag** — patrol nearby
+17. **Default** — random patrol
 
 Continuous systems (aiming, shooting, movement) run every frame for all 30 soldiers, while the behavior tree and threat scanning run in staggered batches of 8 per frame for performance.
 
@@ -313,14 +347,23 @@ src/
     Player.js          FPS player controller
     Weapon.js          Hitscan weapon system
     WeaponDefs.js      Weapon stat definitions
+    Grenade.js         Grenade entity (physics + fuse)
+    Vehicle.js         Base vehicle class (HP, enter/exit, respawn)
+    Helicopter.js      Helicopter flight model + multi-passenger
   world/
     Island.js          Procedural terrain + vegetation
     CoverSystem.js     Cover point registry
     FlagPoint.js       Flag capture mechanics
+    Fortification.js   Fortification structures
     Noise.js           Simplex noise
   ai/
     AIManager.js       Team creation & staggered updates
     AIController.js    Per-soldier behavior tree + combat
+    AIGrenade.js       Grenade decision logic
+    AIMovement.js      Movement validation & updates
+    AIShooter.js       Aiming, spread, and shooting
+    AIVehicleController.js  Vehicle boarding & driving AI
+    AIVisual.js        Visual updates, debug rendering
     BehaviorTree.js    BT engine (Selector/Sequence/Condition/Action)
     Personality.js     6 personality types + squad templates
     SquadCoordinator.js  Squad-level tactics
@@ -328,19 +371,29 @@ src/
     ThreatMap.js       Spatial threat heatmap
     NavGrid.js         A* pathfinding
     TacticalActions.js Flanking, suppression, pre-aim helpers
+  shared/
+    CapsuleBody.js     Capsule collision helpers
+    DamageFalloff.js   Damage falloff curves
+    DamageModel.js     Centralized damage calculations
   systems/
     PhysicsWorld.js    cannon-es wrapper
     ScoreManager.js    Flag-based scoring
     SpawnSystem.js     Respawn point selection
+    GrenadeManager.js  Grenade spawning & explosions
+    VehicleManager.js  Vehicle spawning & management
+    DroppedGunManager.js  Dropped weapon pickup system
   vfx/
     TracerSystem.js    Bullet tracer lines
     ImpactVFX.js       Hit particles
   ui/
+    HUDController.js   Primary HUD orchestrator
     Minimap.js         Canvas-based minimap
     KillFeed.js        Kill notifications
     SpectatorHUD.js    Spectator UI overlay
   workers/
     navgrid-worker.js  Off-thread NavGrid construction
+    pathfind-worker.js Off-thread A* pathfinding
     threat-worker.js   Off-thread threat map computation
+    threat-scan-worker.js  Off-thread threat scanning
 ```
 
